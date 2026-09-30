@@ -36,6 +36,9 @@ public final class ScreenModule implements Module {
 
     public static final int TERMINAL_CLUSTER  = 1;    /* LVDS2 */
     public static final int CTX_CLUSTER       = 80;   /* nav active: {98 maneuver, 101/102 backing, 33 stock map} */
+    /* AltScreen: CarPlay's OWN map video (displayable 99, altscreen_render). */
+    public static final int CTX_CLUSTER_VIDEO     = 81;   /* {99} video only */
+    public static final int CTX_CLUSTER_VIDEO_NAV = 82;   /* {98,101,102,99} video + maneuver */
     public static final int CTX_STOCK_CLUSTER = 74;
     private static final int CTX_BOUNCE       = 72;   /* kombi map — never ours; forces a real ctx change */
     private static final int BOUNCE_SLEEP_MS  = 180;  /* preContextSwitchHook settle (proven driver) */
@@ -83,15 +86,42 @@ public final class ScreenModule implements Module {
     private static int currentCtx = -1;
     private static volatile boolean connected = false;
     private static volatile boolean navActive = false;
+    private static volatile boolean altScreenActive = false;   /* altscreen_render live video */
     private static boolean navHidePending;
+
+    /** True for any of OUR CarPlay cluster contexts (drift-reconciled at 250 ms). */
+    private static boolean isOurCarPlayContext(int c) {
+        return c == CTX_CLUSTER || c == CTX_CLUSTER_VIDEO || c == CTX_CLUSTER_VIDEO_NAV;
+    }
 
     /** Recompute desiredCtx from connected/navActive and wake the worker. Caller must NOT hold LOCK. */
     private static void republish() {
         synchronized (LOCK) {
-            desiredCtx = (connected && navActive) ? CTX_CLUSTER : CTX_STOCK_CLUSTER;
+            if (connected && altScreenActive) {
+                /* CarPlay's own map video is live: show it, with the maneuver
+                 * overlay on top when guidance is active. */
+                desiredCtx = navActive ? CTX_CLUSTER_VIDEO_NAV : CTX_CLUSTER_VIDEO;
+            } else if (connected && navActive) {
+                desiredCtx = CTX_CLUSTER;               /* stock map + maneuver overlay */
+            } else {
+                desiredCtx = CTX_STOCK_CLUSTER;
+            }
             LOCK.notifyAll();
         }
     }
+
+    /** Fed by AltScreenModule from altscreen_render's liveness signal. When the
+     *  CarPlay video plane (99) is producing frames the cluster switches to the
+     *  video context; when it stops we fall back to the stock-map maneuver
+     *  context (or plain stock). */
+    public static void setAltScreenActive(boolean active) {
+        if (altScreenActive == active) return;
+        altScreenActive = active;
+        Log.i(TAG, "altScreen video " + (active ? "live -> ctx 81/82" : "stopped -> ctx 74/80"));
+        republish();
+    }
+
+    public static boolean isAltScreenActive() { return altScreenActive; }
 
     /** Presentation latch, not merely route intent.  RouteGuidance may set true only after the
      *  BAP presentation has started (bap.onStart()); the renderer's FRAME_READY is not waited for.
@@ -224,6 +254,7 @@ public final class ScreenModule implements Module {
             if (dm != d) { dm = d; currentCtx = -1; }
             connected = true;
             navActive = false;
+            altScreenActive = false;
             navHidePending = false;
             desiredCtx = CTX_STOCK_CLUSTER;
         }
@@ -251,6 +282,7 @@ public final class ScreenModule implements Module {
         synchronized (LOCK) {
             connected = false;
             navActive = false;
+            altScreenActive = false;
             navHidePending = false;
         }
         republish();
@@ -270,13 +302,13 @@ public final class ScreenModule implements Module {
                 }
                 if (desiredCtx == currentCtx) {
                     try {
-                        if (desiredCtx == CTX_CLUSTER)
+                        if (isOurCarPlayContext(desiredCtx))
                             LOCK.wait(CONTEXT_RECONCILE_MS);
                         else
                             LOCK.wait();
                     } catch (InterruptedException e) { /* persistent worker */ }
                     if (dm == null || desiredCtx != currentCtx) continue;
-                    if (desiredCtx != CTX_CLUSTER) continue;
+                    if (!isOurCarPlayContext(desiredCtx)) continue;
                     reconcileOnly = true;
                 }
                 target = desiredCtx; d = dm;

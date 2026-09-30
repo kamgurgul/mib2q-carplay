@@ -81,9 +81,11 @@ features below follow it automatically.
 | `java_patch/` | The only supported Java patch source |
 | `java_resources/` | Resources packed into the jar (VC glyph-width / Unicode table `vc-text.bin`) |
 | `maneuver_render/` | GLES maneuver overlay renderer (C, plus the C++11 `scene/` engine) |
+| `altscreen_render/` | Optional CarPlay cluster **video** renderer (H.264 decode → GLES → displayable 99); see [`docs/deploy/altscreen-mhi2q.md`](docs/deploy/altscreen-mhi2q.md) |
 | `common/` | Shared renderer code: QNX Screen surface, GL program-binary cache, log timestamps |
 | `deploy/smartphone_integrator/` | Runtime scripts and child-process configuration for the HU |
 | `install_MoreIncredibleBash/`, `uninstall_MoreIncredibleBash/`, `logging_MoreIncredibleBash/` | M.I.B. custom scripts that install / remove a staged release / collect logs |
+| `rgd_enable_MoreIncredibleBash/`, `rgd_disable_MoreIncredibleBash/` | M.I.B. custom scripts that toggle route guidance at runtime (see [`docs/deploy/altscreen-mhi2q.md`](docs/deploy/altscreen-mhi2q.md)) |
 | `scripts/` | Docker build entry points (Java / hook / renderer) and host test runners |
 | `tests/` | Host tests (C, Java, Python) for the hook, Java bridge and renderer |
 | `toolchain/qnx65-abi/` | QNX Screen ABI headers used only for cross-compilation |
@@ -110,6 +112,7 @@ Then run from this repository's root:
 ./scripts/build_java.sh        # → build/carplay_hook.jar
 ./scripts/build_hook.sh        # → build/libcarplay_hook.so
 ./scripts/build_renderers.sh   # → build/maneuver_render
+./scripts/build_altscreen_render.sh  # → build/altscreen_render (optional CarPlay cluster video; see docs/deploy/altscreen-mhi2q.md)
 ```
 
 All three build in Docker - no host toolchain required. The Java patch compiles in a pinned

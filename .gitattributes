@@ -1,0 +1,30 @@
+# Shell scripts and on-unit text assets MUST stay LF: they run on QNX 6.5 /bin/sh
+# (ksh) on the head unit and inside Linux build containers. A CRLF checkout on
+# Windows (core.autocrlf=true) otherwise yields "/bin/sh^M: bad interpreter" in
+# the build and broken scripts/configs on the car.
+*.sh            text eol=lf
+*.json          text eol=lf
+*.c             text eol=lf
+*.h             text eol=lf
+*.java          text eol=lf
+*.py            text eol=lf
+*.map           text eol=lf
+Makefile        text eol=lf
+*.md            text eol=lf
+
+# M.I.B. custom-script entry points (no extension implied here, but they are .sh).
+install_MoreIncredibleBash/mod/*.sh      text eol=lf
+uninstall_MoreIncredibleBash/mod/*.sh    text eol=lf
+logging_MoreIncredibleBash/mod/*.sh      text eol=lf
+rgd_enable_MoreIncredibleBash/mod/*.sh   text eol=lf
+rgd_disable_MoreIncredibleBash/mod/*.sh  text eol=lf
+
+# Binary assets — never touch.
+*.bin    binary
+*.rgba   binary
+*.ttf    binary
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.jar    binary

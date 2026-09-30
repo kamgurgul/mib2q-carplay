@@ -107,10 +107,14 @@ monitor_main()
 
     cp_seed_renderer_pid_files
     start_renderer maneuver_render initial
+    # AltScreen CarPlay-video renderer (optional): started only when installed.
+    # Same ownership/identity discipline as maneuver_render; runs LD_PRELOAD-clear.
+    [ -x "$H/altscreen_render" ] && start_renderer altscreen_render initial
 
     MON_TICKS=0
     while monitor_current; do
         start_renderer maneuver_render restart
+        [ -x "$H/altscreen_render" ] && start_renderer altscreen_render restart
         sleep 2
         MON_TICKS=`expr "$MON_TICKS" + 1`
         if [ `expr "$MON_TICKS" % 150` -eq 0 ]; then

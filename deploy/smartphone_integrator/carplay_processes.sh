@@ -10,12 +10,14 @@ export PATH
 unset CP_QNX_PATH
 
 CP_MANEUVER_PID_FILE=${CP_MANEUVER_PID_FILE:-/tmp/carplay_maneuver_render.pid}
+CP_ALTSCREEN_PID_FILE=${CP_ALTSCREEN_PID_FILE:-/tmp/carplay_altscreen_render.pid}
 CP_LOG_MAX_BYTES=${CP_LOG_MAX_BYTES:-524288}
 
 cp_renderer_pid_file()
 {
     case "$1" in
-        maneuver_render)  echo "$CP_MANEUVER_PID_FILE" ;;
+        maneuver_render)   echo "$CP_MANEUVER_PID_FILE" ;;
+        altscreen_render)  echo "$CP_ALTSCREEN_PID_FILE" ;;
         *) return 1 ;;
     esac
 }

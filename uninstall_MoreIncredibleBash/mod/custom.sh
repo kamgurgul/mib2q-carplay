@@ -27,6 +27,8 @@ OWNED="/mnt/app/root/hooks/libcarplay_hook.so
 /mnt/app/root/hooks/carplay_monitor.sh
 /mnt/app/root/hooks/carplay_processes.sh
 /mnt/app/root/hooks/carplay_cleanup.sh
+/mnt/app/root/hooks/libaltscreen111_mhi2q.so
+/mnt/app/root/hooks/altscreen_render
 /mnt/app/eso/hmi/lsd/jars/carplay_hook.jar"
 
 echo "custom.sh: CarPlay uninstall"

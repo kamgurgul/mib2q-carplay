@@ -29,9 +29,10 @@ public final class CarPlayApp {
     private static final String TAG = "App";
     public static final String BUILD_ID = "@BUILD_ID@";
 
-    /* Modules, in start order. */
+    /* Modules, in start order. AltScreenModule follows ScreenModule because it
+     * feeds it the CarPlay-video liveness that selects cluster ctx 81/82. */
     private static final Module[] MODULES = new Module[] {
-        new ScreenModule(), new RgdModule(), new SteeringWheelInputModule()
+        new ScreenModule(), new AltScreenModule(), new RgdModule(), new SteeringWheelInputModule()
     };
 
     private static final Object lock = new Object();

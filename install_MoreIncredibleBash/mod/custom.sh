@@ -41,19 +41,24 @@ flat_dest() {
         libcarplay_hook.so|maneuver_render|flag_atlas.rgba) echo "$HOOKS/$1" ;;
         carplay_startup.sh|carplay_monitor.sh|carplay_processes.sh|carplay_cleanup.sh) echo "$HOOKS/$1" ;;
         carplay_hook.jar) echo "$JARS/$1" ;;
+        libaltscreen111_mhi2q.so|altscreen_render) echo "$HOOKS/$1" ;;  # optional AltScreen
         *) return 1 ;;
     esac
 }
+# Optional AltScreen (CarPlay cluster VIDEO) assets. Present => installed; absent
+# => skipped, base RGI install unaffected. See docs/deploy/altscreen-mhi2q.md.
+OPTIONAL_ASSETS="libaltscreen111_mhi2q.so altscreen_render"
 
 CFG=/mnt/system/etc/eso/production/smartphone_integrator.json
 DIO=/mnt/system/etc/eso/production/dio_manager.json
 
 mode_for() {
     case $1 in
-        *.so|*.so.*)       echo 755 ;;
-        */maneuver_render) echo 755 ;;
-        *.sh)              echo 755 ;;
-        *)                 echo 644 ;;  # atlas, .jar
+        *.so|*.so.*)        echo 755 ;;
+        */maneuver_render)  echo 755 ;;
+        */altscreen_render) echo 755 ;;
+        *.sh)               echo 755 ;;
+        *)                  echo 644 ;;  # atlas, .jar
     esac
 }
 # count occurrences of $2 in $1 (ksh-safe, no external tools)
@@ -81,6 +86,13 @@ list_payload() {
     if [ -s "$1" ] && [ -n "$missing" ]; then
         echo "FAILED release incomplete, missing in $RES:$missing"; rm -f "$1"; return 1
     fi
+    # Optional AltScreen assets: add each only if present; never fail on absence.
+    for a in $OPTIONAL_ASSETS; do
+        if [ -f "$RES/$a" ]; then
+            printf '%s|%s\n' "$RES/$a" "$(flat_dest "$a")" >> "$1"
+            echo "  (+ optional AltScreen asset: $a)"
+        fi
+    done
     if [ -d "$ROOT" ]; then
         ( cd "$ROOT" && find . -type f > "$1.tree" ) 2> "$1.err"
         if grep -v '/\.\.: Filename too long' "$1.err" | grep -q .; then

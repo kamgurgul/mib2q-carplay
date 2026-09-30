@@ -22,8 +22,24 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 TOOLS_DIR="$(cd "$PROJECT_DIR/../../Tools/jxe2jar" && pwd)"
 
-STOCK_JAR="$TOOLS_DIR/out/MU1316-final.jar"
-[ -f "$STOCK_JAR" ] || { echo "ERROR: $STOCK_JAR not found"; exit 1; }
+# Stock HMI jar: the author's is MU1316-final.jar, but any unit's decompiled jxe
+# works. Override with STOCK_JAR=<name-or-path>, else prefer MU1316-final.jar,
+# else auto-pick the newest *.jar in out/. The jar must live in TOOLS_DIR/out/
+# (that is what gets mounted into the container).
+if [ -n "${STOCK_JAR:-}" ] && [ -f "$TOOLS_DIR/out/$(basename "$STOCK_JAR")" ]; then
+    STOCK_JAR="$TOOLS_DIR/out/$(basename "$STOCK_JAR")"
+elif [ -f "$TOOLS_DIR/out/MU1316-final.jar" ]; then
+    STOCK_JAR="$TOOLS_DIR/out/MU1316-final.jar"
+else
+    STOCK_JAR="$(ls -t "$TOOLS_DIR"/out/*.jar 2>/dev/null | head -1)"
+fi
+[ -n "$STOCK_JAR" ] && [ -f "$STOCK_JAR" ] || {
+    echo "ERROR: no stock HMI jar in $TOOLS_DIR/out/"
+    echo "  Put your unit's decompiled lsd.jxe jar there (see docs/deploy/altscreen-mhi2q.md, section 'Building the Java patch')."
+    exit 1
+}
+STOCK_JAR_NAME="$(basename "$STOCK_JAR")"
+echo "Stock jar: $STOCK_JAR_NAME"
 [ -d "$PROJECT_DIR/java_patch" ] || { echo "ERROR: java_patch/ not found"; exit 1; }
 
 # Reproducible build identity is computed on the host (git lives here), passed into the container.
@@ -36,12 +52,13 @@ docker run --rm \
   -v "$PROJECT_DIR":/src \
   -v "$TOOLS_DIR":/tools:ro \
   -e BUILD_ID="$BUILD_ID" \
+  -e STOCK_JAR_NAME="$STOCK_JAR_NAME" \
   "$IMG" bash -c '
   set -e
   SRC=/src/java_patch
   OUT=/src/build/java/classes
   OUTJAR=/src/build/carplay_hook.jar
-  CP="/tools/out/MU1316-final.jar:/tools/libs/org.osgi.framework-1.10.0.jar:/tools/libs/org.osgi.util.tracker-1.5.4.jar"
+  CP="/tools/out/$STOCK_JAR_NAME:/tools/libs/org.osgi.framework-1.10.0.jar:/tools/libs/org.osgi.util.tracker-1.5.4.jar"
 
   rm -rf /src/build/java; mkdir -p "$OUT" /src/build
   SRCLIST=$(mktemp)

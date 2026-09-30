@@ -15,11 +15,30 @@ import com.luka.carplay.rgd.RouteGuidance;
 
 import de.audi.atip.interapp.combi.bap.navi.CombiBAPServiceNavi;
 
+import java.io.File;
+
 final class RgdModule implements Module {
 
     private static final String TAG = "RgdModule";
+    /* Runtime kill-switch for route guidance (the cluster maneuver arrow, HUD and
+     * BAP takeover). Present => this module stays inert; CarPlay video (AltScreen,
+     * ctx 81) and the rest of the patch keep working. Same idiom as the verbose
+     * marker: read at every CarPlay session start, so creating/removing it takes
+     * effect on the next phone reconnect — no reboot. Persistent marker survives a
+     * reboot; the /tmp one does not. */
+    private static final String[] DISABLE_MARKERS = {
+        "/mnt/app/carplay_rgd.disabled", "/tmp/carplay_rgd.disabled"
+    };
     private RouteGuidance rg;
     private FrameworkRef.ServiceHandle naviHandle;
+
+    private static boolean routeGuidanceDisabled() {
+        for (int i = 0; i < DISABLE_MARKERS.length; i++) {
+            try { if (new File(DISABLE_MARKERS[i]).exists()) return true; }
+            catch (Throwable t) { /* never let a marker probe break startup */ }
+        }
+        return false;
+    }
 
     public String name() { return "rgd"; }
 
@@ -27,6 +46,14 @@ final class RgdModule implements Module {
         if (fw == null || !fw.isReady()) return false;             /* framework not up → retry */
         if (!ScreenModule.isPlatformSupported(fw)) {
             Log.w(TAG, "disabled on unsupported G24 cluster");
+            return true;
+        }
+        if (routeGuidanceDisabled()) {
+            /* Report started so CarPlayApp stops retrying; do NOT engage the BAP
+             * takeover, so stock route guidance is left alone and the cluster is
+             * free for CarPlay video. If a session was already running, stop it. */
+            if (rg != null) { rg.stop(); rg.disengageTakeover(); rg = null; }
+            Log.w(TAG, "route guidance disabled by marker; skipping BAP takeover");
             return true;
         }
 

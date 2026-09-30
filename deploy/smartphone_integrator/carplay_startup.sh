@@ -47,7 +47,18 @@ MONITOR_PID=$!
 
 # Only dio_manager receives the hook. The monitor and the renderer explicitly
 # clear LD_PRELOAD.
-export LD_PRELOAD="$H/libcarplay_hook.so"
+#
+# AltScreen (optional): if the CarPlay cluster-VIDEO hook is installed, preload
+# it ALONGSIDE the RGI hook. The RGI hook interposes iAP2/Cinemo (route
+# guidance, cover art); the AltScreen hook interposes AirPlay session/stream 111
+# (cluster video). Disjoint symbol sets, so load order is not sensitive. Absent
+# file => plain RGI behaviour, unchanged.
+CP_PRELOAD="$H/libcarplay_hook.so"
+if [ -r "$H/libaltscreen111_mhi2q.so" ]; then
+    CP_PRELOAD="$CP_PRELOAD:$H/libaltscreen111_mhi2q.so"
+    echo "[startup] altscreen hook present; dual LD_PRELOAD" >> "$WLOG"
+fi
+export LD_PRELOAD="$CP_PRELOAD"
 
 echo "[startup] exec dio_manager pid=$DIO_PID monitor=$MONITOR_PID" >> "$WLOG"
 exec "$DIODIR/dio_manager" "$@"

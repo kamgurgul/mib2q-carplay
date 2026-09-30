@@ -32,10 +32,18 @@ public class DisplayManagerMIB2High extends DisplayManager implements IDisplayLi
     private static final int CTX_MAP_ALT     = 76;   // alt map only
     private static final int CTX_MAP_ALT_KDK = 77;   // alt map + KDK + backings
     private static final int CTX_CARPLAY_NAV = 80;   // CarPlay: maneuver + backing + stock native map
+    /* AltScreen (CarPlay cluster VIDEO on displayable 99, from altscreen_render):
+     *   dc[81] = {99}              CarPlay map video only
+     *   dc[82] = {98,101,102,99}   maneuver(98) + KDK backings(101/102) + CarPlay video(99)
+     * 99 replaces the stock native map (33) that ctx 80 composites: here the
+     * cluster shows CarPlay's OWN map video decoded by altscreen_render, not the
+     * stock native map. A5-class only (not G24), same guard as ctx 80. */
+    private static final int CTX_CARPLAY_VIDEO     = 81;   // CarPlay video only
+    private static final int CTX_CARPLAY_VIDEO_NAV = 82;   // CarPlay video + maneuver + backings
     private static final int FIRST_CARPLAY_CONTEXT = 80;   // every stock context id is < this
 
     /* ---- context-table sizing / G24 KDK variants ---- */
-    private static final int DC_SIZE_A5  = 82;    // stock 0..78 + CarPlay 80
+    private static final int DC_SIZE_A5  = 83;    // stock 0..78 + CarPlay 80/81/82
     private static final int DC_SIZE_G24 = 158;   // stock + the +79 KDK-hoisted variants
     private static final int G24_KDK_CTX_OFFSET = 79;
     private int lastBlockedCarPlayContext = -1;
@@ -177,6 +185,11 @@ public class DisplayManagerMIB2High extends DisplayManager implements IDisplayLi
          *   74<->80 switch is driven by ScreenModule (no-nav state is plain stock ctx 74). */
         if (this.framework.getKombiType() != KOMBI_TYPE_G24) {
             this.dc[CTX_CARPLAY_NAV] = new DisplayContext(CTX_CARPLAY_NAV, new int[]{98, 101, 102, 33});
+            /* AltScreen CarPlay video contexts. Displayable 99 is a managed window
+             * created by altscreen_render (same mechanism as 98). z-order = array
+             * order (index 0 = front): maneuver over KDK backings over video. */
+            this.dc[CTX_CARPLAY_VIDEO]     = new DisplayContext(CTX_CARPLAY_VIDEO, new int[]{99});
+            this.dc[CTX_CARPLAY_VIDEO_NAV] = new DisplayContext(CTX_CARPLAY_VIDEO_NAV, new int[]{98, 101, 102, 99});
         } else {
             this.defineContextsForG24();
         }
