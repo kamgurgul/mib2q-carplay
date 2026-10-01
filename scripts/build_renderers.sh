@@ -39,7 +39,7 @@ docker run --rm --platform=linux/amd64 -v "$PROJECT_DIR":/src "$IMG" bash -c '
   CC=arm-unknown-nto-qnx6.5.0eabi-gcc
   CXX=arm-unknown-nto-qnx6.5.0eabi-g++
   AR=arm-unknown-nto-qnx6.5.0eabi-ar
-  mkdir -p /src/build/maneuver-scene-qnx
+  mkdir -p /tmp/maneuver-scene-qnx   # container-local (9p + 32-bit ar = EOVERFLOW)
   ABI_INCLUDE=/src/toolchain/qnx65-abi/include
   GRID="'"$GRID"'"
 
@@ -57,14 +57,14 @@ docker run --rm --platform=linux/amd64 -v "$PROJECT_DIR":/src "$IMG" bash -c '
   gen_stub libGLESv2.so.1  "\bgl[A-Z][A-Za-z0-9]+"  $MR_SRCS
   SCENE_OBJECTS=""
   for source in scene/scene.cpp scene/geometry.cpp scene/layout.cpp scene/lane_panel.cpp; do
-    object=/src/build/maneuver-scene-qnx/$(basename "$source" .cpp).o
+    object=/tmp/maneuver-scene-qnx/$(basename "$source" .cpp).o
     $CXX -O2 -std=c++11 -Wall -Wextra -fno-exceptions -fno-rtti \
         -D__QNX__ -DPLATFORM_QNX -fdata-sections -ffunction-sections $GRID \
         -I. -I../common -I"$ABI_INCLUDE" -c "$source" -o "$object"
     SCENE_OBJECTS="$SCENE_OBJECTS $object"
   done
-  rm -f /src/build/libmaneuver_scene.a
-  $AR rcs /src/build/libmaneuver_scene.a $SCENE_OBJECTS
+  rm -f /tmp/libmaneuver_scene.a
+  $AR rcs /tmp/libmaneuver_scene.a $SCENE_OBJECTS && cp /tmp/libmaneuver_scene.a /src/build/ 2>/dev/null || true
   $CC -O2 -std=gnu99 -Wall -D__QNX__ -DPLATFORM_QNX -fdata-sections -ffunction-sections $GRID \
       -I. -I../common -I"$ABI_INCLUDE" $MR_SRCS $SCENE_OBJECTS \
       -o /src/build/maneuver_render \

@@ -33,6 +33,7 @@ public final class ClusterLayerController {
     private static final int MANEUVER      = 98;    /* maneuver_render (Software) */
     private static final int BACKING_SPORT = 101;   /* 987 KDK backing, 328x180 */
     private static final int BACKING_POPUP = 102;   /* 987 KDK backing, 210x153 */
+    private static final int VIDEO         = 99;    /* altscreen_render CarPlay map video */
     /* Stock CombiMapController/Layout slots.  Names describe the KDK stage, not the skin: the
      * in-tube values themselves differ between LayoutMIB2HighB9 and LayoutMIB2HighB9Sport. */
     private static final int LC_IN_TUBE_X = 58, LC_IN_TUBE_Y = 59;
@@ -41,8 +42,12 @@ public final class ClusterLayerController {
     private static final int LC_POPUP_CROP_W = 120, LC_POPUP_CROP_H = 121;
     private static final int LC_IN_TUBE_CROP_X = 122, LC_IN_TUBE_CROP_Y = 123;
     private static final int LC_IN_TUBE_CROP_W = 124, LC_IN_TUBE_CROP_H = 125;
-    /* Stock map-only offset, recorded for diagnostics; never applied to KDK. */
+    /* Stock map-only offset: applied to the map planes (and so to our video plane
+     * 99, which replaces them in ctx 81/82), never to the KDK panel. */
     private static final int LC_SMALL_STAGE_DX = 80, LC_SMALL_STAGE_DY = 81;
+    /* Map origin stock uses for displayables 33/58 (CombiMapController.positionMap).
+     * Plane 99 stands in for those planes, so it takes the same origin. */
+    private static final int LC_MAP_X = 108, LC_MAP_Y = 109;
     private static final Object LOCK = new Object();
     private static final Object APPLY_LOCK = new Object();
     private static IDisplayManagerKombiControl lastDm;
@@ -60,6 +65,7 @@ public final class ClusterLayerController {
         59, 27, 210, 153,
         0, 0, 328, 180,
         -476, 0,
+        0, 26,
         "fallback-sport");
     private static boolean haveLayout;
     private static boolean errorLogged;
@@ -93,12 +99,14 @@ public final class ClusterLayerController {
         final int popupCropX, popupCropY, popupCropW, popupCropH;
         final int inTubeCropX, inTubeCropY, inTubeCropW, inTubeCropH;
         final int smallStageDX, smallStageDY;
+        final int mapX, mapY;
         final String layoutName;
 
         Geometry(int inTubeX, int inTubeY, int popupX, int popupY,
                  int popupCropX, int popupCropY, int popupCropW, int popupCropH,
                  int inTubeCropX, int inTubeCropY, int inTubeCropW, int inTubeCropH,
                  int smallStageDX, int smallStageDY,
+                 int mapX, int mapY,
                  String layoutName) {
             this.inTubeX = inTubeX;
             this.inTubeY = inTubeY;
@@ -114,6 +122,8 @@ public final class ClusterLayerController {
             this.inTubeCropH = inTubeCropH;
             this.smallStageDX = smallStageDX;
             this.smallStageDY = smallStageDY;
+            this.mapX = mapX;
+            this.mapY = mapY;
             this.layoutName = layoutName;
         }
 
@@ -125,7 +135,8 @@ public final class ClusterLayerController {
                 && popupCropW == other.popupCropW && popupCropH == other.popupCropH
                 && inTubeCropX == other.inTubeCropX && inTubeCropY == other.inTubeCropY
                 && inTubeCropW == other.inTubeCropW && inTubeCropH == other.inTubeCropH
-                && smallStageDX == other.smallStageDX && smallStageDY == other.smallStageDY;
+                && smallStageDX == other.smallStageDX && smallStageDY == other.smallStageDY
+                && mapX == other.mapX && mapY == other.mapY;
         }
     }
 
@@ -145,6 +156,8 @@ public final class ClusterLayerController {
             layout.getIntegerConstant(LC_IN_TUBE_CROP_H),
             layout.getIntegerConstant(LC_SMALL_STAGE_DX),
             layout.getIntegerConstant(LC_SMALL_STAGE_DY),
+            layout.getIntegerConstant(LC_MAP_X),
+            layout.getIntegerConstant(LC_MAP_Y),
             layout.getClass().getName());
     }
 
@@ -290,8 +303,26 @@ public final class ClusterLayerController {
          * correct.  The offset is logged below for diagnosis, never applied. */
         boolean navActive = com.luka.carplay.core.ScreenModule.isNavActive();
         int carplayOpacity = carplayOwnsCluster && navActive ? permittedOpacity : 0;
-        logDecision(geometry, popup, carplayOpacity);
+        /* Plane 99 (CarPlay map video) replaces the stock map planes 33/58 in ctx
+         * 81/82, so it takes the stock map origin AND the small-stage offset stock
+         * applies to those planes. Its visibility follows the VIDEO, not navActive:
+         * ctx 81 is video with no maneuver. Nothing else in the patch touches 99,
+         * so without this it keeps its default opacity/position and the cluster
+         * shows only the maneuver overlay. */
+        boolean videoActive = carplayOwnsCluster
+            && com.luka.carplay.core.ScreenModule.isAltScreenActive();
+        boolean smallStage = com.luka.carplay.core.ScreenModule.isSmallScreenViewArea();
+        int videoX = geometry.mapX + (smallStage ? geometry.smallStageDX : 0);
+        int videoY = geometry.mapY + (smallStage ? geometry.smallStageDY : 0);
+        logDecision(geometry, popup, carplayOpacity, videoActive, videoX, videoY);
         try {
+            /* Applied on every path below, including the early returns. */
+            if (videoActive) {
+                dm.setPosition(VIDEO, terminal, videoX, videoY);
+                dm.setOpacity(VIDEO, terminal, 100);
+            } else {
+                dm.setOpacity(VIDEO, terminal, 0);
+            }
             /* 101/102 are shared with the stock KDK renderer.  Restore the last stock model
              * when CarPlay releases terminal 1; otherwise a disconnect can leave
              * Audi navigation's backing permanently transparent until an unrelated KDK delta. */
@@ -342,7 +373,8 @@ public final class ClusterLayerController {
     /** One line per distinct geometry decision — the exact numbers written to the DM.
      *  Every Classic/Sport/singlescreen bug so far was a guess about which branch ran; this makes
      *  it readable in /tmp/carplay_java.log instead. Logged only when the tuple changes. */
-    private static void logDecision(Geometry g, boolean popup, int opacity) {
+    private static void logDecision(Geometry g, boolean popup, int opacity,
+                                    boolean videoActive, int videoX, int videoY) {
         int cropX = popup ? g.popupCropX : g.inTubeCropX;
         int cropY = popup ? g.popupCropY : g.inTubeCropY;
         int cropW = popup ? g.popupCropW : g.inTubeCropW;
@@ -358,7 +390,9 @@ public final class ClusterLayerController {
             + " opacity=" + opacity
             + " src=(" + cropX + "," + cropY + " " + cropW + "x" + cropH + ")"
             + " dst=(" + dstX + "," + dstY + ")"
-            + " smallStageOffset=(" + g.smallStageDX + "," + g.smallStageDY + ") [not applied]";
+            + " smallStageOffset=(" + g.smallStageDX + "," + g.smallStageDY + ") [not applied to KDK]"
+            + " video=" + (videoActive ? "on" : "off")
+            + " videoDst=(" + videoX + "," + videoY + ")";
 
         /* Every value that can change the picture is in the line, so comparing the line itself
          * is the dedup key. */

@@ -293,9 +293,12 @@ the interposers are not on the call path. Enable inline hooks:
 ```
 
 The inline installer logs the actual prologue bytes if they differ from the
-MU1438-observed values and skips only the mismatching function (PLT stays active
-for it). Read the bytes from `/tmp/altscreen111.log` and set the expectations for
-your firmware in `gen2_install_inline_hooks()` if you need the inline path.
+MU1438-observed values and leaves the mismatching symbol on PLT. It will not
+`MAP_FIXED`-replace a libairplay text page: by the time the hook runs, other
+`dio_manager` threads may be executing that page. If the page cannot be made
+writable in place, the log says so and the process stays on PLT. Read the bytes
+from `/tmp/altscreen111.log` and set the expectations for your firmware in
+`gen2_install_inline_hooks()` if you need the inline path.
 
 ---
 
@@ -312,22 +315,31 @@ If 99 does not bind, pick another free displayable id and set it in three places
 
 ---
 
-## 10. ⚠ VERIFY: plane-99 geometry
+## 10. plane-99 opacity and geometry (implemented — verify the rect on-car)
 
-For a first bring-up the renderer draws the decoded frame across its whole
-window and ctx 81 shows displayable 99 as-is. If the CarPlay map must occupy the
-same rectangle as the stock cluster map (not the full panel), plane 99 needs the
-same placement the stock map planes 33/58 get. Stock does this in
-`CombiMapController.positionMap()` (`dm.setPosition(MAP_MAIN/MAP_ALT, terminal,
-mapX, mapY)` with the layout's map origin, plus the small-stage offset). Add an
-equivalent `dm.setPosition`/`dm.setCropping` for displayable 99 — the cleanest
-home is a small controller alongside `ClusterLayerController` (which already owns
-the 98/101/102 geometry), applied from `ScreenModule.applySwitch()` after
-selecting ctx 81/82. Measure the exact map rect on your cluster (Classic vs Sport
-layouts differ, like the KDK anchors in [cluster/kdk-geometry](../cluster/kdk-geometry.md)).
+`ClusterLayerController` now drives displayable 99 alongside 98/101/102:
 
-For ctx 82 the maneuver plane 98 and its backings already follow VC Fct44/Fct54
-via `ClusterLayerController`; only plane 99 (the video) needs its rect.
+- **Opacity follows the VIDEO, not `navActive`.** ctx 81 is video *without* a
+  maneuver, so gating plane 99 on `navActive` (as the maneuver planes are) would
+  leave it invisible there. It is applied on every path, including the early
+  returns, so no branch can leave 99 at a stale opacity.
+- **Position = the stock map origin** (layout slots 108/109 — what stock uses for
+  planes 33/58 in `CombiMapController.positionMap()`) **plus the small-stage
+  offset** (80/81) stock applies to those map planes. Plane 99 stands in for the
+  map, so it takes the map's placement — *not* the KDK offset, which
+  [cluster/kdk-geometry](../cluster/kdk-geometry.md) warns must never be applied
+  to the panel.
+
+> This was the direct cause of a "**only the maneuver arrow shows on the
+> cluster**" failure: nothing set plane 99's opacity, so the video plane was
+> composited in ctx 81/82 but never made visible.
+
+Each decision is logged once — look for `video=on|off videoDst=(x,y)` in the
+`ClusterLayers apply` line in `/tmp/carplay_java.log`. ⚠ The map rect itself is
+still unmeasured on your cluster; if the video is visible but offset, that line
+tells you exactly which origin was used (Classic vs Sport layouts differ).
+
+For ctx 82 the maneuver plane 98 and its backings follow VC Fct44/Fct54 as before.
 
 ---
 
@@ -359,6 +371,7 @@ override the MHI2Q defaults:
 | `ALTSCREEN111_WIDTH`/`_HEIGHT` | 1440/540 | advertised secondary display size |
 | `ALTSCREEN111_TEE_PORT` | 19820 | loopback Annex-B tee |
 | `ALTSCREEN111_INLINE_HOOKS` | 0 | 1 = also install inline prologue hooks (§8) |
+| `ALTSCREEN111_ADVERTISE` | 1 | 0 = leave `/info` byte-for-byte stock (no AltScreen advertisement). Diagnostic lever for sender-negotiation failures — see §14 |
 | `ALTSCREEN111_ENABLED` | 1 | 0 = fully inert (stock CarPlay only) |
 
 Renderer (`altscreen_render`) env:
@@ -368,7 +381,7 @@ Renderer (`altscreen_render`) env:
 | `ALTR_TEE_PORT` | 19820 | must match `ALTSCREEN111_TEE_PORT` |
 | `ALTR_WIDTH`/`ALTR_HEIGHT` | 1440/540 | cluster surface size (§11) |
 | `ALTR_DISPLAYABLE_ID` | 99 | cluster plane id (§9) |
-| `ALTR_LIVE_FILE` | /tmp/altscreen_render.live | liveness signal read by `AltScreenModule` |
+| `ALTR_LIVE_FILE` | /tmp/altscreen_render.live | heartbeat (`pid=<pid>`, mtime refreshed while frames are swapped). `AltScreenModule` ignores a stale file or a dead pid |
 
 Java: `-Dcarplay.altscreen.liveFile=…` overrides the liveness path if you change
 `ALTR_LIVE_FILE`.
@@ -424,3 +437,86 @@ The headless host renderer is handy for isolating the tee: forward the port and
 run it on your host —
 `ssh -L 19820:127.0.0.1:19820 unit` then `altscreen_render/altscreen_render_host`
 prints decoded frame counts without touching the cluster.
+
+---
+
+## 14. Troubleshooting two observed failures
+
+### A. Wireless / dongle CarPlay stops connecting after install
+
+`/info` is the receiver's capability advertisement, and the hook used to **replace**
+`enabledFeatures` wholesale with `["altScreen","viewAreas"]`, destroying everything
+stock advertised. A sender that needs one of those features then fails to
+negotiate. A wireless dongle proxies the session and is stricter than a wired
+iPhone, so it can fail where wired still works.
+
+Fixed: the hook now **merges** — stock entries are preserved, `altScreen` /
+`viewAreas` are appended only when absent, never duplicated, and the key is only
+rewritten when something actually changed. Both the `/info` and the SETUP-response
+paths go through the same merge.
+
+Three other constructor-time hazards were removed at the same time, any of which
+can disturb the stock CarPlay process:
+
+- `signal(SIGPIPE, SIG_IGN)` no longer runs in the ELF constructor on MHI2Q —
+  `dio_manager` snapshots SIGPIPE on its first Cinemo call, and the RGI hook
+  deliberately saves/restores those dispositions via `signal_guard`.
+- no `dlsym` from `.init` (the QNX loader-lock class of failure); `init_api()`
+  runs from the deferred runtime start and can retry.
+- the inline-hook installer refuses the `MAP_FIXED` text-page clone on MHI2Q,
+  because that replaces a libairplay text page while AirPlay threads are
+  executing it. A page that cannot be made writable in place stays on PLT.
+
+**To confirm the cause on your unit**, A/B it:
+
+```sh
+# /info stays pure stock; everything else unchanged
+ALTSCREEN111_ADVERTISE=0   # add to the carplay child env, reconnect the phone
+```
+
+If the dongle works with `ADVERTISE=0` and fails with `=1`, the remaining
+difference is the synthetic AltScreen display appended to `displays` (the merge
+itself is non-destructive). `/tmp/altscreen111.log` prints what stock advertised:
+
+```
+GEN2 stock /info enabledFeatures count=N
+GEN2 stock /info enabledFeatures[i]=<name>
+GEN2 enabledFeatures merge: stockEntries=N altScreen=appended viewAreas=... total=M
+```
+
+### B. Only the maneuver arrow shows on the cluster (no CarPlay video)
+
+Two independent causes, both fixed:
+
+1. **Plane 99 was never made visible.** `ClusterLayerController` set opacity for
+   98/101/102 on every path but never touched 99, so the video plane was
+   composited in ctx 81/82 and stayed invisible. See §10.
+2. **The ctx-72 bounce disowned plane 99.** `applySwitch` bounced through the
+   stock kombi-map context before *every* non-74 target; the DisplayManager
+   disowns managed windows across context transitions, so each 80↔81↔82 move tore
+   down the renderer's window. The bounce is now only taken when coming from
+   stock 74 (or an unknown state), where the MOST encoder really is off.
+
+Supporting fixes in the renderer: `/tmp/altscreen_render.live` is a **heartbeat**
+(holds `pid=`, rewritten while frames are swapped, unlinked at startup so a
+predecessor's crash cannot pin ctx 81/82), it is only written when the draw **and**
+`eglSwapBuffers` succeed, and a disowned window is recovered via
+`cluster_surface_lost()` → `cluster_surface_recreate()` + EGL rebind.
+
+**Triage order** — walk the chain and stop at the first line that is missing:
+
+| # | Where | Expect |
+| --- | --- | --- |
+| 1 | `/tmp/altscreen111.log` | `GEN2 lazy runtime ready target=mhi2q` |
+| 2 | same | `GEN2 enabledFeatures merge: stockEntries=…` |
+| 3 | same | `GEN2 SETUP contains stream111 cid=…` (sender offered 111) |
+| 4 | same | `captured stock CarPlay master AES key …` — **if absent, see §7** |
+| 5 | same | `AltScreen stream 111 connected` (else: port/firewall, §8) |
+| 6 | `/tmp/altscreen_render.status` | `state=decoding`, rising `frames=` |
+| 7 | `/tmp/altscreen_render.log` | `GL up on displayable 99` (else §9) |
+| 8 | `/tmp/carplay_java.log` | `altScreen video live -> ctx 81/82`, `cluster -> ctx 81` |
+| 9 | same | `ClusterLayers apply … video=on videoDst=(x,y)` |
+
+Steps 1–3 failing points at the advertisement (A). Step 4 is the documented
+session-key gap. Steps 8–9 present but no picture means geometry (§10) or the
+displayable id (§9).

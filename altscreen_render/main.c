@@ -10,8 +10,10 @@
  *
  * Java (mib2q-carplay-rgi) owns cluster CONTEXT selection. This process only
  * owns the pixels of displayable 99 and reports liveness so Java can switch to
- * the CarPlay-video context. Liveness signal: /tmp/altscreen_render.live exists
- * while fresh video is being drawn; /tmp/altscreen_render.status carries detail.
+ * the CarPlay-video context. Liveness signal: /tmp/altscreen_render.live holds
+ * "pid=<pid>" and is rewritten while frames are swapped to the screen. Java
+ * requires a fresh mtime and a live pid, so a crash cannot pin ctx 81/82.
+ * /tmp/altscreen_render.status carries detail.
  *
  * On a non-QNX host this builds without GL/EGL and runs as a headless tee sink
  * (connect + decode + frame count), which is useful over an SSH port-forward.
@@ -71,6 +73,7 @@ static uint64_t now_ms(void)
 static const char *g_live_file;
 static const char *g_status_file;
 static int g_live_written;
+static uint64_t g_live_touch_ms;
 
 static void write_status(const char *state, int w, int h, uint64_t frames)
 {
@@ -83,13 +86,25 @@ static void write_status(const char *state, int w, int h, uint64_t frames)
     close(fd);
 }
 
+/* Heartbeat, not a create-once flag. set_live(0) always unlinks, including a
+ * file left by a previous process that this one did not create. */
 static void set_live(int live)
 {
-    if (live && !g_live_written) {
-        int fd = open(g_live_file, O_WRONLY|O_CREAT|O_TRUNC, 0644);
-        if (fd >= 0) { (void)!write(fd, "1\n", 2); close(fd); g_live_written = 1; }
-    } else if (!live && g_live_written) {
-        unlink(g_live_file);
+    if (live) {
+        char b[32];
+        int n, fd;
+        uint64_t now = now_ms();
+        if (g_live_written && (now - g_live_touch_ms) < 200) return;
+        n = snprintf(b, sizeof(b), "pid=%d\n", (int)getpid());
+        fd = open(g_live_file, O_WRONLY|O_CREAT|O_TRUNC, 0644);
+        if (fd >= 0) {
+            if (n > 0) (void)!write(fd, b, (size_t)n);
+            close(fd);
+            g_live_written = 1;
+            g_live_touch_ms = now;
+        }
+    } else {
+        if (g_live_file) unlink(g_live_file);
         g_live_written = 0;
     }
 }
@@ -105,10 +120,17 @@ struct app {
     EGLDisplay dpy;
     EGLSurface surf;
     EGLContext ctx;
+    EGLConfig ecfg;
     cluster_surface_t *cs;
     int have_gl;
+    int egl_ready;
 #endif
 };
+
+#ifdef PLATFORM_QNX
+static int present_frame(struct app *a, const altr_frame_t *f);
+static void gl_shutdown(struct app *a);
+#endif
 
 static void on_frame(void *user, const altr_frame_t *f)
 {
@@ -117,12 +139,11 @@ static void on_frame(void *user, const altr_frame_t *f)
     a->last_w = f->width; a->last_h = f->height;
     a->last_frame_ms = now_ms();
 #ifdef PLATFORM_QNX
-    if (a->have_gl && a->gl) {
-        if (altr_gles_draw(a->gl, f) == 0)
-            eglSwapBuffers(a->dpy, a->surf);
-    }
-#endif
+    if (a->have_gl && a->gl && present_frame(a, f) == 0)
+        set_live(1);
+#else
     set_live(1);
+#endif
     if (a->frames <= 2 || (a->frames % 120) == 0)
         write_status("decoding", a->last_w, a->last_h, a->frames);
 }
@@ -164,6 +185,7 @@ static int gl_init(struct app *a, int displayable_id)
     if (a->dpy == EGL_NO_DISPLAY) { fprintf(stderr, "altscreen_render: eglGetDisplay failed\n"); return -1; }
     EGLint maj, min;
     if (!eglInitialize(a->dpy, &maj, &min)) { fprintf(stderr, "altscreen_render: eglInitialize failed\n"); return -1; }
+    a->egl_ready = 1;
 
     EGLint cfg_attr[] = {
         EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
@@ -175,6 +197,7 @@ static int gl_init(struct app *a, int displayable_id)
     if (!eglChooseConfig(a->dpy, cfg_attr, &ec, 1, &ncfg) || ncfg == 0) {
         fprintf(stderr, "altscreen_render: eglChooseConfig failed\n"); return -1;
     }
+    a->ecfg = ec;
     EGLint ctx_attr[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE };
     eglBindAPI(EGL_OPENGL_ES_API);
     a->ctx = eglCreateContext(a->dpy, ec, EGL_NO_CONTEXT, ctx_attr);
@@ -193,6 +216,56 @@ static int gl_init(struct app *a, int displayable_id)
             displayable_id, a->surface_w, a->surface_h, maj, min);
     return 0;
 }
+
+/* Drop the EGL surface bound to a window the display manager has disowned,
+ * open a new managed window, and rebind. cluster_surface_recreate rate-limits
+ * itself to one attempt per 100 ms. */
+static int rebind_window(struct app *a)
+{
+    fprintf(stderr, "altscreen_render: recreating cluster window\n");
+    if (a->dpy != EGL_NO_DISPLAY && a->surf != EGL_NO_SURFACE) {
+        eglMakeCurrent(a->dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        eglDestroySurface(a->dpy, a->surf);
+        a->surf = EGL_NO_SURFACE;
+    }
+    if (!a->cs || cluster_surface_recreate(a->cs) != 0) return -1;
+    a->surf = eglCreateWindowSurface(a->dpy, a->ecfg,
+                (EGLNativeWindowType)cluster_surface_window(a->cs), NULL);
+    if (a->surf == EGL_NO_SURFACE) return -1;
+    if (!eglMakeCurrent(a->dpy, a->surf, a->surf, a->ctx)) {
+        eglDestroySurface(a->dpy, a->surf);
+        a->surf = EGL_NO_SURFACE;
+        return -1;
+    }
+    eglSwapInterval(a->dpy, 1);
+    return 0;
+}
+
+static int present_frame(struct app *a, const altr_frame_t *f)
+{
+    int lost = (a->surf == EGL_NO_SURFACE) || cluster_surface_lost(a->cs);
+    if (lost && rebind_window(a) != 0) return -1;
+    if (altr_gles_draw(a->gl, f) != 0) return -1;
+    if (!eglSwapBuffers(a->dpy, a->surf)) return -1;
+    return 0;
+}
+
+static void gl_shutdown(struct app *a)
+{
+    if (a->gl) { altr_gles_destroy(a->gl); a->gl = NULL; }
+    if (a->dpy != EGL_NO_DISPLAY) {
+        eglMakeCurrent(a->dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        if (a->surf != EGL_NO_SURFACE) eglDestroySurface(a->dpy, a->surf);
+        if (a->ctx != EGL_NO_CONTEXT) eglDestroyContext(a->dpy, a->ctx);
+        if (a->egl_ready) eglTerminate(a->dpy);
+    }
+    a->surf = EGL_NO_SURFACE;
+    a->ctx = EGL_NO_CONTEXT;
+    a->dpy = EGL_NO_DISPLAY;
+    a->egl_ready = 0;
+    if (a->cs) { cluster_surface_destroy(a->cs); a->cs = NULL; }
+    a->have_gl = 0;
+}
 #endif
 
 int main(void)
@@ -207,13 +280,19 @@ int main(void)
     int port = env_i("ALTR_TEE_PORT", 19820);
     g_live_file   = env_s("ALTR_LIVE_FILE",   "/tmp/altscreen_render.live");
     g_status_file = env_s("ALTR_STATUS_FILE", "/tmp/altscreen_render.status");
+    unlink(g_live_file); /* a predecessor crash must not pin ctx 81/82 */
     int live_timeout = env_i("ALTR_LIVE_TIMEOUT_MS", 500);
     a.surface_w = env_i("ALTR_WIDTH", 1440);
     a.surface_h = env_i("ALTR_HEIGHT", 540);
 
 #ifdef PLATFORM_QNX
+    a.dpy = EGL_NO_DISPLAY;
+    a.surf = EGL_NO_SURFACE;
+    a.ctx = EGL_NO_CONTEXT;
     if (gl_init(&a, env_i("ALTR_DISPLAYABLE_ID", 99)) != 0) {
         write_status("gl_error", 0, 0, 0);
+        gl_shutdown(&a);
+        set_live(0);
         return 1;
     }
 #else
@@ -221,7 +300,14 @@ int main(void)
 #endif
 
     altr_decoder_t *dec = altr_decode_create(on_frame, &a);
-    if (!dec) { write_status("decoder_error", 0, 0, 0); return 1; }
+    if (!dec) {
+        write_status("decoder_error", 0, 0, 0);
+        set_live(0);
+#ifdef PLATFORM_QNX
+        gl_shutdown(&a);
+#endif
+        return 1;
+    }
 
     write_status("connecting", 0, 0, 0);
 
@@ -269,13 +355,7 @@ done:
     write_status("stopped", a.last_w, a.last_h, a.frames);
     altr_decode_destroy(dec);
 #ifdef PLATFORM_QNX
-    if (a.have_gl) {
-        altr_gles_destroy(a.gl);
-        eglMakeCurrent(a.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-        if (a.surf != EGL_NO_SURFACE) eglDestroySurface(a.dpy, a.surf);
-        if (a.ctx != EGL_NO_CONTEXT) eglDestroyContext(a.dpy, a.ctx);
-        if (a.cs) cluster_surface_destroy(a.cs);
-    }
+    gl_shutdown(&a);
 #endif
     return 0;
 }

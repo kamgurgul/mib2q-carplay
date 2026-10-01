@@ -26,6 +26,38 @@ struct altr_decoder {
     uint64_t         errors;
 };
 
+static void emit(altr_decoder_t *d);
+
+/* Copy the parser's AU and send it. On EAGAIN, drain output and resend once. */
+static int send_au(altr_decoder_t *d)
+{
+    AVPacket *owned;
+    int r;
+    int attempt;
+
+    if (!d->parser) { d->errors++; return -1; }
+    owned = av_packet_alloc();
+    if (!owned) { d->errors++; return -1; }
+    if (av_new_packet(owned, d->pkt->size) < 0) {
+        av_packet_free(&owned);
+        d->errors++;
+        return -1;
+    }
+    memcpy(owned->data, d->pkt->data, (size_t)d->pkt->size);
+    r = 0;
+    for (attempt = 0; attempt < 2; attempt++) {
+        r = avcodec_send_packet(d->ctx, owned);
+        if (r != AVERROR(EAGAIN)) break;
+        emit(d);
+    }
+    av_packet_free(&owned);
+    if (r < 0 && r != AVERROR_EOF) {
+        d->errors++;
+        return -1;
+    }
+    return 0;
+}
+
 static void emit(altr_decoder_t *d)
 {
     while (1) {
@@ -85,7 +117,7 @@ fail:
 
 int altr_decode_feed(altr_decoder_t *d, const uint8_t *data, size_t len)
 {
-    if (!d) return -1;
+    if (!d || !d->parser) return -1;
     while (len > 0) {
         int used = av_parser_parse2(d->parser, d->ctx,
                                     &d->pkt->data, &d->pkt->size,
@@ -95,9 +127,10 @@ int altr_decode_feed(altr_decoder_t *d, const uint8_t *data, size_t len)
         data += used;
         len  -= (size_t)used;
         if (d->pkt->size > 0) {
-            int r = avcodec_send_packet(d->ctx, d->pkt);
-            if (r < 0 && r != AVERROR(EAGAIN)) {
-                d->errors++;
+            /* Parser output is only valid until the next av_parser_parse2, and
+             * EAGAIN means this AU was not accepted. Own a copy so the retry
+             * after emit() still has the bytes. */
+            if (send_au(d) != 0) {
                 /* Non-fatal: skip this access unit, keep the stream going. */
             }
             emit(d);
@@ -108,10 +141,19 @@ int altr_decode_feed(altr_decoder_t *d, const uint8_t *data, size_t len)
 
 void altr_decode_flush(altr_decoder_t *d)
 {
-    if (!d) return;
+    if (!d || !d->ctx) return;
     avcodec_send_packet(d->ctx, NULL); /* enter drain mode */
     emit(d);
     avcodec_flush_buffers(d->ctx);
+    /* The parser keeps any partial NAL. The next tee connection is a new stream. */
+    if (d->parser) {
+        av_parser_close(d->parser);
+        d->parser = NULL;
+    }
+    if (d->codec)
+        d->parser = av_parser_init(d->codec->id);
+    if (!d->parser)
+        fprintf(stderr, "decode: parser re-init failed\n");
 }
 
 void altr_decode_destroy(altr_decoder_t *d)

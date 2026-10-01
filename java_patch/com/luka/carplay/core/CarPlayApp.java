@@ -47,7 +47,16 @@ public final class CarPlayApp {
     private static int lifecycleGeneration;
     private static int lifecycleAppliedGeneration;
     private static IContext desiredContext;
-    private static final int RGD_MODULE_INDEX = 1;
+    /* Looked up by name so inserting a module ahead of RgdModule cannot retarget
+     * the navigation-service rebind onto AltScreen. */
+    private static final int RGD_MODULE_INDEX = indexOf("rgd");
+
+    private static int indexOf(String name) {
+        for (int i = 0; i < MODULES.length; i++) {
+            if (name.equals(MODULES[i].name())) return i;
+        }
+        return -1;
+    }
 
     private CarPlayApp() {}
 
@@ -297,6 +306,10 @@ public final class CarPlayApp {
                                     != activeLifecycleGeneration) return;
                     }
                     stopRetry();
+                    if (RGD_MODULE_INDEX < 0) {
+                        Log.w(TAG, "rgd rebind: module missing");
+                        return;
+                    }
                     try { MODULES[RGD_MODULE_INDEX].stop(); }
                     catch (Throwable x) { Log.w(TAG, "rgd rebind stop: " + x); }
                     synchronized (lock) { started[RGD_MODULE_INDEX] = false; }

@@ -29,10 +29,10 @@ fi
 can_write "$CARD" || { echo "FAILED: card at $CARD is not writable"; exit 1; }
 
 SRC=
-for f in /ifs/lsd.jxe /mnt/app/eso/hmi/lsd/lsd.jxe; do
+for f in /mnt/app/eso/hmi/lsd/lsd.jxe /ifs/lsd.jxe; do
     [ -r "$f" ] && { SRC=$f; break; }
 done
-[ -n "$SRC" ] || { echo "FAILED: lsd.jxe not found"; exit 1; }
+[ -n "$SRC" ] || { echo "FAILED: lsd.jxe not found (try: find / -name lsd.jxe)"; exit 1; }
 
 OUT=$CARD/lsd_extract
 mkdir -p "$OUT" || { echo "FAILED mkdir $OUT"; exit 1; }

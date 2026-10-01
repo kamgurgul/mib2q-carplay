@@ -348,20 +348,24 @@ public final class ScreenModule implements Module {
     private void applySwitch(int ctx, IDisplayManager d) {
         try {
             if (ctx != CTX_STOCK_CLUSTER) {
-                /* Coming from stock (74) or an unknown state (-1): the MOST encoder is off, so the grab
-                 * of the cluster needs a real context change via a throwaway ctx (72) + settle before
-                 * switchContext(80) will re-point the encoder. */
-                int bounce = (ctx != CTX_BOUNCE) ? CTX_BOUNCE : CTX_STOCK_CLUSTER;
-                d.switchContext(bounce, TERMINAL_CLUSTER, null);
-                try { Thread.sleep(BOUNCE_SLEEP_MS); }
-                catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
-                /* Coalesce: if the desired target or the DM changed during the settle, abandon THIS
-                 * switch (cluster is on the bounce ctx) and let the loop apply the latest desired. */
-                synchronized (LOCK) {
-                    if (dm != d || desiredCtx != ctx) {
-                        currentCtx = -1;
-                        Log.i(TAG, "switch(" + ctx + ") superseded during bounce → " + desiredCtx);
-                        return;
+                int from;
+                synchronized (LOCK) { from = currentCtx; }
+                /* Bounce only when the MOST encoder was off (stock 74, or never applied).
+                 * 80/81/82 already have it running; a ctx 72 detour flashes the stock map
+                 * and disowns planes 98 and 99. */
+                if (from == CTX_STOCK_CLUSTER || from < 0) {
+                    int bounce = (ctx != CTX_BOUNCE) ? CTX_BOUNCE : CTX_STOCK_CLUSTER;
+                    d.switchContext(bounce, TERMINAL_CLUSTER, null);
+                    try { Thread.sleep(BOUNCE_SLEEP_MS); }
+                    catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+                    /* Coalesce: if the desired target or the DM changed during the settle, abandon THIS
+                     * switch (cluster is on the bounce ctx) and let the loop apply the latest desired. */
+                    synchronized (LOCK) {
+                        if (dm != d || desiredCtx != ctx) {
+                            currentCtx = -1;
+                            Log.i(TAG, "switch(" + ctx + ") superseded during bounce → " + desiredCtx);
+                            return;
+                        }
                     }
                 }
                 d.switchContext(ctx, TERMINAL_CLUSTER, null);

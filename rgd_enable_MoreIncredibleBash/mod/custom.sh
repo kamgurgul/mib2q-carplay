@@ -21,8 +21,12 @@ if [ ! -d /mnt/app/eso/hmi/lsd ] && [ -d /net/mmx/mnt/app/eso/hmi/lsd ]; then
 fi
 
 echo "custom.sh: enabling CarPlay route guidance"
-mount -uw /mnt/app 2>/dev/null || true
+mount -uw /mnt/app 2>/dev/null || echo "custom.sh: mount -uw /mnt/app failed"
 rm -f /mnt/app/carplay_rgd.disabled /tmp/carplay_rgd.disabled
+if [ -e /mnt/app/carplay_rgd.disabled ] || [ -e /tmp/carplay_rgd.disabled ]; then
+    echo "FAILED: route-guidance marker still present (is /mnt/app read-only?)"
+    exit 1
+fi
 sync
 echo "DONE. Route guidance ON."
 echo "Reconnect the phone to apply (no reboot needed). Run rgd_disable for CarPlay video only."

@@ -14,11 +14,18 @@
 
 #include <GLES2/gl2.h>
 
+#ifndef GL_UNPACK_ROW_LENGTH
+#define GL_UNPACK_ROW_LENGTH 0x0CF2
+#endif
+
 struct altr_gles {
     int sw, sh;
     GLuint prog;
     GLuint texY, texU, texV;
-    int texW, texH; /* current allocated luma texture size */
+    int yW, yH, uW, uH, vW, vH; /* allocated texture storage; 0 until the first upload */
+    int unpack_row;     /* GL_EXT_unpack_subimage */
+    uint8_t *packY, *packU, *packV;
+    size_t packYcap, packUcap, packVcap;
     GLint aPos, aTex, uY, uU, uV;
 };
 
@@ -101,32 +108,65 @@ altr_gles_t *altr_gles_create(int surface_w, int surface_h)
     g->uU = glGetUniformLocation(g->prog, "uU");
     g->uV = glGetUniformLocation(g->prog, "uV");
     g->texY = mktex(); g->texU = mktex(); g->texV = mktex();
+    {
+        const char *ext = (const char *)glGetString(GL_EXTENSIONS);
+        g->unpack_row = ext && strstr(ext, "GL_EXT_unpack_subimage") != NULL;
+    }
 
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
     return g;
 }
 
-static void upload_plane(GLuint tex, int unit, const uint8_t *data,
-                         int stride, int w, int h)
+static int ensure_pack(uint8_t **buf, size_t *cap, size_t need)
 {
+    uint8_t *n;
+    if (*cap >= need) return 0;
+    n = (uint8_t *)realloc(*buf, need);
+    if (!n) return -1;
+    *buf = n;
+    *cap = need;
+    return 0;
+}
+
+/* One upload per plane. Storage is allocated only when the size changes.
+ * Padded FFmpeg linesizes are packed, or passed through GL_UNPACK_ROW_LENGTH
+ * when the driver has GL_EXT_unpack_subimage. */
+static int upload_plane(altr_gles_t *g, GLuint tex, int unit, const uint8_t *data,
+                        int stride, int w, int h, int *allocW, int *allocH,
+                        uint8_t **pack, size_t *packcap)
+{
+    const uint8_t *src = data;
+    int row;
+    int use_rowlen = 0;
+
+    if (!data || w <= 0 || h <= 0 || stride < w) return -1;
+    if (stride != w) {
+        if (g->unpack_row) {
+            use_rowlen = 1;
+        } else {
+            if (ensure_pack(pack, packcap, (size_t)w * (size_t)h) != 0) return -1;
+            for (row = 0; row < h; row++)
+                memcpy(*pack + (size_t)row * (size_t)w,
+                       data + (size_t)row * (size_t)stride, (size_t)w);
+            src = *pack;
+        }
+    }
     glActiveTexture(GL_TEXTURE0 + unit);
     glBindTexture(GL_TEXTURE_2D, tex);
-    /* linesize may exceed width; set unpack row length via per-row upload when
-     * stride != w. GLES2 has no GL_UNPACK_ROW_LENGTH, so upload row by row when
-     * padded. Fast path (stride==w) uploads in one call. */
-    if (stride == w) {
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    if (use_rowlen) glPixelStorei(GL_UNPACK_ROW_LENGTH, stride);
+    if (*allocW != w || *allocH != h) {
         glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, w, h, 0,
-                     GL_LUMINANCE, GL_UNSIGNED_BYTE, data);
+                     GL_LUMINANCE, GL_UNSIGNED_BYTE, src);
+        *allocW = w;
+        *allocH = h;
     } else {
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, w, h, 0,
-                     GL_LUMINANCE, GL_UNSIGNED_BYTE, NULL);
-        for (int row = 0; row < h; row++)
-            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, row, w, 1,
-                            GL_LUMINANCE, GL_UNSIGNED_BYTE, data + (size_t)row * stride);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h,
+                        GL_LUMINANCE, GL_UNSIGNED_BYTE, src);
     }
+    if (use_rowlen) glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    return 0;
 }
 
 int altr_gles_draw(altr_gles_t *g, const altr_frame_t *f)
@@ -140,9 +180,12 @@ int altr_gles_draw(altr_gles_t *g, const altr_frame_t *f)
     glClear(GL_COLOR_BUFFER_BIT);
     glUseProgram(g->prog);
 
-    upload_plane(g->texY, 0, f->y, f->ystride, f->width, f->height);
-    upload_plane(g->texU, 1, f->u, f->ustride, cw, ch);
-    upload_plane(g->texV, 2, f->v, f->vstride, cw, ch);
+    if (upload_plane(g, g->texY, 0, f->y, f->ystride, f->width, f->height,
+                     &g->yW, &g->yH, &g->packY, &g->packYcap) != 0) return -1;
+    if (upload_plane(g, g->texU, 1, f->u, f->ustride, cw, ch,
+                     &g->uW, &g->uH, &g->packU, &g->packUcap) != 0) return -1;
+    if (upload_plane(g, g->texV, 2, f->v, f->vstride, cw, ch,
+                     &g->vW, &g->vH, &g->packV, &g->packVcap) != 0) return -1;
     glUniform1i(g->uY, 0);
     glUniform1i(g->uU, 1);
     glUniform1i(g->uV, 2);
@@ -168,6 +211,9 @@ void altr_gles_destroy(altr_gles_t *g)
     if (g->texU) glDeleteTextures(1, &g->texU);
     if (g->texV) glDeleteTextures(1, &g->texV);
     if (g->prog) glDeleteProgram(g->prog);
+    free(g->packY);
+    free(g->packU);
+    free(g->packV);
     free(g);
 }
 
