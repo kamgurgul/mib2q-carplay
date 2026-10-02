@@ -2,15 +2,15 @@
 # Real MU1316 resource policy, reactive properties and commands; fake physical HMI.
 set -euo pipefail
 PROJECT_DIR=$(cd "$(dirname "$0")/.." && pwd)
-TOOLS_DIR="$PROJECT_DIR/../../Tools/jxe2jar"
-JDK="$TOOLS_DIR/jvms/zulu8.78.0.19-ca-jdk8.0.412-macosx_aarch64/zulu-8.jdk/Contents/Home"
+. "$PROJECT_DIR/scripts/stock_env.sh"
+stock_require jar jdk
 # combined retains executable stock accessors. final's decompiler-only
 # AccessInline pass breaks private accesses in stock anonymous classes;
 # audit_java_stock.sh separately verifies linkage against both inventories.
-STOCK="$TOOLS_DIR/out/MU1316-combined.jar"
-LIBS="$TOOLS_DIR/libs/org.osgi.framework-1.10.0.jar:$TOOLS_DIR/libs/org.osgi.util.tracker-1.5.4.jar"
+STOCK="$STOCK_COMBINED_JAR"
+LIBS="$OSGI_LIBS"
 PATCH="${PDC_PATCH_JAR:-$PROJECT_DIR/build/carplay_hook.jar}"
-ASM="$TOOLS_DIR/tools/uninline/lib/asm-9.7.jar:$TOOLS_DIR/tools/uninline/lib/asm-tree-9.7.jar"
+ASM="$ASM_LIBS"
 TEST_DIR=$(mktemp -d)
 trap 'rm -rf "$TEST_DIR"' EXIT
 mkdir -p "$TEST_DIR/stubs" "$TEST_DIR/test"

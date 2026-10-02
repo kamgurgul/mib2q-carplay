@@ -71,10 +71,25 @@ run() {   # run <file> <command...>: best effort, output and errors into <file>
 run uname.txt uname -a
 run pidin_ar.txt pidin ar
 run pidin_info.txt pidin info
+# CPU: smartphone_integrator restarts the session when the main-screen video
+# decoder makes no progress for decoderRestartTimeout (10 s on this unit), so a
+# CPU-starved decoder and a broken one look identical in the hook log. hogs and
+# per-thread times separate them: altscreen_render decodes 1440x540 H.264 in
+# software, which is the one process that could starve dio_manager.
+run hogs.txt hogs -i 3
+run pidin_times.txt pidin times
+run pidin_mem.txt pidin mem
 run mount.txt mount
 run df.txt df -k
 run ifconfig.txt ifconfig -a
 run netstat_rn.txt netstat -rn
+# PF packet filter: which inbound ports are permitted on the CarPlay link. A
+# stream-111 dataPort PF does not allow is accepted by the phone but never
+# connected to, so these three files are the first thing to read for that.
+run pfctl_rules.txt pfctl -sr
+run pfctl_nat.txt pfctl -sn
+run pfctl_info.txt pfctl -si
+run netstat_an.txt netstat -an
 run sloginfo_mmx.txt sloginfo
 run sloginfo_rcc.txt on -f rcc sloginfo
 run hooks_ls.txt ls -la /mnt/app/root/hooks /mnt/app/eso/hmi/lsd/jars /mnt/app/eso/bin/apps/smartphone_integrator

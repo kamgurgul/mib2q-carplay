@@ -124,6 +124,8 @@ struct app {
     cluster_surface_t *cs;
     int have_gl;
     int egl_ready;
+    uint64_t last_probe_ms;   /* throttle for cluster_surface_lost() */
+    int probe_now;            /* force a probe after a failed present */
 #endif
 };
 
@@ -241,12 +243,28 @@ static int rebind_window(struct app *a)
     return 0;
 }
 
+/* cluster_surface.h documents cluster_surface_lost() as a ~5 s probe: it is two
+ * synchronous Screen IPC round-trips. Calling it per frame stalls this renderer
+ * (the hook's AU queue then overflows and it resets our consumer) AND hammers the
+ * DisplayManager that also serves the main display. Probe on the documented
+ * cadence, plus immediately when the surface is already gone or the previous
+ * present failed - a failed draw/swap is the real signal of a disowned window. */
+#define ALTR_LOST_PROBE_MS 5000u
+
 static int present_frame(struct app *a, const altr_frame_t *f)
 {
-    int lost = (a->surf == EGL_NO_SURFACE) || cluster_surface_lost(a->cs);
-    if (lost && rebind_window(a) != 0) return -1;
-    if (altr_gles_draw(a->gl, f) != 0) return -1;
-    if (!eglSwapBuffers(a->dpy, a->surf)) return -1;
+    uint64_t now = now_ms();
+    int lost = 0;
+
+    if (a->surf == EGL_NO_SURFACE || a->probe_now
+        || (now - a->last_probe_ms) >= ALTR_LOST_PROBE_MS) {
+        a->last_probe_ms = now;
+        a->probe_now = 0;
+        lost = (a->surf == EGL_NO_SURFACE) || cluster_surface_lost(a->cs);
+    }
+    if (lost && rebind_window(a) != 0) { a->probe_now = 1; return -1; }
+    if (altr_gles_draw(a->gl, f) != 0)  { a->probe_now = 1; return -1; }
+    if (!eglSwapBuffers(a->dpy, a->surf)) { a->probe_now = 1; return -1; }
     return 0;
 }
 

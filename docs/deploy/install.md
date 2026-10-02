@@ -14,7 +14,7 @@ sources:
   - code: deploy/smartphone_integrator/carplay_child.json
   - code: maneuver_render/main.c
 reconciles:
-  - README.md#-deployment
+  - README.md#install
 ---
 
 # Install, verify and uninstall
@@ -47,7 +47,7 @@ eight files plus two in-place config edits.
 | `dio_manager.json` | not staged | `/mnt/system/etc/eso/production/`, five route-guidance IDs added in place | - |
 
 Build the three compiled outputs first (`build_hook.sh`, `build_renderers.sh`, `build_java.sh`); see
-[README - Build](../../README.md#-build). Everything else is copied unchanged.
+[README - Build](../../README.md#build). Everything else is copied unchanged.
 
 ```mermaid
 flowchart TB
@@ -388,7 +388,7 @@ ls -l /mnt/app/root/hooks/ /mnt/app/eso/hmi/lsd/jars/carplay_hook.jar
 Then connect the phone and start a route in Apple Maps: the maneuver panel must appear on the cluster
 over the stock map, with the turn arrow on the HUD. Logs: `/tmp/carplay_hook.log`,
 `/tmp/carplay_java.log`, `/tmp/maneuver_render.log`, `/tmp/carplay_wrapper.log` (see
-[README - Logging](../../README.md#-logging)). If route guidance never appears, check the
+[README - Logs and diagnostics](../../README.md#logs-and-diagnostics)). If route guidance never appears, check the
 `dio_manager.json` grep first: with the IDs missing the SDK drops the messages before the hook, so the
 hook logs nothing about them.
 

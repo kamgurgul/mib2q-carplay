@@ -18,6 +18,8 @@ uninstall_MoreIncredibleBash/mod/*.sh    text eol=lf
 logging_MoreIncredibleBash/mod/*.sh      text eol=lf
 rgd_enable_MoreIncredibleBash/mod/*.sh   text eol=lf
 rgd_disable_MoreIncredibleBash/mod/*.sh  text eol=lf
+altscreen_on_MoreIncredibleBash/mod/*.sh   text eol=lf
+altscreen_off_MoreIncredibleBash/mod/*.sh  text eol=lf
 
 # Binary assets — never touch.
 *.bin    binary

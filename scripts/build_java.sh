@@ -4,15 +4,12 @@
 #
 #   ./scripts/build_java.sh
 #
-# Input:  java_patch/   +   ../../Tools/jxe2jar   (stock jar + OSGi libs)
+# Input:  java_patch/   +   stock/   (the unit's stock HMI jar + OSGi libs, see stock/README.md)
 # Output: build/carplay_hook.jar
 #
-# Compiles against MU1316-final.jar + OSGi, target 1.4 (jclfoun11 = Foundation 1.1),
+# Compiles against the stock jar + OSGi, target 1.4 (jclfoun11 = Foundation 1.1),
 # inside a pinned JDK 8 container so the build does not depend on a host JVM.
-#
-# NOTE: MU1316-final.jar is the author's own decompiled stock HMI jar
-# (../../Tools/jxe2jar/out/). Yours may be named or located differently - point
-# STOCK_JAR below and the CP line inside the container at your own stock jar.
+# The stock jar defaults to stock/base.jar; override with STOCK_JAR=<path inside stock/>.
 set -e
 
 [ "$#" -eq 0 ] || { echo "usage: ./scripts/build_java.sh"; exit 2; }
@@ -20,25 +17,15 @@ set -e
 IMG=eclipse-temurin:8-jdk-jammy
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TOOLS_DIR="$(cd "$PROJECT_DIR/../../Tools/jxe2jar" && pwd)"
-
-# Stock HMI jar: the author's is MU1316-final.jar, but any unit's decompiled jxe
-# works. Override with STOCK_JAR=<name-or-path>, else prefer MU1316-final.jar,
-# else auto-pick the newest *.jar in out/. The jar must live in TOOLS_DIR/out/
-# (that is what gets mounted into the container).
-if [ -n "${STOCK_JAR:-}" ] && [ -f "$TOOLS_DIR/out/$(basename "$STOCK_JAR")" ]; then
-    STOCK_JAR="$TOOLS_DIR/out/$(basename "$STOCK_JAR")"
-elif [ -f "$TOOLS_DIR/out/MU1316-final.jar" ]; then
-    STOCK_JAR="$TOOLS_DIR/out/MU1316-final.jar"
-else
-    STOCK_JAR="$(ls -t "$TOOLS_DIR"/out/*.jar 2>/dev/null | head -1)"
-fi
-[ -n "$STOCK_JAR" ] && [ -f "$STOCK_JAR" ] || {
-    echo "ERROR: no stock HMI jar in $TOOLS_DIR/out/"
-    echo "  Put your unit's decompiled lsd.jxe jar there (see docs/deploy/altscreen-mhi2q.md, section 'Building the Java patch')."
-    exit 1
-}
-STOCK_JAR_NAME="$(basename "$STOCK_JAR")"
+. "$SCRIPT_DIR/stock_env.sh"
+stock_require jar
+STOCK_DIR="$(cd "$STOCK_DIR" && pwd)"
+STOCK_JAR="$(cd "$(dirname "$STOCK_JAR")" && pwd)/$(basename "$STOCK_JAR")"
+case "$STOCK_JAR" in
+    "$STOCK_DIR"/*) ;;
+    *) echo "ERROR: STOCK_JAR must live inside $STOCK_DIR (that is what gets mounted into the container)"; exit 1 ;;
+esac
+STOCK_JAR_NAME="${STOCK_JAR#"$STOCK_DIR"/}"
 echo "Stock jar: $STOCK_JAR_NAME"
 [ -d "$PROJECT_DIR/java_patch" ] || { echo "ERROR: java_patch/ not found"; exit 1; }
 
@@ -50,7 +37,7 @@ echo "=== CarPlay Java Patch Build (Docker $IMG) ==="
 
 docker run --rm \
   -v "$PROJECT_DIR":/src \
-  -v "$TOOLS_DIR":/tools:ro \
+  -v "$STOCK_DIR":/stock:ro \
   -e BUILD_ID="$BUILD_ID" \
   -e STOCK_JAR_NAME="$STOCK_JAR_NAME" \
   "$IMG" bash -c '
@@ -58,7 +45,7 @@ docker run --rm \
   SRC=/src/java_patch
   OUT=/src/build/java/classes
   OUTJAR=/src/build/carplay_hook.jar
-  CP="/tools/out/$STOCK_JAR_NAME:/tools/libs/org.osgi.framework-1.10.0.jar:/tools/libs/org.osgi.util.tracker-1.5.4.jar"
+  CP="/stock/$STOCK_JAR_NAME:/stock/libs/org.osgi.framework-1.10.0.jar:/stock/libs/org.osgi.util.tracker-1.5.4.jar"
 
   rm -rf /src/build/java; mkdir -p "$OUT" /src/build
   SRCLIST=$(mktemp)

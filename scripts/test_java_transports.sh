@@ -2,7 +2,9 @@
 # Compile shipping Java 1.4 sources, then exercise input and local transports.
 set -euo pipefail
 PROJECT_DIR=$(cd "$(dirname "$0")/.." && pwd)
-TEST_JDK="$PROJECT_DIR/../../Tools/jxe2jar/jvms/zulu8.78.0.19-ca-jdk8.0.412-macosx_aarch64/zulu-8.jdk/Contents/Home"
+. "$PROJECT_DIR/scripts/stock_env.sh"
+stock_require jar jdk
+TEST_JDK="$JDK"
 bash "$PROJECT_DIR/scripts/build_java.sh"
 TEST_DIR=$(mktemp -d)
 trap 'rm -rf "$TEST_DIR"' EXIT
@@ -16,7 +18,6 @@ trap 'rm -rf "$TEST_DIR"' EXIT
 
 # NAVSD INITIALIZING/READY must pass straight through the RGI gate
 # (the altscreen INITIALIZING takeover and AltScreenStartupTest do not apply here).
-STOCK_JAR="$PROJECT_DIR/../../Tools/jxe2jar/out/MU1316-final.jar"
 mkdir -p "$TEST_DIR/nav-init"
 "$TEST_JDK/bin/javac" -encoding UTF-8 \
     -cp "$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR" \

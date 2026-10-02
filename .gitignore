@@ -8,11 +8,11 @@
 !/build/.gitkeep
 /local_logs/
 /log/
-tools/loader_preview/loader_preview
 
 # Phone-side captures: sysdiagnose tarballs and log archives are hundreds of MB
 # and contain the owner's device logs. Keep them local.
 /logs/
+/carplay_logs/
 
 # Obsidian MCP transaction journal + per-user workspace state
 .obsidian-mcp/
@@ -25,3 +25,7 @@ install_MoreIncredibleBash/mod/carplay/*
 !install_MoreIncredibleBash/mod/carplay/.gitkeep
 /install_MoreIncredibleBash/mod/last-carplay-*.log
 /uninstall_MoreIncredibleBash/mod/last-carplay-*.log
+
+# Stock firmware classes, the unit's jxe and the host JDK (see stock/README.md)
+/stock/*
+!/stock/README.md

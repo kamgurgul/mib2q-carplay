@@ -13,8 +13,8 @@ an on-HU decoder that draws the CarPlay video into a cluster plane the stock
 DisplayManager already composites.
 
 > Read the sibling background first:
-> [`mhi2_altscreen_carplay` Audi B9/MU1438 compatibility lead](../../../mhi2_altscreen_carplay/docs/research/AUDI_B9_MU1438_COMPATIBILITY_LEAD_2026-09-28.md)
-> and [MU1438↔MU1440 offline comparison](../../../mhi2_altscreen_carplay/docs/research/MU1438_MU1440_OFFLINE_COMPARISON_2026-09-28.md).
+> [Audi B9/MU1438 compatibility lead](../altscreen/AUDI_B9_MU1438_COMPATIBILITY_LEAD_2026-09-28.md)
+> and [MU1438↔MU1440 offline comparison](../altscreen/MU1438_MU1440_OFFLINE_COMPARISON_2026-09-28.md).
 
 > [!WARNING]
 > Research / experimental / use at your own risk. This is for a unit **you own**
@@ -91,7 +91,7 @@ video is live, falling back to 80/74 otherwise.
 
 1. **⚠ KEY CAPTURE on MU13xx** — the one part not (re)written here. See §7.
 2. **⚠ PLT vs inline hooks** — whether PLT interposition wins on your libairplay.
-3. **⚠ stream-111 reachability** — unit firewall / interface binding on port 7111.
+3. ~~stream-111 reachability~~ — **SOLVED**: the unit filters the CarPlay link with PF; the data port must be in its allowlist. Default is now 6030. See §15.
 4. **⚠ displayable 99 creatable** — whether the DM binds id 99 on your cluster.
 5. **⚠ plane-99 geometry** — position/crop to the cluster map region.
 6. **⚠ decode performance** — SW H.264 decode cost on the APQ8064.
@@ -107,7 +107,7 @@ video is live, falling back to 80/74 otherwise.
   builds): build once per its README.
 - Docker + `curl` on your build host (the renderer build downloads FFmpeg 6.1.5).
 - Your unit's **stock HMI jar** to build the Java patch (as the RGI README
-  describes — `../../Tools/jxe2jar/out/…`). This is required for the Java changes;
+  describes — `stock/base.jar`, see [`stock/README.md`](../../stock/README.md)). This is required for the Java changes;
   the native parts do not need it.
 
 ---
@@ -128,22 +128,19 @@ video is live, falling back to 80/74 otherwise.
 
 ### 4a. The MHI2Q AltScreen hook
 
-From the `mhi2_altscreen_carplay` repo:
+The source is in `altscreen_hook/` (imported from `mhi2_altscreen_carplay`):
 
 ```sh
-# Docker (same toolchain image as mib2q-carplay-rgi):
-tools/build_altscreen111_mhi2q.sh            # -> build/libaltscreen111_mhi2q.so
-# or with a host QNX SDP on PATH:
-TOOLCHAIN=qcc tools/build_altscreen111_mhi2q.sh
+scripts/build_altscreen_hook.sh              # -> build/libaltscreen111_mhi2q.so
 ```
 
 This is the GEN2 source compiled with `-DALT111_TARGET_MHI2Q`: constructor-free
 (no thread/dlsym/patch from the ELF constructor — the K1004 loader-lock lesson),
-PLT interposition by default, 1440×540 canvas, stream 111 on port 7111.
+PLT interposition by default, 1440×540 canvas, stream 111 on port 6030 (§15).
 
 ### 4b. The renderer
 
-From this (`mib2q-carplay-rgi`) repo:
+From this repo:
 
 ```sh
 scripts/build_altscreen_render.sh            # -> build/altscreen_render
@@ -180,12 +177,11 @@ your unit's OEM HMI classes, which cannot be downloaded — they come off your c
    ```
 2. Convert JXE → JAR with the community `jxe2jar` tool (the same step the upstream
    author used to make `MU1316-final.jar`).
-3. Put the jar in `Tools/jxe2jar/out/` (a sibling of the repos, i.e.
-   `../../Tools/jxe2jar/out/` from the project). The build auto-detects any
-   `*.jar` there; override with `STOCK_JAR=<name>`.
+3. Save the jar as `stock/base.jar` (gitignored); override with
+   `STOCK_JAR=<path inside stock/>`.
 
 The OSGi libs `build_java.sh` also needs (`org.osgi.framework-1.10.0.jar`,
-`org.osgi.util.tracker-1.5.4.jar`) are public and can sit in `Tools/jxe2jar/libs/`.
+`org.osgi.util.tracker-1.5.4.jar`) are public and go in `stock/libs/`.
 With the jar in place, `scripts/build_java.sh` produces `build/carplay_hook.jar`
 in a pinned JDK-8 container (no host JVM needed).
 
@@ -197,8 +193,8 @@ The AltScreen files are **optional additions** to a normal RGI release. Drop a
 full RGI release into `mod/carplay/` on the M.I.B. SD card, and **add these two**:
 
 ```
-mod/carplay/libaltscreen111_mhi2q.so     (from mhi2_altscreen_carplay/build/)
-mod/carplay/altscreen_render             (from mib2q-carplay-rgi/build/)
+mod/carplay/libaltscreen111_mhi2q.so     (from build/)
+mod/carplay/altscreen_render             (from build/)
 ```
 
 plus the usual RGI assets (`libcarplay_hook.so`, `maneuver_render`,
@@ -244,7 +240,7 @@ Check, in order:
    caller`. **If this line never appears**, decryption cannot run — go to §7.
 4. **stream 111 connected** — `AltScreen stream 111 connected`. If instead you see
    repeated `MHI2Q stream111: no iPhone connection on port 7111 after …s`, the
-   iPhone cannot reach the port — §8 (⚠ firewall/interface).
+   iPhone cannot reach the port — §15 (PF allowlist).
 5. **Video decoding** — `/tmp/altscreen_render.status` shows `state=decoding` and a
    rising `frames=`; `/tmp/altscreen_render.log` shows `connected to tee`,
    `GL up on displayable 99`.
@@ -268,7 +264,7 @@ It is compiled into the MHI2Q build **unchanged**.
   `AirPlayReceiverSessionSetSecurityInfo + 0x100`) does not match your exact
   `libairplay`. The offline comparison found the `SetSecurityInfo` structure and
   the `AES_CBCFrame_Init` call site shift on MU1438 vs MU1440
-  ([offline report §Lifecycle and security](../../../mhi2_altscreen_carplay/docs/research/MU1438_MU1440_OFFLINE_COMPARISON_2026-09-28.md)),
+  ([offline report §Lifecycle and security](../altscreen/MU1438_MU1440_OFFLINE_COMPARISON_2026-09-28.md)),
   so MU13xx may differ again. Adapting that observer to your `libairplay`
   (the caller window, or the structure offsets) is the work left to you or another
   tool. Everything downstream of a captured key is done and host-tested. The hook
@@ -367,7 +363,7 @@ override the MHI2Q defaults:
 
 | var | default | meaning |
 | --- | --- | --- |
-| `ALTSCREEN111_PORT` | 7111 | stream-111 listen port |
+| `ALTSCREEN111_PORT` | 6030 | stream-111 listen port; must be in the PF allowlist (§15). Runtime override: `/mnt/app/mibr-carplay111.port` |
 | `ALTSCREEN111_WIDTH`/`_HEIGHT` | 1440/540 | advertised secondary display size |
 | `ALTSCREEN111_TEE_PORT` | 19820 | loopback Annex-B tee |
 | `ALTSCREEN111_INLINE_HOOKS` | 0 | 1 = also install inline prologue hooks (§8) |
@@ -440,7 +436,10 @@ prints decoded frame counts without touching the cluster.
 
 ---
 
-## 14. Troubleshooting two observed failures
+## 14. Troubleshooting observed failures
+
+> **D is the currently open failure** on the MHI2Q unit under test. A-C are
+> resolved or ruled out; read D first.
 
 ### A. Wireless / dongle CarPlay stops connecting after install
 
@@ -449,6 +448,15 @@ prints decoded frame counts without touching the cluster.
 stock advertised. A sender that needs one of those features then fails to
 negotiate. A wireless dongle proxies the session and is stricter than a wired
 iPhone, so it can fail where wired still works.
+
+**Ruled out on this unit by the logs**, though the merge is still correct and
+stays. `GEN2 stock /info enabledFeatures=<absent>` and
+`enabledFeatures merge: stockEntries=0` mean the stock dictionary carried no
+`enabledFeatures` at all, so the old overwrite destroyed nothing here. The same
+log also shows `uiContextURLs`, `altScreenURLs` and `altScreenSuggestUIURLs` all
+`<absent>` stock - we are *adding* capabilities to an `/info` that advertises
+none of them, which is still the most likely thing a proxying dongle rejects.
+That is what the marker in D.3 tests.
 
 Fixed: the hook now **merges** — stock entries are preserved, `altScreen` /
 `viewAreas` are appended only when absent, never duplicated, and the key is only
@@ -511,7 +519,7 @@ predecessor's crash cannot pin ctx 81/82), it is only written when the draw **an
 | 2 | same | `GEN2 enabledFeatures merge: stockEntries=…` |
 | 3 | same | `GEN2 SETUP contains stream111 cid=…` (sender offered 111) |
 | 4 | same | `captured stock CarPlay master AES key …` — **if absent, see §7** |
-| 5 | same | `AltScreen stream 111 connected` (else: port/firewall, §8) |
+| 5 | same | `AltScreen stream 111 connected` (else: PF allowlist, §15) |
 | 6 | `/tmp/altscreen_render.status` | `state=decoding`, rising `frames=` |
 | 7 | `/tmp/altscreen_render.log` | `GL up on displayable 99` (else §9) |
 | 8 | `/tmp/carplay_java.log` | `altScreen video live -> ctx 81/82`, `cluster -> ctx 81` |
@@ -520,3 +528,222 @@ predecessor's crash cannot pin ctx 81/82), it is only written when the draw **an
 Steps 1–3 failing points at the advertisement (A). Step 4 is the documented
 session-key gap. Steps 8–9 present but no picture means geometry (§10) or the
 displayable id (§9).
+
+### C. Video runs for a few seconds, then the main display blacks out
+
+Symptom: the CarPlay map appears on the cluster, then stops after a few seconds;
+the head-unit display goes black; a dongle never leaves its splash screen; the
+unit feels like it is "crashing" even though nothing has actually died
+(`pidin ar` still shows `j9`, `dio_manager`, `displaymanager` and both renderers
+alive).
+
+> **Superseded by D.** The fix below is real and stays, but it did **not** resolve
+> this symptom, and the measurements in D show it was not the cause. Keep reading
+> at D. What follows is retained because the hygiene argument is still valid and
+> the fix is in the shipped binary.
+
+Suspected cause: `cluster_surface_lost()` was being called **once per decoded
+frame**. `common/cluster_surface.h` documents it as a *"cheap health probe
+(~every 5 s)"* - it is two synchronous Screen IPC round-trips. At video frame rate
+that is ~60 blocking IPC calls per second into the DisplayManager that also serves
+the main display.
+
+Fixed: the probe now runs on its documented ~5 s cadence, plus immediately when
+the surface is already gone or the **previous present failed** - a failed
+draw/`eglSwapBuffers` is the real signal of a disowned window, so recovery is
+still prompt without polling.
+
+Why it was not the cause: 60 IPC/s is unpleasant but an order of magnitude below
+what would saturate Screen, and log set 004's renderer log contains **no**
+`surface lost` or `rebind` lines at all - the probe was silent every time it ran.
+The symptom also predates any frame reaching the screen: in 003 `frames=0` and the
+dongle was *already* stuck on its splash.
+
+The giveaway in `sloginfo` is the Adreno renderbuffer pool cleanup firing
+repeatedly inside the HMI:
+
+```text
+(name:j9) E/Adreno-ES20: <rb_mem_pool_cleanup_thread:998>: got the pulse
+```
+
+If you see `rc=2 -> consumer reset` with a healthy `frames=` count in
+`altscreen_render.status`, the renderer is producing but cannot keep pace with the
+hook's queue - look for per-frame work in the present path before suspecting the
+decoder.
+
+
+### D. Session restarts every 10 s; main screen black; dongle stuck on splash
+
+This is **not** our video path failing on its own - it is
+`smartphone_integrator` deliberately restarting the session. From the unit's own
+`smartphone_integrator.json`:
+
+```json
+"decoderRestartTimeout":10000
+```
+
+SI restarts the CarPlay session when the **main-screen** video decoder makes no
+progress for 10 s. Measured in log set 004, every generation fits that to the
+millisecond - here from `SETUP entry streams=1 types=110` to the whole-session
+teardown:
+
+```text
+110 SETUP   66.682
+teardown    76.691     -> 10.009 s
+```
+
+and from `AltScreen stream 111 connected` to teardown, over ten consecutive
+sessions: 10.28 10.20 10.12 10.10 10.10 10.06 10.10 10.06 10.10 10.12 s.
+Eleven `dio_manager` generations in ~4.5 minutes, each ending in an orderly
+`TEARDOWN ... reason=0` (not a crash), SI respawning ~6 s later. The user-visible
+result is a black main screen and a cluster image that lasts a couple of seconds.
+
+The same log contains its own control case: the one generation where stream 111
+**never set up** lived **48 s**, ~5x longer. Port 6030 was already configured
+there (`altPort=6030` in its constructor line); the phone simply sent no
+type-111 SETUP that session, so it ran as plain stock CarPlay. Across
+log sets the correlation is exact:
+
+| log | 111 connected | dio generations |
+| --- | --- | --- |
+| 001 | 0 | 3 |
+| 002 | 0 | 5 |
+| 003 | 0 | 2 |
+| 004 | 10 | 11 |
+
+So an active stream 111 is what stalls the **main** decoder. Three candidates
+remain, in the order worth testing:
+
+**D.1 - CPU starvation.** `altscreen_render` software-decodes 1440x540 H.264
+(FFmpeg, no hardware path available to us) and uploads YUV to GLES every frame.
+If that saturates a core, `dio_manager`'s main decode misses its deadline and SI's
+timer fires. The logging card did not capture CPU at all, so this was untestable;
+it now runs `hogs -i 3`, `pidin times` and `pidin mem`. **Read `hogs.txt` first in
+the next capture** - if `altscreen_render` is near 100 % of a core, this is it, and
+the fix is to drop the advertised FPS or the cluster resolution rather than to
+chase the protocol.
+
+**D.2 - the phone stops sending.** Our stream receives ~60 access units with
+`source_idrs=1` and then freezes:
+
+```text
+seq=2  source_aus=30     seq=5  source_aus=60
+seq=3  source_aus=35     seq=6  source_aus=60   <- frozen
+seq=4  source_aus=39     seq=7  source_aus=60
+```
+
+60 AUs is about one socket buffer, so this looks like backpressure, but the tee
+send path is nonblocking and drops on `EAGAIN`, so it is not the hook blocking on
+the socket. Note also that **35 tee reconnects and 8 `consumer reset`s** occurred
+across 10 sessions: once a consumer resets, the renderer needs a fresh IDR, the
+hook asks (`gen2 consumer keyframe intent`, 19x), and `source_idrs` never leaves
+1 - so the cluster stays frozen for the rest of that session even if the session
+survives. Worth fixing on its own merits, but it does not explain the main screen.
+
+**D.3 - our `/info` advertisement.** The decisive A/B, and the one to run first
+because it needs no rebuild:
+
+```sh
+touch /mnt/app/mibr-carplay111.noadvertise   # /info returns stock byte-for-byte
+# reconnect the phone / dongle
+rm /mnt/app/mibr-carplay111.noadvertise      # back to AltScreen
+```
+
+The marker is re-read per session. With it in place the hook advertises nothing,
+accepts no 111 SETUP, and the unit negotiates CarPlay exactly as it does without
+us. If the main screen and the dongle then behave, the cause is on the
+advertisement/SETUP side, not the video side - see A for why that is plausible on
+a unit whose stock `/info` carries no `enabledFeatures` and no altScreen URLs.
+
+**Note on the dongle specifically:** in log set 003 the dongle was already stuck on
+its splash screen while `111connected=0` - no AltScreen stream existed at all.
+Whatever breaks the dongle therefore happens **before** any video, which rules out
+D.1 and D.2 for the dongle and makes D.3 the only candidate of the three.
+
+### E. What the system log cannot tell you
+
+`sloginfo` on the MMX is a ~13 000-line ring covering only ~90 s, and ~95 % of it
+is normal cluster-video traffic:
+
+```text
+1329  devp-iso-mmx[isoTX2]: io_open / io_close     (iso TX to the cluster)
+1321  videoCore: Resource_BlockWait /dev/mmpm      (Venus encoder)
+1321  vpeCore:   Waiting for events from Server    (scaler)
+1321  qcore MMPM [MmpmClkMgrRelease]: Clock is not requested by the client
+```
+
+Those counts are **the same in 001/002/003, where `frames=0`** and our video never
+reached the screen, so they are baseline noise, not a symptom - and `Dropped N
+messages in the last N ms` shows real errors being evicted. Use
+`/tmp/altscreen111.log` and `carplay_wrapper.log` for anything time-ordered.
+---
+
+## 15. The PF allowlist on the CarPlay link (solved)
+
+The head unit filters inbound traffic on the CarPlay link with **PF** — `ifconfig`
+shows `pflog0: flags=41<UP,RUNNING>`. This is the firewall profile the base
+install deliberately does not touch, and it is an **explicit allowlist**, so an
+AltScreen data port that is not in it simply never receives the phone's
+connection.
+
+Verbatim from `pfctl -sr` on an AUG22/MU13xx unit, interface `carplay0`:
+
+```text
+pass in quick on carplay0 proto tcp from any to any port 5000:5001
+pass in quick on carplay0 proto tcp from any to any port = 5010
+pass in quick on carplay0 proto tcp from any to any port 6000:6001
+pass in quick on carplay0 proto tcp from any to any port = 6030
+pass in quick on carplay0 proto tcp from any to any port = 6100
+pass in quick on carplay0 proto tcp from any to any port = 6200
+pass in quick on carplay0 proto tcp from any to any port 7000:7001
+pass in quick on carplay0 proto tcp from any to any port = 7100
+```
+
+So the permitted inbound TCP set is **5000:5001, 5010, 6000:6001, 6030, 6100,
+6200, 7000:7001, 7100**. Of those, only 5000 is occupied on a live unit
+(`netstat -an`), which makes **6030** the natural choice — and explains both why
+the MHI2Q reference implementation used 6030 and why MU1440's 6031 would *also*
+be blocked here. 6030 is now the MHI2Q default.
+
+### How this failure looks
+
+The phone agrees to the stream and then nothing happens — the SYN is dropped, so
+the receiver simply never sees a connection:
+
+```text
+GEN2 SETUP contains stream111 cid=…
+stream111 receiver ready: conn=… dataPort=7111 transport=IPv6-dualstack
+MHI2Q stream111: no iPhone connection on port 7111 after 10s …
+MHI2Q stream111: no iPhone connection on port 7111 after 60s …
+```
+
+Meanwhile the renderer is healthy and simply starved — `tee closed; frames so
+far=0`, repeatedly. It is easy to misread this as a renderer or cluster problem;
+it is neither.
+
+A **wireless dongle can stall completely** on this, where a wired iPhone carries
+on and just shows the stock map: the dongle proxies the session and waits on the
+stream it set up, so an unreachable data port can leave it stuck on its own splash
+screen.
+
+### Changing the port
+
+Runtime, no rebuild and no config edit — re-read at every SETUP:
+
+```sh
+echo 6030 > /mnt/app/mibr-carplay111.port    # then reconnect the phone
+```
+
+An invalid or out-of-range value is logged and ignored. `ALTSCREEN111_PORT` in the
+carplay child env does the same thing at a lower precedence.
+
+> [!IMPORTANT]
+> **Ephemeral fallback is disabled on MHI2Q.** A kernel-assigned port is
+> guaranteed to be outside the allowlist, so falling back to one would bind a port
+> the phone can never reach and turn a clean failure into a silent 120-second
+> stall. If the configured port cannot be bound the receiver now fails closed and
+> says why. (MU1440 keeps the fallback — it has no such filter.)
+
+If you ever need a port outside the list, the alternative is a PF rule, which
+means modifying the firewall profile the install otherwise leaves alone — prefer a
+permitted port.
