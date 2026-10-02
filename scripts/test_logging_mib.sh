@@ -1,5 +1,5 @@
 #!/bin/sh
-# logging_MoreIncredibleBash/mod/custom.sh on a fake card: numbered saves 001/002,
+# mods/logging_MoreIncredibleBash/mod/custom.sh on a fake card: numbered saves 001/002,
 # /tmp logs and captures copied, shared-memory objects skipped, verbose marker made
 # by run 1 and reported by run 2.  Every POSIX/ksh shell here (QNX 6.5 /bin/sh is pdksh).
 set -eu
@@ -10,7 +10,7 @@ shells=
 for s in /bin/ksh /bin/mksh "$(command -v mksh 2>/dev/null)" /bin/dash /bin/sh; do [ -x "$s" ] && shells="$shells $s"; done
 for sh in $shells; do
     rm -rf "$T/card" "$T/src"; mkdir -p "$T/card" "$T/src"
-    cp -R "$ROOT/logging_MoreIncredibleBash/mod" "$T/card/"
+    cp -R "$ROOT/mods/logging_MoreIncredibleBash/mod" "$T/card/"
     echo h > "$T/src/carplay_hook.log"; echo a > "$T/src/maneuver_render.log"; echo s > "$T/src/shmem_obj"
     CP_LOG_SRC=$T/src "$sh" "$T/card/mod/custom.sh" > /dev/null || fail "$sh" "run 1"
     CP_LOG_SRC=$T/src "$sh" "$T/card/mod/custom.sh" > /dev/null || fail "$sh" "run 2"

@@ -202,6 +202,45 @@ int altr_gles_draw(altr_gles_t *g, const altr_frame_t *f)
     return 0;
 }
 
+/* Calibration ruler over the video, in surface pixels (origin top-left, as iOS
+ * sees the advertised canvas). Horizontal lines every 60 px, each its own colour,
+ * so one photo of the VC shows which canvas rows are actually visible. */
+static void fill_rect(const altr_gles_t *g, int x, int y, int w, int h,
+                      float r, float gr, float b)
+{
+    glScissor(x, g->sh - y - h, w, h);
+    glClearColor(r, gr, b, 1.f);
+    glClear(GL_COLOR_BUFFER_BIT);
+}
+
+void altr_gles_draw_grid(altr_gles_t *g)
+{
+    static const float colors[8][3] = {
+        {1.f, 0.f, 0.f},   /*  60 red     */
+        {1.f, .5f, 0.f},   /* 120 orange  */
+        {1.f, 1.f, 0.f},   /* 180 yellow  */
+        {0.f, 1.f, 0.f},   /* 240 green   */
+        {0.f, 1.f, 1.f},   /* 300 cyan    */
+        {0.f, 0.f, 1.f},   /* 360 blue    */
+        {1.f, 0.f, 1.f},   /* 420 magenta */
+        {1.f, 1.f, 1.f},   /* 480 white   */
+    };
+    int i, x;
+    if (!g) return;
+    glEnable(GL_SCISSOR_TEST);
+    for (x = 180; x < g->sw; x += 180)
+        fill_rect(g, x - 1, 0, 2, g->sh, .5f, .5f, .5f);
+    for (i = 0; i < 8 && (i + 1) * 60 < g->sh; i++)
+        fill_rect(g, 0, (i + 1) * 60 - 3, g->sw, 6,
+                  colors[i][0], colors[i][1], colors[i][2]);
+    /* Canvas edges in grey: if the bottom one is missing, the VC crops below it. */
+    fill_rect(g, 0, 0, g->sw, 4, .6f, .6f, .6f);
+    fill_rect(g, 0, g->sh - 4, g->sw, 4, .6f, .6f, .6f);
+    fill_rect(g, 0, 0, 4, g->sh, .6f, .6f, .6f);
+    fill_rect(g, g->sw - 4, 0, 4, g->sh, .6f, .6f, .6f);
+    glDisable(GL_SCISSOR_TEST);
+}
+
 void altr_gles_resize(altr_gles_t *g, int w, int h){ if (g){ g->sw=w; g->sh=h; } }
 
 void altr_gles_destroy(altr_gles_t *g)
@@ -222,6 +261,7 @@ void altr_gles_destroy(altr_gles_t *g)
 struct altr_gles { int sw, sh; };
 altr_gles_t *altr_gles_create(int w, int h){ (void)w;(void)h; return NULL; }
 int altr_gles_draw(altr_gles_t *g, const altr_frame_t *f){ (void)g;(void)f; return -1; }
+void altr_gles_draw_grid(altr_gles_t *g){ (void)g; }
 void altr_gles_resize(altr_gles_t *g, int w, int h){ (void)g;(void)w;(void)h; }
 void altr_gles_destroy(altr_gles_t *g){ (void)g; }
 

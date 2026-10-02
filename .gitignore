@@ -21,10 +21,10 @@ __pycache__/
 output/
 
 # M.I.B. release payload is staged by hand from build/ and deploy/ (see docs/deploy/install.md)
-install_MoreIncredibleBash/mod/carplay/*
-!install_MoreIncredibleBash/mod/carplay/.gitkeep
-/install_MoreIncredibleBash/mod/last-carplay-*.log
-/uninstall_MoreIncredibleBash/mod/last-carplay-*.log
+mods/install_MoreIncredibleBash/mod/carplay/*
+!mods/install_MoreIncredibleBash/mod/carplay/.gitkeep
+/mods/install_MoreIncredibleBash/mod/last-carplay-*.log
+/mods/uninstall_MoreIncredibleBash/mod/last-carplay-*.log
 
 # Stock firmware classes, the unit's jxe and the host JDK (see stock/README.md)
 /stock/*

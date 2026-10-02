@@ -5,7 +5,7 @@
 #
 # Source: altscreen_hook/ (imported from mhi2_altscreen_carplay, GPL-3.0-or-later,
 # see LICENSE). Compiled with -DALT111_TARGET_MHI2Q: constructor-
-# free, PLT interposition, 1440x540 defaults, stream 111 on port 6030 (the PF
+# free, PLT interposition, 1440x540 defaults, stream 111 on port 7100 (the PF
 # allowlist, see docs/deploy/altscreen-mhi2q.md section 15). It is LD_PRELOADed
 # into dio_manager ALONGSIDE libcarplay_hook.so (carplay_startup.sh).
 #

@@ -13,13 +13,13 @@ Makefile        text eol=lf
 *.md            text eol=lf
 
 # M.I.B. custom-script entry points (no extension implied here, but they are .sh).
-install_MoreIncredibleBash/mod/*.sh      text eol=lf
-uninstall_MoreIncredibleBash/mod/*.sh    text eol=lf
-logging_MoreIncredibleBash/mod/*.sh      text eol=lf
-rgd_enable_MoreIncredibleBash/mod/*.sh   text eol=lf
-rgd_disable_MoreIncredibleBash/mod/*.sh  text eol=lf
-altscreen_on_MoreIncredibleBash/mod/*.sh   text eol=lf
-altscreen_off_MoreIncredibleBash/mod/*.sh  text eol=lf
+mods/install_MoreIncredibleBash/mod/*.sh      text eol=lf
+mods/uninstall_MoreIncredibleBash/mod/*.sh    text eol=lf
+mods/logging_MoreIncredibleBash/mod/*.sh      text eol=lf
+mods/rgd_enable_MoreIncredibleBash/mod/*.sh   text eol=lf
+mods/rgd_disable_MoreIncredibleBash/mod/*.sh  text eol=lf
+mods/altscreen_on_MoreIncredibleBash/mod/*.sh   text eol=lf
+mods/altscreen_off_MoreIncredibleBash/mod/*.sh  text eol=lf
 
 # Binary assets — never touch.
 *.bin    binary

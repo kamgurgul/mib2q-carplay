@@ -85,7 +85,7 @@ The Java patch compiles against your firmware's own classes (`de.audi.*`,
 `de.esolutions.*`, `org.dsi.*`). These cannot be downloaded, so take them from your car:
 
 1. Copy `lsd.jxe` off the unit into `stock/jxe/`. Either run
-   `extract_lsd_MoreIncredibleBash/` from M.I.B. (it only reads), or use SSH:
+   `mods/extract_lsd_MoreIncredibleBash/` from M.I.B. (it only reads), or use SSH:
    ```sh
    scp root@<unit>:/mnt/app/eso/hmi/lsd/lsd.jxe stock/jxe/
    ```
@@ -110,8 +110,8 @@ ALTSCREEN=0 ./scripts/build_all.sh   # base only
 ```
 
 This runs every build below in order, then replaces
-`install_MoreIncredibleBash/mod/carplay/` with exactly one complete release. Copy
-`install_MoreIncredibleBash/` to the SD card and go to [Install](#install).
+`mods/install_MoreIncredibleBash/mod/carplay/` with exactly one complete release. Copy
+`mods/install_MoreIncredibleBash/` to the SD card and go to [Install](#install).
 
 The individual builds write to `build/`:
 
@@ -141,7 +141,7 @@ Optional switches:
 To stage by hand instead, copy the five `build/` outputs, plus
 `maneuver_render/resources/flag_atlas.rgba` and the four `carplay_*.sh` and
 `carplay_child.json` from `deploy/smartphone_integrator/`, into
-`install_MoreIncredibleBash/mod/carplay/`. The installer stops before writing
+`mods/install_MoreIncredibleBash/mod/carplay/`. The installer stops before writing
 anything if one of the eight base files is missing. The AltScreen pair and
 `carplay_child.json` are picked up when present.
 
@@ -149,7 +149,7 @@ anything if one of the eight base files is missing. The AltScreen pair and
 
 **With M.I.B. (recommended):**
 
-1. Copy `install_MoreIncredibleBash/` to the M.I.B. SD card.
+1. Copy `mods/install_MoreIncredibleBash/` to the M.I.B. SD card.
 2. Disconnect CarPlay.
 3. Run **GEM → M.I.B. → Advanced Settings → Run Custom Script**.
 
@@ -159,7 +159,7 @@ The installer:
   `.carplay-stock` backup of each;
 - never reboots or stops processes.
 
-`uninstall_MoreIncredibleBash/` reverts everything.
+`mods/uninstall_MoreIncredibleBash/` reverts everything.
 
 **Reboot:** disconnect CarPlay, run `sync`, wait a few seconds, then reboot normally.
 Don't use the forced MMI button combo right after copying, because it can leave files
@@ -172,10 +172,10 @@ The manual SSH install, the exact config edits and the verification steps are in
 
 | Folder | Effect |
 | --- | --- |
-| `install_MoreIncredibleBash/` | install a staged release |
-| `uninstall_MoreIncredibleBash/` | remove it and restore the stock configs |
-| `logging_MoreIncredibleBash/` | save all logs to `<card>/carplay_logs/NNN/`, then turn on verbose logging |
-| `extract_lsd_MoreIncredibleBash/` | copy `lsd.jxe` to the card (read-only on the unit) |
+| `mods/install_MoreIncredibleBash/` | install a staged release |
+| `mods/uninstall_MoreIncredibleBash/` | remove it and restore the stock configs |
+| `mods/logging_MoreIncredibleBash/` | save all logs to `<card>/carplay_logs/NNN/`, then turn on verbose logging |
+| `mods/extract_lsd_MoreIncredibleBash/` | copy `lsd.jxe` to the card (read-only on the unit) |
 | `rgd_enable_…` / `rgd_disable_…` | turn route guidance on/off at runtime |
 | `altscreen_on_…` / `altscreen_off_…` | turn the AltScreen advertisement on/off (A/B test, applies on the next phone connect) |
 
@@ -194,7 +194,7 @@ before restarting.
 
 By default only warnings and errors are logged. `touch /mnt/app/carplay_verbose`
 enables full logging from the next phone connect. Without a shell, run
-`logging_MoreIncredibleBash/` twice instead: once to enable verbose logging, then
+`mods/logging_MoreIncredibleBash/` twice instead: once to enable verbose logging, then
 again after a CarPlay drive to collect.
 
 ## Tests
@@ -220,7 +220,7 @@ The Java suites need `stock/base.jar` and a host JDK 8 in `stock/jdk/` (or set `
 | `altscreen_hook/` | AltScreen hook: `/info` advertisement, stream-111 receiver, decrypt, local tee |
 | `altscreen_render/` | AltScreen renderer: H.264 decode → GLES → cluster displayable 99 |
 | `deploy/smartphone_integrator/` | on-unit startup/supervisor scripts and the SI child config |
-| `*_MoreIncredibleBash/` | M.I.B. custom scripts (see above) |
+| `mods/*_MoreIncredibleBash/` | M.I.B. custom scripts (see above) |
 | `scripts/` | build entry points and test runners |
 | `tests/` | host tests (C, Java, Python) |
 | `toolchain/qnx65-abi/` | QNX Screen headers for cross-compilation |

@@ -91,7 +91,7 @@ video is live, falling back to 80/74 otherwise.
 
 1. **⚠ KEY CAPTURE on MU13xx** — the one part not (re)written here. See §7.
 2. **⚠ PLT vs inline hooks** — whether PLT interposition wins on your libairplay.
-3. ~~stream-111 reachability~~ — **SOLVED**: the unit filters the CarPlay link with PF; the data port must be in its allowlist. Default is now 6030. See §15.
+3. ~~stream-111 reachability~~ — **SOLVED**: the unit filters the CarPlay link with PF; the data port must be in its allowlist **and** must not be a stock port. Default is now 7100 (6030 is the stock main-screen port). See §15.
 4. **⚠ displayable 99 creatable** — whether the DM binds id 99 on your cluster.
 5. **⚠ plane-99 geometry** — position/crop to the cluster map region.
 6. **⚠ decode performance** — SW H.264 decode cost on the APQ8064.
@@ -136,7 +136,7 @@ scripts/build_altscreen_hook.sh              # -> build/libaltscreen111_mhi2q.so
 
 This is the GEN2 source compiled with `-DALT111_TARGET_MHI2Q`: constructor-free
 (no thread/dlsym/patch from the ELF constructor — the K1004 loader-lock lesson),
-PLT interposition by default, 1440×540 canvas, stream 111 on port 6030 (§15).
+PLT interposition by default, 1440×540 canvas, stream 111 on port 7100 (§15).
 
 ### 4b. The renderer
 
@@ -217,7 +217,7 @@ are RGI's; AltScreen rides the same `carplay_startup.sh`).
 **Reboot** (disconnect CarPlay, `sync`, wait, reboot normally). The jar loads on a
 full restart; on boot `smartphone_integrator` launches the stack.
 
-Uninstall: run `uninstall_MoreIncredibleBash/` the same way — it removes the two
+Uninstall: run `mods/uninstall_MoreIncredibleBash/` the same way — it removes the two
 AltScreen files too.
 
 ---
@@ -356,6 +356,28 @@ For ctx 82 the maneuver plane 98 and its backings follow VC Fct44/Fct54 as befor
 
 ---
 
+## 11b. Calibrating the SafeArea (puck position)
+
+iOS draws the map over the whole advertised 1440x540 ViewArea but keeps the puck and its
+overlays centred in the nested **SafeArea**. The hook defaults the SafeArea to the full canvas,
+so if the VC shows only part of the canvas the puck can land outside it (seen on the car:
+below the visible bottom in both normal and full-width view).
+
+1. Run the **altscreen_grid** mod. `altscreen_render` overlays a ruler on the video: horizontal
+   lines every 60 px (red 60, orange 120, yellow 180, green 240, cyan 300, blue 360, magenta 420,
+   white 480), grey verticals every 180 px, grey border on the canvas edges.
+2. Photograph the VC in each view. The visible lines give the visible canvas rectangle.
+3. Put that rectangle in `safearea.conf` of the **altscreen_safearea** mod, run it, reconnect.
+   It writes `/mnt/app/root/mibr-carplay111-safearea.conf`, which the hook reads at every connect
+   (`GEN2 ViewArea full=... safe=...` in `/tmp/altscreen111.log`). `reset` in the file restores the
+   full canvas.
+4. Run altscreen_grid again to remove the ruler.
+
+Different VC views can need different rectangles. The hook already has `updateViewArea`; once both
+views are measured they can be advertised as separate ViewAreas and switched from the VC view state.
+
+---
+
 ## 12. Runtime knobs
 
 Hook (`libaltscreen111_mhi2q.so`) env, set in the carplay child if you need to
@@ -363,7 +385,8 @@ override the MHI2Q defaults:
 
 | var | default | meaning |
 | --- | --- | --- |
-| `ALTSCREEN111_PORT` | 6030 | stream-111 listen port; must be in the PF allowlist (§15). Runtime override: `/mnt/app/mibr-carplay111.port` |
+| — | — | `/mnt/app/root/mibr-carplay111-zoom.inverted`: a positive roller MapScale step zooms in instead of out |
+| `ALTSCREEN111_PORT` | 7100 | stream-111 listen port; must be in the PF allowlist and not a stock port (5000, 5001, 6030 are refused) (§15). Runtime override: `/mnt/app/mibr-carplay111.port` |
 | `ALTSCREEN111_WIDTH`/`_HEIGHT` | 1440/540 | advertised secondary display size |
 | `ALTSCREEN111_TEE_PORT` | 19820 | loopback Annex-B tee |
 | `ALTSCREEN111_INLINE_HOOKS` | 0 | 1 = also install inline prologue hooks (§8) |
@@ -403,8 +426,8 @@ Remove the file to re-enable route guidance (again, effective next reconnect).
 **No shell? Use the green menu.** Two M.I.B. custom-script folders do exactly the
 same touch/rm from **GEM → M.I.B. → Advanced Settings → Run Custom Script**:
 
-- `rgd_disable_MoreIncredibleBash/` — route guidance OFF (CarPlay video only)
-- `rgd_enable_MoreIncredibleBash/` — route guidance ON
+- `mods/rgd_disable_MoreIncredibleBash/` — route guidance OFF (CarPlay video only)
+- `mods/rgd_enable_MoreIncredibleBash/` — route guidance ON
 
 Copy the one you want to the M.I.B. SD card and run it (like the install/logging
 scripts), then reconnect the phone. They forward to MMX and mount `/mnt/app`
@@ -419,7 +442,7 @@ appears. Cover art, PDC and touchpad are unaffected. Confirm in
 
 ## 13. Getting logs off the car
 
-Use the M.I.B. **logging** script (`logging_MoreIncredibleBash/`) exactly like the
+Use the M.I.B. **logging** script (`mods/logging_MoreIncredibleBash/`) exactly like the
 base project: run it once (saves current state, turns verbose on), reconnect the
 phone and drive with CarPlay, run it again (saves the verbose session). Each run
 now also captures `altscreen_render.log`/`.status`/`.live`, `altscreen111.log`,
@@ -611,8 +634,24 @@ log sets the correlation is exact:
 | 003 | 0 | 2 |
 | 004 | 10 | 11 |
 
-So an active stream 111 is what stalls the **main** decoder. Three candidates
-remain, in the order worth testing:
+So an active stream 111 is what stalls the **main** decoder.
+
+> [!IMPORTANT]
+> **Solved (log sets 005/006): a port collision on 6030, not any of D.1-D.3.**
+> 6030 is the **stock main-screen (stream 110) data port**. In 005 (advertisement
+> off, hook never listens) the phone is still connected to `:6030`, and in 003
+> (hook on 7111) too. With our 111 listener bound to 6030 just before stock sets
+> up 110, the stock screen receiver never gets its connection: `sloginfo` shows
+> `AirPlayReceiverSessionScreen ... NONE -> INITIALIZING` and **no**
+> `ScreenStream Creating...` / `Decoder started`, until SI's 10 s
+> `decoderRestartTimeout` tears the session down. The working 005 run reaches
+> `INITIALIZING -> READY` within ~1 s. Stream 111 now defaults to **7100**, the
+> hook refuses 5000/5001/6030 even from the override file, and it falls back
+> through the other permitted ports if the chosen one won't bind. See §15.
+>
+> The candidates below are kept for reference.
+
+Three candidates were considered, in the order worth testing:
 
 **D.1 - CPU starvation.** `altscreen_render` software-decodes 1440x540 H.264
 (FFmpeg, no hardware path available to us) and uploads YUV to GLES every frame.
@@ -700,10 +739,25 @@ pass in quick on carplay0 proto tcp from any to any port = 7100
 ```
 
 So the permitted inbound TCP set is **5000:5001, 5010, 6000:6001, 6030, 6100,
-6200, 7000:7001, 7100**. Of those, only 5000 is occupied on a live unit
-(`netstat -an`), which makes **6030** the natural choice — and explains both why
-the MHI2Q reference implementation used 6030 and why MU1440's 6031 would *also*
-be blocked here. 6030 is now the MHI2Q default.
+6200, 7000:7001, 7100**. Stock itself uses three of them:
+
+| port | stock use |
+| --- | --- |
+| 5000 | RTSP control (`Registering Bonjour _airplay._tcp. port 5000`) |
+| 5001 | event channel |
+| 6030 | **main screen, stream 110** |
+
+6030 was the default here for a while because `netstat -an` on a live unit only
+showed 5000 busy. That was misleading: stock opens its 6030 listener only between
+the 110 SETUP and the phone's connect, so it never shows as `LISTEN`. Every log set
+has an established phone connection to `:6030` (even with our advertisement off),
+and putting stream 111 there starves the main screen. See §14 D for how that
+looks.
+
+The MHI2Q default is now **7100** (the legacy AirPlay mirroring port, which a
+CarPlay session does not use). The hook refuses the stock ports even if they are
+configured, and if 7100 does not bind it tries 6200, 6100, 5010, 7001, 7000 in
+that order. MU1440's 6031 would be blocked here.
 
 ### How this failure looks
 
@@ -731,18 +785,21 @@ screen.
 Runtime, no rebuild and no config edit — re-read at every SETUP:
 
 ```sh
-echo 6030 > /mnt/app/mibr-carplay111.port    # then reconnect the phone
+echo 6200 > /mnt/app/mibr-carplay111.port    # then reconnect the phone
 ```
 
-An invalid or out-of-range value is logged and ignored. `ALTSCREEN111_PORT` in the
+An invalid or out-of-range value is logged and ignored, and so is a stock port
+(5000, 5001, 6030); the hook falls back to 7100. If an older install left
+`/mnt/app/mibr-carplay111.port` containing `6030`, it is now ignored, but you can
+also delete the file. `ALTSCREEN111_PORT` in the
 carplay child env does the same thing at a lower precedence.
 
 > [!IMPORTANT]
 > **Ephemeral fallback is disabled on MHI2Q.** A kernel-assigned port is
 > guaranteed to be outside the allowlist, so falling back to one would bind a port
 > the phone can never reach and turn a clean failure into a silent 120-second
-> stall. If the configured port cannot be bound the receiver now fails closed and
-> says why. (MU1440 keeps the fallback — it has no such filter.)
+> stall. If the configured port cannot be bound the receiver tries the other
+> non-stock permitted ports, then fails closed and says why. (MU1440 keeps the fallback — it has no such filter.)
 
 If you ever need a port outside the list, the alternative is a PF rule, which
 means modifying the firewall profile the install otherwise leaves alone — prefer a

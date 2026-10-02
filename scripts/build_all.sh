@@ -1,13 +1,13 @@
 #!/bin/bash
 # Build every artifact and stage a complete release straight into the M.I.B.
-# installer payload, install_MoreIncredibleBash/mod/carplay/ (gitignored).
+# installer payload, mods/install_MoreIncredibleBash/mod/carplay/ (gitignored).
 #
 #   ./scripts/build_all.sh               # base + AltScreen
 #   ALTSCREEN=0 ./scripts/build_all.sh   # base only (no cluster video)
 #
 # The individual build_*.sh scripts still write to build/; this script runs them
 # in order, then replaces the payload with exactly one release so a stale file
-# from an earlier build can never ride along. Copy install_MoreIncredibleBash/
+# from an earlier build can never ride along. Copy mods/install_MoreIncredibleBash/
 # to the SD card afterwards.
 set -e
 
@@ -18,7 +18,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ALTSCREEN="${ALTSCREEN:-1}"
 [[ "$ALTSCREEN" == "0" || "$ALTSCREEN" == "1" ]] || { echo "Invalid ALTSCREEN"; exit 1; }
 B="$PROJECT_DIR/build"
-DEST="$PROJECT_DIR/install_MoreIncredibleBash/mod/carplay"
+DEST="$PROJECT_DIR/mods/install_MoreIncredibleBash/mod/carplay"
 
 bash "$SCRIPT_DIR/build_hook.sh"
 bash "$SCRIPT_DIR/build_renderers.sh"
@@ -50,4 +50,4 @@ mkdir -p "$DEST"
 find "$DEST" -mindepth 1 ! -name .gitkeep -exec rm -rf {} +
 cp "${FILES[@]}" "$DEST/"
 (cd "$DEST" && ls -l | sed 1d)
-echo "Release staged ($(( ${#FILES[@]} )) files, ALTSCREEN=$ALTSCREEN). Copy install_MoreIncredibleBash/ to the SD card."
+echo "Release staged ($(( ${#FILES[@]} )) files, ALTSCREEN=$ALTSCREEN). Copy mods/install_MoreIncredibleBash/ to the SD card."

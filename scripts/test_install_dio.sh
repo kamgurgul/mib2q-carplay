@@ -5,7 +5,7 @@
 # Runs under every POSIX/ksh shell available here (QNX 6.5 /bin/sh is pdksh).
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-SRC=$ROOT/install_MoreIncredibleBash/mod/custom.sh
+SRC=$ROOT/mods/install_MoreIncredibleBash/mod/custom.sh
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 
 { echo 'set -u'

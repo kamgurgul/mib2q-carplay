@@ -3,10 +3,10 @@ title: Install, verify and uninstall
 tags: [deploy, install, verified]
 status: verified-source
 sources:
-  - code: install_MoreIncredibleBash/mod/custom.sh
-  - code: uninstall_MoreIncredibleBash/mod/custom.sh
-  - code: install_MoreIncredibleBash/mod/command.sh
-  - code: logging_MoreIncredibleBash/mod/custom.sh
+  - code: mods/install_MoreIncredibleBash/mod/custom.sh
+  - code: mods/uninstall_MoreIncredibleBash/mod/custom.sh
+  - code: mods/install_MoreIncredibleBash/mod/command.sh
+  - code: mods/logging_MoreIncredibleBash/mod/custom.sh
   - code: scripts/test_logging_mib.sh
   - code: scripts/test_install_dio.sh
   - code: scripts/test_install_listing.sh
@@ -97,7 +97,7 @@ install itself.
 
 ## 💾 Install with M.I.B. (recommended)
 
-**1. Stage the card.** Copy the contents of `install_MoreIncredibleBash/` to the root of the M.I.B.
+**1. Stage the card.** Copy the contents of `mods/install_MoreIncredibleBash/` to the root of the M.I.B.
 SD card, then put the release into `mod/carplay/`. The simplest way: download **all** assets of a
 GitHub release and drop them straight into `mod/carplay/` - no folders:
 
@@ -394,7 +394,7 @@ hook logs nothing about them.
 
 ## 🗑️ Uninstall
 
-**With M.I.B.:** copy `uninstall_MoreIncredibleBash/` over the card and run the custom script. It
+**With M.I.B.:** copy `mods/uninstall_MoreIncredibleBash/` over the card and run the custom script. It
 needs no payload tree: it renames every `*.carplay-stock` under `/mnt/app` and `/mnt/system` back to
 the original (the SI json and `dio_manager.json`), then deletes the eight owned files and the
 renderer's shader cache `/mnt/persist/var/app/luka_carplay_maneuver`. `custom.sh
@@ -417,7 +417,7 @@ Then reboot the same careful way.
 
 ## 📋 Collect logs
 
-Copy `logging_MoreIncredibleBash/` over the card and run it the same way as the installer. Each run
+Copy `mods/logging_MoreIncredibleBash/` over the card and run it the same way as the installer. Each run
 makes `<card>/carplay_logs/NNN/` (numbered: the unit clock is often wrong; `info.txt` records the clock
 and whether verbose was on). It holds the `/tmp` logs (`*.log*`, `carplay_*`, `*.pid`, never the
 shared-memory objects that also live in `/tmp`), `sloginfo` of MMX and RCC, `pidin`, mounts, network,

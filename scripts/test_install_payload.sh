@@ -33,7 +33,7 @@ run() {   # $1 shell, $2 layout (flat|tree), $3 action
     S=$T/$2; mkdir -p "$S/mod/carplay" "$S/mnt/system/etc/eso/production"
     sed -e "s#/mnt/#$S/mnt/#g" -e "s#\"/\\\${f\#./}\"#\"$S/\\\${f\#./}\"#" \
         -e 's#^\( *\)mount -uw#\1: mount -uw#' \
-        "$ROOT/install_MoreIncredibleBash/mod/custom.sh" > "$S/mod/custom.sh"
+        "$ROOT/mods/install_MoreIncredibleBash/mod/custom.sh" > "$S/mod/custom.sh"
     "$1" "$S/mod/custom.sh" "$3" > "$S/out.log" 2>&1 || { cat "$S/out.log"; fail "$1 $2" "$3 returned non-zero"; }
 }
 

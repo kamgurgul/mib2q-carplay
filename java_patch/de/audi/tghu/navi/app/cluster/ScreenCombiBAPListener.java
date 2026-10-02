@@ -14,8 +14,9 @@ import de.audi.tghu.navi.app.map.MapManager;
  *
  * VC's Fct44 (KDK visibility) and Fct54 (map presentation/stage) are forwarded to
  * the layer controller before stock acknowledges them.  The steering-wheel roller
- * is NOT intercepted: the cluster shows the head unit's own native map (with our
- * maneuver overlay on top), so setMapScale() keeps zooming it exactly as stock.
+ * zooms the stock native map as usual, EXCEPT while the CarPlay cluster video
+ * (AltScreen, plane 99) is on the VC: then the stock map is hidden, so the step
+ * goes to the phone as CMD_ALT_ZOOM (hook -> changeMapZoomLevel) instead.
  */
 public final class ScreenCombiBAPListener extends CombiBAPListener {
     public ScreenCombiBAPListener(
@@ -48,6 +49,23 @@ public final class ScreenCombiBAPListener extends CombiBAPListener {
     protected void updateMapVisibility() {
         com.luka.carplay.cluster.ClusterLayerController.onVcVisibility(this.supplementaryMapViewVisible);
         super.updateMapVisibility();
+    }
+
+    /** Roller rotation (BAP MapScale steps). steps=0 still runs stock's MapScale Status
+     * update, so the VC gets its acknowledgement without the hidden stock map moving. */
+    public void setMapScale(int steps) {
+        if (steps != 0
+                && com.luka.carplay.core.ScreenModule.isConnected()
+                && com.luka.carplay.core.ScreenModule.isAltScreenActive()) {
+            int clamped = steps > 127 ? 127 : (steps < -128 ? -128 : steps);
+            boolean sent = com.luka.carplay.bus.CarplayBus.getInstance().sendBinary(
+                com.luka.carplay.bus.CarplayBus.CMD_ALT_ZOOM, new byte[]{(byte) clamped});
+            com.luka.carplay.framework.Log.i("AltZoom", "roller steps=" + steps + " -> CarPlay"
+                + (sent ? "" : " (bus send dropped)"));
+            super.setMapScale(0);
+            return;
+        }
+        super.setMapScale(steps);
     }
 
     public void setMapPresentation(boolean largeMapView, boolean leftMenu, boolean rightMenu) {

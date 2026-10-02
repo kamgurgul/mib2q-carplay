@@ -1,0 +1,23 @@
+{
+    "git.ignoreLimitWarning": true,
+
+    // ---- C/C++ (Microsoft C/C++ extension) ----
+    // These sources are cross-compiled for QNX 6.5 with synthesized import stubs
+    // and CFLite/AirPlay types that IntelliSense cannot resolve on the host, so
+    // its error squiggles are all false positives. Turn them off (navigation and
+    // completion still work).
+    "C_Cpp.errorSquiggles": "disabled",
+    "C_Cpp.default.compilerPath": "",
+
+    // ---- Java (Red Hat / vscode-java) ----
+    // The patch overrides/references OEM HMI classes (de.audi.*, org.dsi.*, ...)
+    // that only exist in the unit's stock jar. Point the language server at the
+    // staged OSGi libs and the stock jar: the OSGi types resolve now, and the
+    // de.audi.*/org.dsi.* errors disappear once the converted lsd.jxe jar is in
+    // stock/ (see stock/README.md).
+    "java.errors.incompleteClasspath.severity": "ignore",
+    "java.project.referencedLibraries": [
+        "stock/*.jar",
+        "stock/libs/*.jar"
+    ]
+}
