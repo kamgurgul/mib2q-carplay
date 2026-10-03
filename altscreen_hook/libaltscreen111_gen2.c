@@ -71,8 +71,8 @@
  *      ALTSCREEN111_INLINE_HOOKS=1.
  *    - stock SETUP is retried without stream 111 if it rejects the combined
  *      request (210.81 has no type-111 branch).
- *    - defaults: 1440x540 B9-class cluster canvas, stream 111 on 7100 with a
- *      PF-permitted fallback list (6030 is the stock stream-110 port).
+ *    - defaults: 1440x540 B9-class cluster canvas, stream 111 on 7111 with
+ *      ephemeral fallback (away from the 6030/6031 MHI2Q port collision).
  *    - the loopback Annex-B tee is unchanged; on MHI2Q it is consumed by
  *      altscreen_render (mib2q-carplay-rgi) into cluster displayable 99, not the
  *      MU1440 MPEG-TS/MOST writer.
@@ -85,25 +85,15 @@
  * interface carplay0 is, verbatim from `pfctl -sr`:
  *   5000:5001, 5010, 6000:6001, 6030, 6100, 6200, 7000:7001, 7100
  * A dataPort outside that set is accepted by the phone and then never connected
- * to (the SYN is dropped), which looks exactly like a silent stall.
- *
- * 6030 is NOT free: it is the stock main-screen (stream 110) data port. Stock
- * only listens on it for the moment between the 110 SETUP and the phone's
- * connect, so `netstat` on an idle unit never shows it, but every log set has
- * the phone connected to :6030 even with our advertisement off. With our 111
- * listener sitting on 6030 the stock screen never gets its connection, stays
- * INITIALIZING, and the phone tears the whole session down after ~10 s: black
- * main screen, cluster map for a few seconds, dongle reconnect loop. Stock also
- * owns 5000 (RTSP) and 5001 (events). 7100 (legacy AirPlay mirroring, unused by
- * a CarPlay session) is the default; override at runtime with
- * /mnt/app/mibr-carplay111.port. Stock ports are refused even when configured.
+ * to (the SYN is dropped), which looks exactly like a silent stall. 6030 is in
+ * the list and is the only one of those free on a live unit, so it is the
+ * default; override at runtime with /mnt/app/mibr-carplay111.port.
  *
  * Ephemeral fallback is therefore DISABLED here: a kernel-assigned port is
  * guaranteed to be outside the allowlist, so falling back would bind a port the
- * phone can never reach. If the chosen port does not bind, the remaining
- * PF-permitted non-stock ports are tried instead.
+ * phone can never reach. Failing closed is the honest outcome.
  */
-#define ALT111_DEFAULT_PORT 7100
+#define ALT111_DEFAULT_PORT 6030
 #define ALT111_DEFAULT_ALLOW_EPHEMERAL 0
 #define ALT111_DEFAULT_WIDTH 1440
 #define ALT111_DEFAULT_HEIGHT 540
@@ -341,7 +331,7 @@ static const char *g_nav_maneuver_path = "/mnt/app/root/mibr-carplay111-nav.mane
  * inbound ports on the CarPlay link, so the dataPort we advertise must be one PF
  * allows -- otherwise the phone accepts the stream but its connection never
  * arrives. This file lets the port be A/B tested over SSH with no rebuild and no
- * config edit: echo 6200 > /mnt/app/mibr-carplay111.port
+ * config edit: echo 6031 > /mnt/app/mibr-carplay111.port
  */
 static const char *g_port_override_path = "/mnt/app/mibr-carplay111.port";
 /*
@@ -385,9 +375,6 @@ static uint64_t g2_last_dispatched_request;
 static uint64_t g2_last_completed_request;
 static int g2_last_completion_status;
 static unsigned g2_command_ready;
-/* Net steering-wheel MapScale steps still to send as changeMapZoomLevel
- * (sign as received from the VC roller). Guarded by g2_core_lock. */
-static int g2_zoom_pending;
 static pthread_t g2_control_thread;
 static pthread_t g2_output_thread;
 static int g2_workers_started;
@@ -403,10 +390,6 @@ static const char *g2_reacquire_marker = "/tmp/mibr-alt111-gen2-reacquire";
 static const char *g2_diag_stop_marker = "/tmp/mibr-alt111-stop-only";
 static const char *g2_diag_show_marker = "/tmp/mibr-alt111-show-only";
 static const char *g2_diag_keyframe_marker = "/tmp/mibr-alt111-keyframe-only";
-static const char *g2_diag_zoom_in_marker = "/tmp/mibr-alt111-zoom-in";
-static const char *g2_diag_zoom_out_marker = "/tmp/mibr-alt111-zoom-out";
-/* Present = a positive roller MapScale step zooms IN (default: OUT). */
-static const char *g2_zoom_inverted_marker = "/mnt/app/root/mibr-carplay111-zoom.inverted";
 static const char *g2_resync_enable_marker = "/tmp/mibr-alt111-resync.enabled";
 static const char *g2_resync_arm_marker = "/tmp/mibr-alt111-resync-arm";
 static const char *g2_d2_enable_marker = "/tmp/mibr-alt111-keyframe-policy.enabled";
@@ -1023,44 +1006,16 @@ static CFMutableDictionaryRef clone_without_111(CFDictionaryRef request)
  * choose stream 111. The reference replaces enabledFeatures with
  * ["altScreen","viewAreas"] rather than waiting for a 111 request.
  */
-#ifdef ALT111_TARGET_MHI2Q
-/* Stock dio_manager's inbound TCP ports on carplay0 (RTSP, events, stream 110). */
-static const int g_stock_ports[] = { 5000, 5001, 6030 };
-/* PF-permitted ports stock was never seen using, tried in order if one won't bind. */
-static const int g_alt_port_fallbacks[] = { 7100, 6200, 6100, 5010, 7001, 7000 };
-#endif
-
-static int stock_port_reserved(int port)
-{
-#ifdef ALT111_TARGET_MHI2Q
-    size_t i;
-    for(i=0;i<sizeof(g_stock_ports)/sizeof(g_stock_ports[0]);++i)
-        if(g_stock_ports[i]==port) return 1;
-#else
-    (void)port;
-#endif
-    return 0;
-}
-
 static int current_alt_port(void)
 {
     char b[16];
     int v;
-    if(read_trimmed_value(g_port_override_path,b,sizeof(b))!=0) v=g_alt_port;
-    else {
-        v=atoi(b);
-        if(v<=0 || v>=65536){
-            logf_u2("stream111 port override %s invalid ('%s'); keeping %d",
-                    g_port_override_path,b,g_alt_port);
-            v=g_alt_port;
-        }
-    }
-    if(stock_port_reserved(v)){
-        logf_u2("stream111 port %d is a stock CarPlay port (6030 = main screen stream 110); "
-                "using %d instead", v, ALT111_DEFAULT_PORT);
-        return ALT111_DEFAULT_PORT;
-    }
-    return v;
+    if(read_trimmed_value(g_port_override_path,b,sizeof(b))!=0) return g_alt_port;
+    v=atoi(b);
+    if(v>0 && v<65536) return v;
+    logf_u2("stream111 port override %s invalid ('%s'); keeping %d",
+            g_port_override_path,b,g_alt_port);
+    return g_alt_port;
 }
 
 /* Build-time/env gate, overridable per session by the marker file. */
@@ -1850,8 +1805,8 @@ static void *alt_receiver_thread(void *arg)
                 logf_u2("MHI2Q stream111: no iPhone connection on port %d after %us. "
                         "SETUP was answered, so the port is almost certainly not in the PF "
                         "allowlist for carplay0 (pfctl -sr): 5000:5001 5010 6000:6001 6030 "
-                        "6100 6200 7000:7001 7100 (5000 5001 6030 are stock). Set a permitted "
-                        "port with 'echo 6200 > /mnt/app/mibr-carplay111.port' and reconnect.",
+                        "6100 6200 7000:7001 7100. Set a permitted port with "
+                        "'echo 6030 > /mnt/app/mibr-carplay111.port' and reconnect.",
                         g_alt_port, waited);
         }
     }
@@ -1999,21 +1954,6 @@ static int start_alt_receiver(uint64_t connection_id)
     /* iPhone-facing listener: reachable from CarPlay link, not loopback. */
     g_alt_port = current_alt_port();
     g_alt_listen = bind_listener_stream111(g_alt_port, &actual, allow_ephemeral);
-#ifdef ALT111_TARGET_MHI2Q
-    {
-        size_t i;
-        int tried = g_alt_port;
-        for (i = 0; g_alt_listen < 0 &&
-                    i < sizeof(g_alt_port_fallbacks) / sizeof(g_alt_port_fallbacks[0]); ++i) {
-            int p = g_alt_port_fallbacks[i];
-            if (p == g_alt_port) continue;
-            logf_u2("stream111 port %d unavailable (%s); trying PF-permitted %d",
-                    tried, strerror(errno), p);
-            tried = p;
-            g_alt_listen = bind_listener_stream111(p, &actual, 0);
-        }
-    }
-#endif
     if (g_alt_listen < 0) {
         g_aes_ctr_final(&g_alt_aes);
         g_alt_aes_valid=0;
@@ -2022,8 +1962,8 @@ static int start_alt_receiver(uint64_t connection_id)
         logf_u2("cannot bind iPhone stream111 listener on port %d: %s"
 #ifdef ALT111_TARGET_MHI2Q
                 " (no ephemeral fallback on MHI2Q: PF only permits 5000:5001 5010 6000:6001"
-                " 6030 6100 6200 7000:7001 7100 on carplay0, and 5000 5001 6030 are stock;"
-                " every non-stock permitted port failed to bind)"
+                " 6030 6100 6200 7000:7001 7100 on carplay0; pick a free permitted port via"
+                " /mnt/app/mibr-carplay111.port)"
 #endif
                 , g_alt_port, strerror(errno));
         return -1;
@@ -2662,66 +2602,6 @@ static CFMutableDictionaryRef command_update_view(unsigned view)
     p_CFRelease(params); return req;
 }
 
-/* Semantic cluster map zoom (harman-f/mhi2_altscreen_carplay research, iOS 26.7.1
- * command index): {uuid, zoomDirection}, 0 = in, 1 = out. Not vehicle-proven yet;
- * every dispatch and completion status is logged. */
-static CFMutableDictionaryRef command_map_zoom(int zoom_out)
-{
-    CFMutableDictionaryRef req=dict_new(), params=dict_new();
-    if(!req||!params){if(req)p_CFRelease(req);if(params)p_CFRelease(params);return NULL;}
-    set_str(req,"type","changeMapZoomLevel");
-    set_str(params,"uuid",g_alt_uuid);
-    set_i64(params,"zoomDirection",zoom_out?1:0);
-    { CFStringRef k=s_cf("params"); p_CFDictionarySetValue(req,k,params); p_CFRelease(k); }
-    p_CFRelease(params); return req;
-}
-
-/*
- * Exported for libcarplay_hook (same dio_manager process): its bus handler for
- * CMD_ALT_ZOOM resolves this with dlsym(RTLD_DEFAULT). Only queues the step; the
- * AirPlay command is sent from gen2_control_worker, never from the bus thread.
- * Returns 0 when queued, -1 when no stream-111 session is up.
- */
-int altscreen111_map_zoom(int mapscale_steps)
-{
-    int queued = -1;
-    if(!mapscale_steps) return 0;
-    pthread_mutex_lock(&g2_core_lock);
-    if(g2_command_ready){
-        g2_zoom_pending += mapscale_steps;
-        if(g2_zoom_pending > 8) g2_zoom_pending = 8;
-        if(g2_zoom_pending < -8) g2_zoom_pending = -8;
-        queued = 0;
-    }
-    pthread_cond_broadcast(&g2_core_cv);
-    pthread_mutex_unlock(&g2_core_lock);
-    logf_u2("gen2 map zoom request steps=%d %s",
-            mapscale_steps, queued==0 ? "queued" : "dropped (no stream111 session)");
-    return queued;
-}
-
-static void gen2_dispatch_diag_command(const char *label, CFMutableDictionaryRef req);
-
-/* One queued step per worker pass, so a fast roller spin cannot burst the phone. */
-static void gen2_process_map_zoom(void)
-{
-    static uint64_t last_ms;
-    int step = 0, zoom_out;
-    uint64_t now = monotonic_ms();
-    if(last_ms && now - last_ms < 150u) return;
-    pthread_mutex_lock(&g2_core_lock);
-    if(g2_zoom_pending > 0){ step = 1; --g2_zoom_pending; }
-    else if(g2_zoom_pending < 0){ step = -1; ++g2_zoom_pending; }
-    pthread_mutex_unlock(&g2_core_lock);
-    if(!step) return;
-    last_ms = now;
-    zoom_out = step > 0;
-    if(access(g2_zoom_inverted_marker,F_OK)==0) zoom_out = !zoom_out;
-    logf_u2("gen2 changeMapZoomLevel mapscale_step=%d zoomDirection=%d (%s)",
-            step, zoom_out, zoom_out ? "out" : "in");
-    gen2_dispatch_diag_command("changeMapZoomLevel", command_map_zoom(zoom_out));
-}
-
 static CFMutableDictionaryRef gen2_command_dictionary(const struct alt111_command *cmd)
 {
     if (!cmd) return NULL;
@@ -2826,7 +2706,6 @@ static void gen2_set_command_ready(unsigned ready)
 {
     pthread_mutex_lock(&g2_core_lock);
     g2_command_ready = ready ? 1u : 0u;
-    if(!ready) g2_zoom_pending = 0;
     pthread_cond_broadcast(&g2_core_cv);
     pthread_mutex_unlock(&g2_core_lock);
     gen2_publish_status();
@@ -3157,16 +3036,6 @@ static void gen2_process_diag_markers(void)
         logf_u2("gen2 DIAG marker stop-only");
         gen2_dispatch_diag_command("stopUI",command_stopui());
     }
-    if(access(g2_diag_zoom_in_marker,F_OK)==0){
-        unlink(g2_diag_zoom_in_marker);
-        logf_u2("gen2 DIAG marker zoom-in");
-        gen2_dispatch_diag_command("changeMapZoomLevel",command_map_zoom(0));
-    }
-    if(access(g2_diag_zoom_out_marker,F_OK)==0){
-        unlink(g2_diag_zoom_out_marker);
-        logf_u2("gen2 DIAG marker zoom-out");
-        gen2_dispatch_diag_command("changeMapZoomLevel",command_map_zoom(1));
-    }
 }
 
 static void *gen2_control_worker(void *arg)
@@ -3190,7 +3059,6 @@ static void *gen2_control_worker(void *arg)
 
         gen2_resync_poll();
         gen2_process_diag_markers();
-        gen2_process_map_zoom();
 
         if(access(g2_reacquire_marker,F_OK)==0){
             unlink(g2_reacquire_marker);

@@ -251,20 +251,6 @@ static int rebind_window(struct app *a)
  * present failed - a failed draw/swap is the real signal of a disowned window. */
 #define ALTR_LOST_PROBE_MS 5000u
 
-/* Calibration ruler toggle (mods/altscreen_grid). Checked once a second, not per
- * frame, so it costs nothing in normal use. */
-#define ALTR_GRID_MARKER "/mnt/app/root/altscreen_render.grid"
-static int grid_enabled(uint64_t now)
-{
-    static uint64_t checked_ms;
-    static int on;
-    if (!checked_ms || now - checked_ms >= 1000u) {
-        checked_ms = now;
-        on = access(ALTR_GRID_MARKER, F_OK) == 0;
-    }
-    return on;
-}
-
 static int present_frame(struct app *a, const altr_frame_t *f)
 {
     uint64_t now = now_ms();
@@ -278,7 +264,6 @@ static int present_frame(struct app *a, const altr_frame_t *f)
     }
     if (lost && rebind_window(a) != 0) { a->probe_now = 1; return -1; }
     if (altr_gles_draw(a->gl, f) != 0)  { a->probe_now = 1; return -1; }
-    if (grid_enabled(now)) altr_gles_draw_grid(a->gl);
     if (!eglSwapBuffers(a->dpy, a->surf)) { a->probe_now = 1; return -1; }
     return 0;
 }
