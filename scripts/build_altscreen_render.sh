@@ -70,7 +70,7 @@ docker run --rm --platform=linux/amd64 \
 
   cd /src/altscreen_render
   ABI_INCLUDE=/src/toolchain/qnx65-abi/include
-  SRCS="main.c decode.c video_gles.c ../common/cluster_surface.c"
+  SRCS="main.c decode.c video_gles.c omx_probe.c hw_decode.c ../common/cluster_surface.c"
 
   gen_stub(){ local so="$1" rx="$2"; shift 2
     grep -rhoE "$rx" "$@" 2>/dev/null | sort -u | sed "s/.*/int &(){return 0;}/" > /tmp/st_$so.c

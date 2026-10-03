@@ -29,7 +29,8 @@ if [ ! -d /mnt/app/eso/hmi/lsd ] && [ -d /net/mmx/mnt/app/eso/hmi/lsd ]; then
     exec on -f mmx /bin/sh "$D/custom.sh" "$@"
 fi
 
-RES=$D/carplay                 # resources (carplay_child.json, flat release assets)
+RES=${CP_INSTALL_RES:-$D/carplay}  # resources (carplay_child.json, flat release assets);
+                               # the GEM CarPlay menu points this at the release on the card
 ROOT=$RES/root                 # optional "/" tree
 ACTION=${1:-install}
 

@@ -71,8 +71,8 @@
  *      ALTSCREEN111_INLINE_HOOKS=1.
  *    - stock SETUP is retried without stream 111 if it rejects the combined
  *      request (210.81 has no type-111 branch).
- *    - defaults: 1440x540 B9-class cluster canvas, stream 111 on 7111 with
- *      ephemeral fallback (away from the 6030/6031 MHI2Q port collision).
+ *    - defaults: 1440x540 B9-class cluster canvas, stream 111 on 7100 with a
+ *      PF-permitted fallback list (6030 is the stock stream-110 port).
  *    - the loopback Annex-B tee is unchanged; on MHI2Q it is consumed by
  *      altscreen_render (mib2q-carplay-rgi) into cluster displayable 99, not the
  *      MU1440 MPEG-TS/MOST writer.
@@ -85,19 +85,55 @@
  * interface carplay0 is, verbatim from `pfctl -sr`:
  *   5000:5001, 5010, 6000:6001, 6030, 6100, 6200, 7000:7001, 7100
  * A dataPort outside that set is accepted by the phone and then never connected
- * to (the SYN is dropped), which looks exactly like a silent stall. 6030 is in
- * the list and is the only one of those free on a live unit, so it is the
- * default; override at runtime with /mnt/app/mibr-carplay111.port.
+ * to (the SYN is dropped), which looks exactly like a silent stall.
+ *
+ * 6030 is NOT free: it is the stock main-screen (stream 110) data port. Stock
+ * only listens on it for the moment between the 110 SETUP and the phone's
+ * connect, so `netstat` on an idle unit never shows it, but every log set has
+ * the phone connected to :6030 even with our advertisement off. With our 111
+ * listener sitting on 6030 the stock screen never gets its connection, stays
+ * INITIALIZING, and the phone tears the whole session down after ~10 s: black
+ * main screen, cluster map for a few seconds, dongle reconnect loop. Stock also
+ * owns 5000 (RTSP) and 5001 (events). 7100 (legacy AirPlay mirroring, unused by
+ * a CarPlay session) is the default; override at runtime with
+ * /mnt/app/mibr-carplay111.port. Stock ports are refused even when configured.
  *
  * Ephemeral fallback is therefore DISABLED here: a kernel-assigned port is
  * guaranteed to be outside the allowlist, so falling back would bind a port the
- * phone can never reach. Failing closed is the honest outcome.
+ * phone can never reach. If the chosen port does not bind, the remaining
+ * PF-permitted non-stock ports are tried instead.
  */
-#define ALT111_DEFAULT_PORT 6030
+#define ALT111_DEFAULT_PORT 7100
 #define ALT111_DEFAULT_ALLOW_EPHEMERAL 0
 #define ALT111_DEFAULT_WIDTH 1440
 #define ALT111_DEFAULT_HEIGHT 540
 #define ALT111_DEFAULT_WIDTH_MM 290
+/*
+ * Default SafeArea on the 1440x540 canvas (plane 99 sits at the stock map origin
+ * 0,26). Measured from a photo of the stock VC map: the VC draws its own top info
+ * bar over canvas rows <~94 and its bottom bar (altitude / route / scale) from
+ * row ~403 down, and the round dials cover x <~350 and x >~1107 in the lower half.
+ * iOS keeps the puck and its overlays inside the SafeArea, so with the full canvas
+ * the puck landed behind the bottom bar ("too low"). The band between the bars
+ * and the dials keeps it where the stock puck sits (~row 350). Override at runtime
+ * with /mnt/app/root/mibr-carplay111-safearea.conf (GEM menu / altscreen_safearea).
+ */
+#define ALT111_DEFAULT_SAFE_X 350
+#define ALT111_DEFAULT_SAFE_Y 94
+#define ALT111_DEFAULT_SAFE_W 740
+#define ALT111_DEFAULT_SAFE_H 310
+/*
+ * Second ViewArea: VC "classic" layout (big dials, small map window between
+ * them). From a photo of the stock small map, scaled by the top info bar (same
+ * physical size in both layouts): the window is ~536x331 panel px, centred, from
+ * just under the top bar - matching the 420x330 Audi window of the recovered
+ * reference. Canvas rows = panel rows - 26 (plane 99 origin). Override with
+ * /mnt/app/root/mibr-carplay111-safearea-small.conf.
+ */
+#define ALT111_DEFAULT_SMALL_SAFE_X 460
+#define ALT111_DEFAULT_SMALL_SAFE_Y 96
+#define ALT111_DEFAULT_SMALL_SAFE_W 520
+#define ALT111_DEFAULT_SMALL_SAFE_H 328
 #else
 #define ALT111_TARGET_NAME "mu1440"
 #define ALT111_DEFAULT_PORT 6031
@@ -331,7 +367,7 @@ static const char *g_nav_maneuver_path = "/mnt/app/root/mibr-carplay111-nav.mane
  * inbound ports on the CarPlay link, so the dataPort we advertise must be one PF
  * allows -- otherwise the phone accepts the stream but its connection never
  * arrives. This file lets the port be A/B tested over SSH with no rebuild and no
- * config edit: echo 6031 > /mnt/app/mibr-carplay111.port
+ * config edit: echo 6200 > /mnt/app/mibr-carplay111.port
  */
 static const char *g_port_override_path = "/mnt/app/mibr-carplay111.port";
 /*
@@ -375,6 +411,9 @@ static uint64_t g2_last_dispatched_request;
 static uint64_t g2_last_completed_request;
 static int g2_last_completion_status;
 static unsigned g2_command_ready;
+/* Net steering-wheel MapScale steps still to send as changeMapZoomLevel
+ * (sign as received from the VC roller). Guarded by g2_core_lock. */
+static int g2_zoom_pending;
 static pthread_t g2_control_thread;
 static pthread_t g2_output_thread;
 static int g2_workers_started;
@@ -390,6 +429,10 @@ static const char *g2_reacquire_marker = "/tmp/mibr-alt111-gen2-reacquire";
 static const char *g2_diag_stop_marker = "/tmp/mibr-alt111-stop-only";
 static const char *g2_diag_show_marker = "/tmp/mibr-alt111-show-only";
 static const char *g2_diag_keyframe_marker = "/tmp/mibr-alt111-keyframe-only";
+static const char *g2_diag_zoom_in_marker = "/tmp/mibr-alt111-zoom-in";
+static const char *g2_diag_zoom_out_marker = "/tmp/mibr-alt111-zoom-out";
+/* Present = a positive roller MapScale step zooms IN (default: OUT). */
+static const char *g2_zoom_inverted_marker = "/mnt/app/root/mibr-carplay111-zoom.inverted";
 static const char *g2_resync_enable_marker = "/tmp/mibr-alt111-resync.enabled";
 static const char *g2_resync_arm_marker = "/tmp/mibr-alt111-resync-arm";
 static const char *g2_d2_enable_marker = "/tmp/mibr-alt111-keyframe-policy.enabled";
@@ -637,16 +680,32 @@ static int read_trimmed_value(const char *path, char *out, size_t cap)
     return n > 0 ? 0 : -1;
 }
 
-static void load_safearea_config(int *x, int *y, int *w, int *h)
+static const char *g_safearea_small_config_path = "/mnt/app/root/mibr-carplay111-safearea-small.conf";
+
+/* view 0 = full/wide VC map, view 1 = classic small map window. */
+static void load_safearea_config(int view, int *x, int *y, int *w, int *h)
 {
     char b[192];
     int fd, n;
     int tx=0, ty=0, tw=g_width, th=g_height;
+    const char *path = view ? g_safearea_small_config_path : g_safearea_config_path;
 
     if(!x||!y||!w||!h) return;
     *x=0; *y=0; *w=g_width; *h=g_height;
+#ifdef ALT111_DEFAULT_SAFE_W
+    /* Built-in default only while the canvas is the one it was measured on. */
+    if(g_width==ALT111_DEFAULT_WIDTH && g_height==ALT111_DEFAULT_HEIGHT){
+        if(view){
+            *x=ALT111_DEFAULT_SMALL_SAFE_X; *y=ALT111_DEFAULT_SMALL_SAFE_Y;
+            *w=ALT111_DEFAULT_SMALL_SAFE_W; *h=ALT111_DEFAULT_SMALL_SAFE_H;
+        }else{
+            *x=ALT111_DEFAULT_SAFE_X; *y=ALT111_DEFAULT_SAFE_Y;
+            *w=ALT111_DEFAULT_SAFE_W; *h=ALT111_DEFAULT_SAFE_H;
+        }
+    }
+#endif
 
-    fd=open(g_safearea_config_path,O_RDONLY);
+    fd=open(path,O_RDONLY);
     if(fd<0) return;
     n=(int)read(fd,b,sizeof(b)-1u);
     close(fd);
@@ -654,14 +713,14 @@ static void load_safearea_config(int *x, int *y, int *w, int *h)
     b[n]='\0';
 
     if(sscanf(b,"x=%d\ny=%d\nw=%d\nh=%d",&tx,&ty,&tw,&th)!=4){
-        logf_u2("GEN2 SafeArea config invalid path=%s; using full canvas",
-                g_safearea_config_path);
+        logf_u2("GEN2 SafeArea config invalid path=%s; using the built-in SafeArea",
+                path);
         return;
     }
 
     if(tx<0||ty<0||tw<1||th<1||tx>=g_width||ty>=g_height||
        tx+tw>g_width||ty+th>g_height){
-        logf_u2("GEN2 SafeArea config out-of-range x=%d y=%d w=%d h=%d full=%dx%d; using full canvas",
+        logf_u2("GEN2 SafeArea config out-of-range x=%d y=%d w=%d h=%d full=%dx%d; using the built-in SafeArea",
                 tx,ty,tw,th,g_width,g_height);
         return;
     }
@@ -1006,22 +1065,110 @@ static CFMutableDictionaryRef clone_without_111(CFDictionaryRef request)
  * choose stream 111. The reference replaces enabledFeatures with
  * ["altScreen","viewAreas"] rather than waiting for a 111 request.
  */
+#ifdef ALT111_TARGET_MHI2Q
+/* Stock dio_manager's inbound TCP ports on carplay0 (RTSP, events, stream 110). */
+static const int g_stock_ports[] = { 5000, 5001, 6030 };
+/* PF-permitted ports stock was never seen using, tried in order if one won't bind. */
+static const int g_alt_port_fallbacks[] = { 7100, 6200, 6100, 5010, 7001, 7000 };
+#endif
+
+static int stock_port_reserved(int port)
+{
+#ifdef ALT111_TARGET_MHI2Q
+    size_t i;
+    for(i=0;i<sizeof(g_stock_ports)/sizeof(g_stock_ports[0]);++i)
+        if(g_stock_ports[i]==port) return 1;
+#else
+    (void)port;
+#endif
+    return 0;
+}
+
 static int current_alt_port(void)
 {
     char b[16];
     int v;
-    if(read_trimmed_value(g_port_override_path,b,sizeof(b))!=0) return g_alt_port;
-    v=atoi(b);
-    if(v>0 && v<65536) return v;
-    logf_u2("stream111 port override %s invalid ('%s'); keeping %d",
-            g_port_override_path,b,g_alt_port);
-    return g_alt_port;
+    if(read_trimmed_value(g_port_override_path,b,sizeof(b))!=0) v=g_alt_port;
+    else {
+        v=atoi(b);
+        if(v<=0 || v>=65536){
+            logf_u2("stream111 port override %s invalid ('%s'); keeping %d",
+                    g_port_override_path,b,g_alt_port);
+            v=g_alt_port;
+        }
+    }
+    if(stock_port_reserved(v)){
+        logf_u2("stream111 port %d is a stock CarPlay port (6030 = main screen stream 110); "
+                "using %d instead", v, ALT111_DEFAULT_PORT);
+        return ALT111_DEFAULT_PORT;
+    }
+    return v;
+}
+
+/*
+ * Senders that must not see the AltScreen advertisement. The wireless CarPlay
+ * dongle of log sets 005-010 always identifies as model=iPhone9,1 iOS 18D70
+ * (sourceVersion 535.3) whatever phone is behind it, never requests stream 111,
+ * and with our /info it fails to connect or drops after seconds; with the stock
+ * /info (altscreen_off) it is stable. The session's first SETUP carries model
+ * and osBuildVersion and arrives before /info, so the advertisement can be
+ * skipped for just that sender. More entries, one "model osBuildVersion" per
+ * line ("*" = any build), in /mnt/app/root/mibr-carplay111-noadvertise.senders.
+ */
+static const char *g_noadvertise_senders_path = "/mnt/app/root/mibr-carplay111-noadvertise.senders";
+static int g_sender_noadvertise;
+
+static int sender_listed(const char *model, const char *build)
+{
+    char line[128], m[64], b[64];
+    FILE *f;
+    int hit = 0;
+    if(strcmp(model,"iPhone9,1")==0 && strcmp(build,"18D70")==0) return 1;
+    f=fopen(g_noadvertise_senders_path,"r");
+    if(!f) return 0;
+    while(!hit && fgets(line,sizeof(line),f)){
+        if(line[0]=='#') continue;
+        if(sscanf(line,"%63s %63s",m,b)!=2) continue;
+        if(strcmp(m,model)==0 && (strcmp(b,"*")==0 || strcmp(b,build)==0)) hit=1;
+    }
+    fclose(f);
+    return hit;
+}
+
+static int request_cstr(CFDictionaryRef d, const char *key, char *out, size_t cap)
+{
+    CFStringRef k;
+    CFTypeRef v;
+    const char *p;
+    out[0]='\0';
+    if(!d) return 0;
+    k=s_cf(key);
+    if(!k) return 0;
+    v=(CFTypeRef)p_CFDictionaryGetValue(d,k);
+    p_CFRelease(k);
+    if(!v || p_CFGetTypeID(v)!=p_CFStringGetTypeID()) return 0;
+    p=p_CFStringGetCStringPtr((CFStringRef)v,CF_UTF8);
+    if(p){ snprintf(out,cap,"%s",p); return 1; }
+    return p_CFStringGetCString((CFStringRef)v,out,(CFIndex)cap,CF_UTF8) ? 1 : 0;
+}
+
+/* The session-level SETUP (the one with model/osBuildVersion) decides for the session. */
+static void note_sender(CFDictionaryRef request)
+{
+    char model[64], build[64], source[64];
+    if(!request_cstr(request,"model",model,sizeof(model))) return;
+    request_cstr(request,"osBuildVersion",build,sizeof(build));
+    request_cstr(request,"sourceVersion",source,sizeof(source));
+    g_sender_noadvertise = sender_listed(model,build);
+    logf_u2("GEN2 sender model=%s osBuild=%s source=%s -> AltScreen advertisement %s",
+            model,build,source,g_sender_noadvertise?"OFF (listed sender, stock /info)":"on");
 }
 
 /* Build-time/env gate, overridable per session by the marker file. */
 static int advertise_enabled(void)
 {
     if(!g_advertise) return 0;
+    if(g_sender_noadvertise) return 0;
     if(access(g_advertise_off_marker,F_OK)==0) return 0;
     return 1;
 }
@@ -1805,8 +1952,8 @@ static void *alt_receiver_thread(void *arg)
                 logf_u2("MHI2Q stream111: no iPhone connection on port %d after %us. "
                         "SETUP was answered, so the port is almost certainly not in the PF "
                         "allowlist for carplay0 (pfctl -sr): 5000:5001 5010 6000:6001 6030 "
-                        "6100 6200 7000:7001 7100. Set a permitted port with "
-                        "'echo 6030 > /mnt/app/mibr-carplay111.port' and reconnect.",
+                        "6100 6200 7000:7001 7100 (5000 5001 6030 are stock). Set a permitted "
+                        "port with 'echo 6200 > /mnt/app/mibr-carplay111.port' and reconnect.",
                         g_alt_port, waited);
         }
     }
@@ -1954,6 +2101,21 @@ static int start_alt_receiver(uint64_t connection_id)
     /* iPhone-facing listener: reachable from CarPlay link, not loopback. */
     g_alt_port = current_alt_port();
     g_alt_listen = bind_listener_stream111(g_alt_port, &actual, allow_ephemeral);
+#ifdef ALT111_TARGET_MHI2Q
+    {
+        size_t i;
+        int tried = g_alt_port;
+        for (i = 0; g_alt_listen < 0 &&
+                    i < sizeof(g_alt_port_fallbacks) / sizeof(g_alt_port_fallbacks[0]); ++i) {
+            int p = g_alt_port_fallbacks[i];
+            if (p == g_alt_port) continue;
+            logf_u2("stream111 port %d unavailable (%s); trying PF-permitted %d",
+                    tried, strerror(errno), p);
+            tried = p;
+            g_alt_listen = bind_listener_stream111(p, &actual, 0);
+        }
+    }
+#endif
     if (g_alt_listen < 0) {
         g_aes_ctr_final(&g_alt_aes);
         g_alt_aes_valid=0;
@@ -1962,8 +2124,8 @@ static int start_alt_receiver(uint64_t connection_id)
         logf_u2("cannot bind iPhone stream111 listener on port %d: %s"
 #ifdef ALT111_TARGET_MHI2Q
                 " (no ephemeral fallback on MHI2Q: PF only permits 5000:5001 5010 6000:6001"
-                " 6030 6100 6200 7000:7001 7100 on carplay0; pick a free permitted port via"
-                " /mnt/app/mibr-carplay111.port)"
+                " 6030 6100 6200 7000:7001 7100 on carplay0, and 5000 5001 6030 are stock;"
+                " every non-stock permitted port failed to bind)"
 #endif
                 , g_alt_port, strerror(errno));
         return -1;
@@ -2065,62 +2227,70 @@ done:
  * narrow center strip. A smaller/tube-specific SafeArea can be added later
  * once the full-width and classic VC layouts have been measured on-car.
  */
+/*
+ * ViewAreas advertised: 2 on MHI2Q (0 = wide VC map, 1 = classic small map),
+ * switched in-session with updateViewArea from the VC's FctID 54 large/small map
+ * report (Java -> CMD_ALT_ZONE -> altscreen111_view_area). Both views use the
+ * full canvas; only the SafeArea differs, so iOS moves the puck and its overlays
+ * into the window the VC actually shows. The marker below falls back to the
+ * single view, which is what every earlier vehicle test used.
+ */
+static const char *g_single_view_marker = "/mnt/app/root/mibr-carplay111-viewareas.single";
+static int g_view_count = 1;
+static volatile int g_desired_view;
+
+static int configured_view_count(void)
+{
+#ifdef ALT111_DEFAULT_SMALL_SAFE_W
+    return access(g_single_view_marker,F_OK)==0 ? 1 : 2;
+#else
+    return 1;
+#endif
+}
+
 static void add_reference_viewarea(CFMutableDictionaryRef alt)
 {
-    CFMutableDictionaryRef view=NULL,safe=NULL;
     CFMutableArrayRef areas=NULL;
     CFStringRef k=NULL;
-    int safe_w,safe_h,safe_x,safe_y;
+    int v, initial;
 
     if(!alt || g_width<=0 || g_height<=0) return;
-
-    /*
-     * Full-canvas remains the fail-safe default.  Vehicle-test overrides are
-     * persistent plain-text integers so the iOS composition envelope can be
-     * tuned without recompiling again.  Clamp every value to the advertised
-     * 1010x376 display canvas; malformed/out-of-range files fall back safely.
-     */
-    load_safearea_config(&safe_x,&safe_y,&safe_w,&safe_h);
-
-    view=dict_new();
-    safe=dict_new();
     areas=p_CFArrayCreateMutable(NULL,0,p_array_callbacks);
-    if(!view||!safe||!areas) goto done;
-
-    set_i64(view,"widthPixels",g_width);
-    set_i64(view,"heightPixels",g_height);
-    set_i64(view,"originXPixels",0);
-    set_i64(view,"originYPixels",0);
-
-    set_i64(safe,"widthPixels",safe_w);
-    set_i64(safe,"heightPixels",safe_h);
-    set_i64(safe,"originXPixels",safe_x);
-    set_i64(safe,"originYPixels",safe_y);
-
-    /*
-     * These are ViewArea policy booleans, not numeric zero values. MIBSI
-     * serializes both as real CFBoolean false objects.
-     */
-    set_false(view,"drawUIOutsideSafeArea");
-    set_false(view,"viewAreaTransitionControl");
-
-    k=s_cf("safeArea");
-    p_CFDictionarySetValue(view,k,safe);
-    p_CFRelease(k); k=NULL;
-
-    p_CFArrayAppendValue(areas,view);
+    if(!areas) return;
+    for(v=0; v<g_view_count; ++v){
+        CFMutableDictionaryRef view=NULL,safe=NULL;
+        int safe_w,safe_h,safe_x,safe_y;
+        load_safearea_config(v,&safe_x,&safe_y,&safe_w,&safe_h);
+        view=dict_new();
+        safe=dict_new();
+        if(!view||!safe){ if(view)p_CFRelease(view); if(safe)p_CFRelease(safe); break; }
+        set_i64(view,"widthPixels",g_width);
+        set_i64(view,"heightPixels",g_height);
+        set_i64(view,"originXPixels",0);
+        set_i64(view,"originYPixels",0);
+        set_i64(safe,"widthPixels",safe_w);
+        set_i64(safe,"heightPixels",safe_h);
+        set_i64(safe,"originXPixels",safe_x);
+        set_i64(safe,"originYPixels",safe_y);
+        /* ViewArea policy booleans, real CFBoolean false (as MIBSI serializes). */
+        set_false(view,"drawUIOutsideSafeArea");
+        set_false(view,"viewAreaTransitionControl");
+        k=s_cf("safeArea");
+        p_CFDictionarySetValue(view,k,safe);
+        p_CFRelease(k); k=NULL;
+        p_CFArrayAppendValue(areas,view);
+        p_CFRelease(safe);
+        p_CFRelease(view);
+        logf_u2("GEN2 ViewArea[%d] %s full=%dx%d safe=%dx%d@%d,%d",v,v?"classic":"wide",
+                g_width,g_height,safe_w,safe_h,safe_x,safe_y);
+    }
     k=s_cf("viewAreas");
     p_CFDictionarySetValue(alt,k,areas);
-    p_CFRelease(k); k=NULL;
-    set_i64(alt,"initialViewArea",0);
-    logf_u2("GEN2 ViewArea full=%dx%d safe=%dx%d@%d,%d",
-            g_width,g_height,safe_w,safe_h,safe_x,safe_y);
-
-done:
-    if(k)p_CFRelease(k);
-    if(areas)p_CFRelease(areas);
-    if(safe)p_CFRelease(safe);
-    if(view)p_CFRelease(view);
+    p_CFRelease(k);
+    p_CFRelease(areas);
+    initial = (g_desired_view>=0 && g_desired_view<g_view_count) ? g_desired_view : 0;
+    set_i64(alt,"initialViewArea",initial);
+    logf_u2("GEN2 ViewAreas=%d initialViewArea=%d",g_view_count,initial);
 }
 
 static void log_stream_types(const char *tag, CFDictionaryRef request)
@@ -2602,6 +2772,93 @@ static CFMutableDictionaryRef command_update_view(unsigned view)
     p_CFRelease(params); return req;
 }
 
+/* Semantic cluster map zoom (harman-f/mhi2_altscreen_carplay research, iOS 26.7.1
+ * command index): {uuid, zoomDirection}, 0 = in, 1 = out. Not vehicle-proven yet;
+ * every dispatch and completion status is logged. */
+static CFMutableDictionaryRef command_map_zoom(int zoom_out)
+{
+    CFMutableDictionaryRef req=dict_new(), params=dict_new();
+    if(!req||!params){if(req)p_CFRelease(req);if(params)p_CFRelease(params);return NULL;}
+    set_str(req,"type","changeMapZoomLevel");
+    set_str(params,"uuid",g_alt_uuid);
+    set_i64(params,"zoomDirection",zoom_out?1:0);
+    { CFStringRef k=s_cf("params"); p_CFDictionarySetValue(req,k,params); p_CFRelease(k); }
+    p_CFRelease(params); return req;
+}
+
+/*
+ * Exported for libcarplay_hook (same dio_manager process): its bus handler for
+ * CMD_ALT_ZOOM resolves this with dlsym(RTLD_DEFAULT). Only queues the step; the
+ * AirPlay command is sent from gen2_control_worker, never from the bus thread.
+ * Returns 0 when queued, -1 when no stream-111 session is up.
+ */
+int altscreen111_map_zoom(int mapscale_steps)
+{
+    int queued = -1;
+    if(!mapscale_steps) return 0;
+    pthread_mutex_lock(&g2_core_lock);
+    if(g2_command_ready){
+        g2_zoom_pending += mapscale_steps;
+        if(g2_zoom_pending > 8) g2_zoom_pending = 8;
+        if(g2_zoom_pending < -8) g2_zoom_pending = -8;
+        queued = 0;
+    }
+    pthread_cond_broadcast(&g2_core_cv);
+    pthread_mutex_unlock(&g2_core_lock);
+    logf_u2("gen2 map zoom request steps=%d %s",
+            mapscale_steps, queued==0 ? "queued" : "dropped (no stream111 session)");
+    return queued;
+}
+
+static void gen2_dispatch_diag_command(const char *label, CFMutableDictionaryRef req);
+
+/*
+ * Exported for libcarplay_hook's CMD_ALT_ZONE handler: the VC switched between
+ * its wide map (0) and the classic small map window (1). Stored for the next
+ * /info (initialViewArea) and, with a stream-111 session up, handed to the
+ * control core, whose worker sends updateViewArea until the phone acknowledges.
+ */
+int altscreen111_view_area(int view)
+{
+    int rc = 0, active = 0;
+    if(view<0 || view>=g_view_count){
+        logf_u2("gen2 view area %d ignored (%d advertised)",view,g_view_count);
+        return -1;
+    }
+    if(g_desired_view==view) return 0;
+    g_desired_view=view;
+    pthread_mutex_lock(&g2_core_lock);
+    if(g2_control_session){
+        active=1;
+        rc=alt111_control_intent(&g2_control,g2_control.desired,(unsigned)view);
+    }
+    pthread_cond_broadcast(&g2_core_cv);
+    pthread_mutex_unlock(&g2_core_lock);
+    logf_u2("gen2 view area -> %d (%s) %s rc=%d",view,view?"classic":"wide",
+            active?"updateViewArea queued":"for the next session",rc);
+    return rc;
+}
+
+/* One queued step per worker pass, so a fast roller spin cannot burst the phone. */
+static void gen2_process_map_zoom(void)
+{
+    static uint64_t last_ms;
+    int step = 0, zoom_out;
+    uint64_t now = monotonic_ms();
+    if(last_ms && now - last_ms < 150u) return;
+    pthread_mutex_lock(&g2_core_lock);
+    if(g2_zoom_pending > 0){ step = 1; --g2_zoom_pending; }
+    else if(g2_zoom_pending < 0){ step = -1; ++g2_zoom_pending; }
+    pthread_mutex_unlock(&g2_core_lock);
+    if(!step) return;
+    last_ms = now;
+    zoom_out = step > 0;
+    if(access(g2_zoom_inverted_marker,F_OK)==0) zoom_out = !zoom_out;
+    logf_u2("gen2 changeMapZoomLevel mapscale_step=%d zoomDirection=%d (%s)",
+            step, zoom_out, zoom_out ? "out" : "in");
+    gen2_dispatch_diag_command("changeMapZoomLevel", command_map_zoom(zoom_out));
+}
+
 static CFMutableDictionaryRef gen2_command_dictionary(const struct alt111_command *cmd)
 {
     if (!cmd) return NULL;
@@ -2706,6 +2963,7 @@ static void gen2_set_command_ready(unsigned ready)
 {
     pthread_mutex_lock(&g2_core_lock);
     g2_command_ready = ready ? 1u : 0u;
+    if(!ready) g2_zoom_pending = 0;
     pthread_cond_broadcast(&g2_core_cv);
     pthread_mutex_unlock(&g2_core_lock);
     gen2_publish_status();
@@ -2720,7 +2978,8 @@ static void gen2_control_projection_on(void)
     } else {
         repeated = 1;
     }
-    (void)alt111_control_intent(&g2_control,1,0);
+    (void)alt111_control_intent(&g2_control,1,
+        (g_desired_view>=0 && g_desired_view<g_view_count) ? (unsigned)g_desired_view : 0u);
     if (repeated)
         rrc = alt111_control_reacquire(&g2_control,g2_control_session);
     pthread_cond_broadcast(&g2_core_cv);
@@ -3036,6 +3295,16 @@ static void gen2_process_diag_markers(void)
         logf_u2("gen2 DIAG marker stop-only");
         gen2_dispatch_diag_command("stopUI",command_stopui());
     }
+    if(access(g2_diag_zoom_in_marker,F_OK)==0){
+        unlink(g2_diag_zoom_in_marker);
+        logf_u2("gen2 DIAG marker zoom-in");
+        gen2_dispatch_diag_command("changeMapZoomLevel",command_map_zoom(0));
+    }
+    if(access(g2_diag_zoom_out_marker,F_OK)==0){
+        unlink(g2_diag_zoom_out_marker);
+        logf_u2("gen2 DIAG marker zoom-out");
+        gen2_dispatch_diag_command("changeMapZoomLevel",command_map_zoom(1));
+    }
 }
 
 static void *gen2_control_worker(void *arg)
@@ -3059,6 +3328,7 @@ static void *gen2_control_worker(void *arg)
 
         gen2_resync_poll();
         gen2_process_diag_markers();
+        gen2_process_map_zoom();
 
         if(access(g2_reacquire_marker,F_OK)==0){
             unlink(g2_reacquire_marker);
@@ -3496,6 +3766,7 @@ static OSStatus mibr_session_setup(AirPlayReceiverSessionRef s, CFDictionaryRef 
 
     gen2_runtime_ready();
     log_stream_types("SETUP entry",request);
+    note_sender(request);
 
     /*
      * Recovered IRC ordering: pass the original request to stock first.
@@ -3731,6 +4002,9 @@ static int gen2_configure_profile(void)
     g2_profile.views[0].area.width=g2_profile.width;
     g2_profile.views[0].area.height=g2_profile.height;
     g2_profile.views[0].safe=g2_profile.views[0].area;
+    g_view_count=configured_view_count();
+    g2_profile.view_count=(unsigned)g_view_count;
+    if(g_view_count>1) g2_profile.views[1]=g2_profile.views[0];
     if(alt111_profile_validate(&g2_profile)!=ALT111_OK){
         logf_u2("gen2 runtime profile validation failed");
         return -1;

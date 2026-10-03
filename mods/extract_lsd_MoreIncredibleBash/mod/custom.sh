@@ -15,7 +15,7 @@ if [ ! -d /mnt/app/eso/hmi/lsd ] && [ ! -r /ifs/lsd.jxe ] && [ -d /net/mmx/mnt/a
     exec on -f mmx /bin/sh "$D/custom.sh" "$@"
 fi
 
-CARD=${D%/mod}                           # this script sits in <card>/mod/
+CARD=${CP_CARD:-${D%/mod}}               # this script sits in <card>/mod/ (GEM menu: CP_CARD)
 
 # The card may be mounted read-only: remount the mount point that holds it.
 can_write() { : > "$1/.lsd_write_test" 2>/dev/null && rm -f "$1/.lsd_write_test"; }

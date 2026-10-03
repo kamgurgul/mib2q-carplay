@@ -35,8 +35,8 @@ hosttest: host_decode_test
 
 # Headless host renderer: real tee client + decode, GL stubbed out. Useful to
 # validate the on-car tee over an SSH port-forward (ssh -L 19820:127.0.0.1:19820).
-altscreen_render_host: main.c decode.c video_gles.c decode.h video_gles.h
-	$(CC) $(CFLAGS) $(FF_CFLAGS) main.c decode.c video_gles.c $(FF_LIBS) -o $@
+altscreen_render_host: main.c decode.c video_gles.c omx_probe.c hw_decode.c decode.h video_gles.h omx_probe.h hw_decode.h omx_il.h
+	$(CC) $(CFLAGS) $(FF_CFLAGS) main.c decode.c video_gles.c omx_probe.c hw_decode.c $(FF_LIBS) -o $@
 
 host: altscreen_render_host
 

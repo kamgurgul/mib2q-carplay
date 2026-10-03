@@ -27,6 +27,8 @@ if [ "$ALTSCREEN" = 1 ]; then
     bash "$SCRIPT_DIR/build_altscreen_render.sh"
     bash "$SCRIPT_DIR/build_altscreen_hook.sh"
 fi
+# GEM CarPlay-RGI menu (menu_install mod): bundles the current mod scripts.
+bash "$SCRIPT_DIR/build_gem_menu.sh"
 
 FILES=(
     "$B/libcarplay_hook.so"

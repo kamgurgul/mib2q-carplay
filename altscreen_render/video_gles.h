@@ -24,6 +24,11 @@ altr_gles_t *altr_gles_create(int surface_w, int surface_h);
  * Returns 0 on success. */
 int altr_gles_draw(altr_gles_t *g, const altr_frame_t *f);
 
+/* Overlay the calibration ruler on what altr_gles_draw just drew: a colour per
+ * 60 px row (red 60, orange 120, yellow 180, green 240, cyan 300, blue 360,
+ * magenta 420, white 480), grey verticals every 180 px and a grey canvas border. */
+void altr_gles_draw_grid(altr_gles_t *g);
+
 /* Update the drawable size after a window recreate. */
 void altr_gles_resize(altr_gles_t *g, int surface_w, int surface_h);
 

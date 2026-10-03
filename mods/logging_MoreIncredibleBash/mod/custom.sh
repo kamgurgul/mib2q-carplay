@@ -26,7 +26,7 @@ if [ ! -d /mnt/app/eso/hmi/lsd ] && [ -d /net/mmx/mnt/app/eso/hmi/lsd ]; then
 fi
 
 SRC=${CP_LOG_SRC:-/tmp}                  # override only for a host test
-CARD=${D%/mod}                           # this script sits in <card>/mod/
+CARD=${CP_CARD:-${D%/mod}}               # this script sits in <card>/mod/ (GEM menu: CP_CARD)
 
 # The card may be mounted read-only: remount the mount point that holds it.
 can_write() { : > "$1/.carplay_write_test" 2>/dev/null && rm -f "$1/.carplay_write_test"; }
@@ -97,11 +97,26 @@ run carplay_stock_ls.txt find /mnt/app /mnt/system -name '*.carplay-stock'
 run tmp_ls.txt ls -la "$SRC"
 run cores_ls.txt ls -la /mnt/ota/system/core
 
+# ---- hardware H.264 decoder discovery (AltScreen OMX feasibility) ----
+# Which Qualcomm OMX / video-decoder libraries the unit has, and the stock
+# CarPlay receiver that already drives one (COMXVideoDecoder in dio_manager).
+# libairplay.so is copied once per card (carplay_logs/hwdec/), not per save.
+mkdir "$OUT/hwdec"
+run hwdec/omx_libs.txt find /mnt/app /mnt/system /proc/boot /lib /usr/lib \
+    \( -iname '*omx*' -o -iname '*vdec*' -o -iname '*venus*' -o -iname '*mm-*' -o -iname '*qcvideo*' \) -print
+run hwdec/dio_libs.txt pidin -P dio_manager mem
+if [ ! -f "$BASE/hwdec/libairplay.so" ]; then
+    mkdir -p "$BASE/hwdec"
+    for f in /mnt/app/eso/lib/libairplay.so /eso/lib/libairplay.so; do
+        [ -f "$f" ] && { cp "$f" "$BASE/hwdec/" 2>/dev/null; break; }
+    done
+fi
+
 # ---- logs and captures from /tmp (never the shared-memory objects also living there) ----
 mkdir "$OUT/tmp"
 for f in "$SRC"/*.log "$SRC"/*.log.* "$SRC"/carplay_* "$SRC"/*.pid \
          "$SRC"/altscreen_render.* "$SRC"/altscreen111.log \
-         "$SRC"/mibr-alt111* "$SRC"/mibr-carplay111.*; do
+         "$SRC"/mibr-alt111* "$SRC"/mibr-carplay111.* "$SRC"/mibr-carplay111-*; do
     [ -f "$f" ] || continue
     cp "$f" "$OUT/tmp/" 2>/dev/null || echo "copy failed: $f" >> "$OUT/info.txt"
 done

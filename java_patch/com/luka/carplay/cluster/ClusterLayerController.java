@@ -71,6 +71,8 @@ public final class ClusterLayerController {
     private static boolean errorLogged;
     private static String lastAppliedSignature;
     private static volatile ViewportListener viewportListener;
+    /* Last VC layout sent to the AltScreen hook (CMD_ALT_ZONE), -1 = none this video session. */
+    private static int lastZoneSent = -1;
 
     public interface ViewportListener {
         void onManeuverViewportChanged();
@@ -315,6 +317,7 @@ public final class ClusterLayerController {
         int videoX = geometry.mapX + (smallStage ? geometry.smallStageDX : 0);
         int videoY = geometry.mapY + (smallStage ? geometry.smallStageDY : 0);
         logDecision(geometry, popup, carplayOpacity, videoActive, videoX, videoY);
+        sendAltViewArea(videoActive, popup);
         try {
             /* Applied on every path below, including the early returns. */
             if (videoActive) {
@@ -368,6 +371,21 @@ public final class ClusterLayerController {
                 Log.w("ClusterLayers", "apply failed: " + t);
             }
         }
+    }
+
+    /** CarPlay cluster video only: tell the hook which VC layout is showing so iOS keeps
+     *  the puck inside the visible map (ViewArea 0 = wide map, 1 = classic small window
+     *  between the dials). VC FctID 54 drives {@code popup}: large map = wide. Serialized
+     *  by APPLY_LOCK; re-sent for every new video session. */
+    private static void sendAltViewArea(boolean videoActive, boolean popup) {
+        if (!videoActive) { lastZoneSent = -1; return; }
+        int zone = popup ? 0 : 2;   /* CMD_ALT_ZONE mode: 0=full, 2=classic */
+        if (zone == lastZoneSent) return;
+        boolean sent = com.luka.carplay.bus.CarplayBus.getInstance().sendBinary(
+            com.luka.carplay.bus.CarplayBus.CMD_ALT_ZONE, new byte[]{(byte) zone, 0, 0});
+        if (sent) lastZoneSent = zone;
+        Log.i("ClusterLayers", "AltScreen view area -> " + (popup ? "wide (0)" : "classic (1)")
+            + (sent ? "" : " (bus send dropped, retried on the next change)"));
     }
 
     /** One line per distinct geometry decision — the exact numbers written to the DM.

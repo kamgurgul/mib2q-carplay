@@ -6,8 +6,9 @@
 # every CarPlay connect and advertises to iOS. iOS centres the map puck and keeps
 # its UI inside that rectangle, so it must be the part of the 1440x540 canvas the
 # VC actually shows (measure it with the altscreen_grid mod).
-# A line "reset" in safearea.conf removes the override (full canvas again).
-# Out-of-range values are ignored by the hook, which then logs it and keeps the full canvas.
+# A line "reset" in safearea.conf removes the override (back to the hook's built-in
+# SafeArea x=350 y=94 w=740 h=310, measured from the stock VC map).
+# Out-of-range values are ignored by the hook, which then logs it and keeps the built-in SafeArea.
 # Reconnect the phone/dongle to apply; no reboot.
 #
 # QNX 6.5 /bin/sh is ksh; stays inside its portable subset.
@@ -25,15 +26,15 @@ if [ ! -d /mnt/app/eso/hmi/lsd ] && [ -d /net/mmx/mnt/app/eso/hmi/lsd ]; then
     exec on -f mmx /bin/sh "$D/custom.sh" "$@"
 fi
 
-SRC="$D/safearea.conf"
-DST=/mnt/app/root/mibr-carplay111-safearea.conf
+SRC=${CP_SAFEAREA_SRC:-$D/safearea.conf}   # GEM menu: <card>/carplay_safearea.conf
+DST=${CP_SAFEAREA_DST:-/mnt/app/root/mibr-carplay111-safearea.conf}   # GEM menu: the classic-view file too
 [ -r "$SRC" ] || { echo "FAILED: $SRC not found"; exit 1; }
 mount -uw /mnt/app 2>/dev/null || echo "custom.sh: mount -uw /mnt/app failed"
 
 if grep -q '^reset' "$SRC"; then
     rm -f "$DST"
     sync
-    echo "DONE. SafeArea override removed (full 1440x540 canvas). Reconnect to apply."
+    echo "DONE. SafeArea override removed (built-in SafeArea). Reconnect to apply."
     exit 0
 fi
 

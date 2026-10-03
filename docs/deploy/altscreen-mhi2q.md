@@ -354,27 +354,61 @@ For ctx 82 the maneuver plane 98 and its backings follow VC Fct44/Fct54 as befor
   renderer (`ALTR_WIDTH/HEIGHT`) to match. The actual decoded video size is
   whatever iOS sends and is handled dynamically by the renderer regardless.
 
+> [!WARNING]
+> **Do not advertise 1440×455.** Tried in log set 007 (taken from the yuedizhibo V2.2 mirror
+> output size): right after `/info` + `startSession` the phone sent a whole-session TEARDOWN
+> instead of the stream-111 SETUP it sends for 1440×540 (006: SETUP 111 45 ms later), and later
+> sessions stopped requesting 111 at all. 455 is odd, which an H.264 encoder cannot produce; keep
+> both dimensions even (ideally multiples of 16). yuedizhibo's 1440×455 is their cluster output
+> plane, not necessarily what they advertise to the phone.
+
 ---
 
-## 11b. Calibrating the SafeArea (puck position)
+## 11b. SafeArea (puck position) and calibration
 
-iOS draws the map over the whole advertised 1440x540 ViewArea but keeps the puck and its
-overlays centred in the nested **SafeArea**. The hook defaults the SafeArea to the full canvas,
-so if the VC shows only part of the canvas the puck can land outside it (seen on the car:
-below the visible bottom in both normal and full-width view).
+iOS draws the map over the whole 1440x540 ViewArea but keeps the puck and its overlays inside
+the nested **SafeArea**. With the full canvas as SafeArea the puck sat behind the VC's own bottom
+bar (altitude / route / scale), which the VC draws over canvas rows ~403 and below. Measured
+from a photo of the stock VC map, the hook now defaults to the band between the VC's top and
+bottom bars and between the dials: **x=350 y=94 w=740 h=310** (`ALT111_DEFAULT_SAFE_*`).
 
-1. Run the **altscreen_grid** mod. `altscreen_render` overlays a ruler on the video: horizontal
-   lines every 60 px (red 60, orange 120, yellow 180, green 240, cyan 300, blue 360, magenta 420,
-   white 480), grey verticals every 180 px, grey border on the canvas edges.
-2. Photograph the VC in each view. The visible lines give the visible canvas rectangle.
-3. Put that rectangle in `safearea.conf` of the **altscreen_safearea** mod, run it, reconnect.
-   It writes `/mnt/app/root/mibr-carplay111-safearea.conf`, which the hook reads at every connect
-   (`GEN2 ViewArea full=... safe=...` in `/tmp/altscreen111.log`). `reset` in the file restores the
-   full canvas.
-4. Run altscreen_grid again to remove the ruler.
+Tuning without a rebuild (GEM CarPlay-RGI menu):
 
-Different VC views can need different rectangles. The hook already has `updateViewArea`; once both
-views are measured they can be advertised as separate ViewAreas and switched from the VC view state.
+1. *Calibration grid ON / OFF* - ruler over the video: lines every 60 px (red 60, orange 120,
+   yellow 180, green 240, cyan 300, blue 360, magenta 420, white 480), grey verticals every 180 px.
+2. Put the wanted rectangle in `carplay_safearea.conf` in the card root (format of the
+   altscreen_safearea mod's `safearea.conf`), press *Apply SafeArea from SD*, reconnect.
+3. *Reset SafeArea to built-in* returns to the defaults above.
+
+### Classic VC layout (big dials, small map window)
+
+The hook advertises **two ViewAreas** (both the full canvas, different SafeAreas):
+
+| index | VC layout | built-in SafeArea | override file |
+| --- | --- | --- | --- |
+| 0 | wide map | x=350 y=94 w=740 h=310 | `/mnt/app/root/mibr-carplay111-safearea.conf` |
+| 1 | classic small map | x=460 y=96 w=520 h=328 | `/mnt/app/root/mibr-carplay111-safearea-small.conf` |
+
+The classic window was measured from a stock photo scaled by the VC top bar (~536x331 panel px,
+the 420x330 Audi window of the recovered reference). VC FctID 54 (`largeMapView`, the same signal
+as `ClusterLayers ... stage=popup|inTube`) selects the view: Java sends `CMD_ALT_ZONE` (0 = full,
+2 = classic), `hook/altzoom` calls `altscreen111_view_area()`, and the control worker sends
+`updateViewArea` until the phone acknowledges. The current view is also the `initialViewArea` of
+the next `/info`. GEM *Apply SafeArea from SD* reads `carplay_safearea.conf` and
+`carplay_safearea_small.conf`; *Classic-view SafeArea ON / OFF* falls back to one ViewArea.
+
+The hook logs what it advertised: `GEN2 ViewArea[n] wide|classic full=1440x540 safe=...` and
+`gen2 view area -> n`.
+
+### Senders that get the stock /info
+
+The wireless CarPlay dongle in log sets 005-010 always identifies as `model=iPhone9,1`
+`osBuildVersion=18D70` (`sourceVersion=535.3`), never requests stream 111, and fails to connect or
+drops within seconds when it sees the AltScreen advertisement; with *Cluster video OFF* it is
+stable. The session's first SETUP carries the model and arrives before `/info`, so the hook skips
+the advertisement for that sender only (`GEN2 sender model=... -> AltScreen advertisement OFF`).
+More senders: one `model osBuildVersion` line (`*` = any build) in
+`/mnt/app/root/mibr-carplay111-noadvertise.senders`.
 
 ---
 

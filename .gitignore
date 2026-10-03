@@ -29,3 +29,4 @@ mods/install_MoreIncredibleBash/mod/carplay/*
 # Stock firmware classes, the unit's jxe and the host JDK (see stock/README.md)
 /stock/*
 !/stock/README.md
+/mods/menu_install_MoreIncredibleBash/mod/carplay_menu/

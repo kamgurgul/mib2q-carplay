@@ -49,6 +49,8 @@
 
 #include "decode.h"
 #include "video_gles.h"
+#include "omx_probe.h"
+#include "hw_decode.h"
 
 #ifdef PLATFORM_QNX
 #include <EGL/egl.h>
@@ -57,6 +59,21 @@
 #endif
 
 static volatile int g_stop = 0;
+
+/* One-shot hardware-decoder probe (GEM CarPlay-RGI -> "HW decoder probe"):
+ * the marker is consumed and the result goes to altscreen_render.log. Checked
+ * at most once a second, from both the idle and the connected loop. */
+#define ALTR_OMX_PROBE_MARKER "/mnt/app/root/altscreen_render.omxprobe"
+static void omx_probe_poll(int w, int h)
+{
+    static time_t last;
+    time_t now = time(NULL);
+    if (now == last) return;
+    last = now;
+    if (access(ALTR_OMX_PROBE_MARKER, F_OK) != 0) return;
+    unlink(ALTR_OMX_PROBE_MARKER);
+    altr_omx_probe(w, h);
+}
 static void on_signal(int s){ (void)s; g_stop = 1; }
 
 static const char *env_s(const char *k, const char *d){ const char *v=getenv(k); return (v&&*v)?v:d; }
@@ -126,6 +143,10 @@ struct app {
     int egl_ready;
     uint64_t last_probe_ms;   /* throttle for cluster_surface_lost() */
     int probe_now;            /* force a probe after a failed present */
+    int disp_id;              /* displayable (99) */
+    altr_hwdec_t *hw;         /* hardware decode session, NULL = software path */
+    uint64_t hw_frames_seen;
+    int hw_tried;             /* hardware attempted on this tee connection */
 #endif
 };
 
@@ -251,6 +272,20 @@ static int rebind_window(struct app *a)
  * present failed - a failed draw/swap is the real signal of a disowned window. */
 #define ALTR_LOST_PROBE_MS 5000u
 
+/* Calibration ruler toggle (mods/altscreen_grid). Checked once a second, not per
+ * frame, so it costs nothing in normal use. */
+#define ALTR_GRID_MARKER "/mnt/app/root/altscreen_render.grid"
+static int grid_enabled(uint64_t now)
+{
+    static uint64_t checked_ms;
+    static int on;
+    if (!checked_ms || now - checked_ms >= 1000u) {
+        checked_ms = now;
+        on = access(ALTR_GRID_MARKER, F_OK) == 0;
+    }
+    return on;
+}
+
 static int present_frame(struct app *a, const altr_frame_t *f)
 {
     uint64_t now = now_ms();
@@ -264,6 +299,7 @@ static int present_frame(struct app *a, const altr_frame_t *f)
     }
     if (lost && rebind_window(a) != 0) { a->probe_now = 1; return -1; }
     if (altr_gles_draw(a->gl, f) != 0)  { a->probe_now = 1; return -1; }
+    if (grid_enabled(now)) altr_gles_draw_grid(a->gl);
     if (!eglSwapBuffers(a->dpy, a->surf)) { a->probe_now = 1; return -1; }
     return 0;
 }
@@ -283,6 +319,35 @@ static void gl_shutdown(struct app *a)
     a->egl_ready = 0;
     if (a->cs) { cluster_surface_destroy(a->cs); a->cs = NULL; }
     a->have_gl = 0;
+}
+#endif
+
+#ifdef PLATFORM_QNX
+/* Hardware decode (GEM CarPlay-RGI -> "HW decoder ON / OFF"). Read per tee
+ * connection; a failed attempt removes the marker so the next sessions stay on
+ * the proven software path until it is switched on again. */
+#define ALTR_HWDEC_MARKER "/mnt/app/root/altscreen_render.hwdecode"
+
+static void hw_give_up(struct app *a, const char *why)
+{
+    fprintf(stderr, "altscreen_render: hardware decode %s; back to software decode "
+            "(HW decoder switched OFF)\n", why);
+    if (a->hw) { altr_hwdec_destroy(a->hw); a->hw = NULL; }
+    unlink(ALTR_HWDEC_MARKER);
+}
+
+/* The software path draws with GLES on its own window 99; bring it back if the
+ * hardware path had it. */
+static int ensure_gl(struct app *a)
+{
+    if (a->have_gl) return 0;
+    gl_shutdown(a);
+    if (gl_init(a, a->disp_id) != 0) {
+        fprintf(stderr, "altscreen_render: GL re-init failed\n");
+        gl_shutdown(a);
+        return -1;
+    }
+    return 0;
 }
 #endif
 
@@ -307,7 +372,10 @@ int main(void)
     a.dpy = EGL_NO_DISPLAY;
     a.surf = EGL_NO_SURFACE;
     a.ctx = EGL_NO_CONTEXT;
-    if (gl_init(&a, env_i("ALTR_DISPLAYABLE_ID", 99)) != 0) {
+    a.disp_id = env_i("ALTR_DISPLAYABLE_ID", 99);
+    if (access(ALTR_HWDEC_MARKER, F_OK) == 0) {
+        fprintf(stderr, "altscreen_render: hardware decode requested; GL window deferred\n");
+    } else if (gl_init(&a, a.disp_id) != 0) {
         write_status("gl_error", 0, 0, 0);
         gl_shutdown(&a);
         set_live(0);
@@ -331,6 +399,7 @@ int main(void)
 
     uint8_t buf[32768];
     while (!g_stop) {
+        omx_probe_poll(a.surface_w, a.surface_h);
         int fd = tee_connect(host, port);
         if (fd < 0) {
             set_live(0);
@@ -345,6 +414,7 @@ int main(void)
          * on signal. */
         for (;;) {
             if (g_stop) { close(fd); goto done; }
+            omx_probe_poll(a.surface_w, a.surface_h);
             fd_set rd; struct timeval tv;
             FD_ZERO(&rd); FD_SET(fd, &rd);
             tv.tv_sec = 0; tv.tv_usec = 200000;
@@ -352,6 +422,39 @@ int main(void)
             if (r > 0 && FD_ISSET(fd, &rd)) {
                 ssize_t n = recv(fd, buf, sizeof(buf), 0);
                 if (n <= 0) break;
+#ifdef PLATFORM_QNX
+                if (!a.hw && !a.hw_tried && access(ALTR_HWDEC_MARKER, F_OK) == 0) {
+                    a.hw_tried = 1;
+                    gl_shutdown(&a);             /* frees displayable 99 for the decoder */
+                    a.hw = altr_hwdec_create(a.surface_w, a.surface_h, a.disp_id);
+                    a.hw_frames_seen = 0;
+                    if (!a.hw) {
+                        hw_give_up(&a, "setup failed");
+                        ensure_gl(&a);
+                        break;                  /* reconnect: the hook re-primes with a fresh IDR */
+                    }
+                }
+                if (a.hw) {
+                    uint64_t hf;
+                    if (altr_hwdec_feed(a.hw, buf, (size_t)n) < 0 || altr_hwdec_failed(a.hw)) {
+                        hw_give_up(&a, "failed");
+                        ensure_gl(&a);
+                        break;
+                    }
+                    hf = altr_hwdec_frames(a.hw);
+                    if (hf > a.hw_frames_seen) {
+                        a.frames += hf - a.hw_frames_seen;
+                        a.hw_frames_seen = hf;
+                        a.last_w = a.surface_w; a.last_h = a.surface_h;
+                        a.last_frame_ms = now_ms();
+                        set_live(1);
+                        if (a.frames <= 2 || (a.frames % 120) == 0)
+                            write_status("decoding_hw", a.last_w, a.last_h, a.frames);
+                    }
+                    continue;
+                }
+                if (!a.have_gl && ensure_gl(&a) != 0) continue;
+#endif
                 altr_decode_feed(dec, buf, (size_t)n);
             } else if (r < 0 && errno != EINTR) {
                 break;
@@ -361,6 +464,10 @@ int main(void)
         }
 
         close(fd);
+#ifdef PLATFORM_QNX
+        if (a.hw) { altr_hwdec_destroy(a.hw); a.hw = NULL; }
+        a.hw_tried = 0;
+#endif
         altr_decode_flush(dec);
         set_live(0);
         write_status("tee_closed", a.last_w, a.last_h, a.frames);
@@ -369,6 +476,9 @@ int main(void)
     }
 
 done:
+#ifdef PLATFORM_QNX
+    if (a.hw) { altr_hwdec_destroy(a.hw); a.hw = NULL; }
+#endif
     set_live(0);
     write_status("stopped", a.last_w, a.last_h, a.frames);
     altr_decode_destroy(dec);
