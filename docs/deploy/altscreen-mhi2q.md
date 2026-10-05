@@ -1,7 +1,7 @@
 ---
 title: CarPlay AltScreen (cluster video) on Audi MHI2Q
 tags: [altscreen, cluster, video, mhi2q, deploy]
-status: verified-on-car (Audi A5 B9, MU1329)
+status: verified-on-car (Audi A5 F5, MU1329)
 ---
 
 # CarPlay AltScreen (cluster video) on Audi MHI2Q
@@ -9,7 +9,7 @@ status: verified-on-car (Audi A5 B9, MU1329)
 AltScreen shows the **CarPlay secondary-screen map video** on the Audi Virtual Cockpit, beside
 the route-guidance overlay. It ports the Škoda `mhi2_altscreen_carplay` GEN2 hook to MHI2Q and
 adds an on-HU decoder that draws the video into a cluster plane the stock DisplayManager already
-composites. Developed and tested on an Audi A5 (B9) with MU1329.
+composites. Developed and tested on an Audi A5 (F5) with MU1329.
 
 > [!WARNING]
 > Use only on a unit you own, with M.I.B. / SSH access. The installer keeps a `.carplay-stock`

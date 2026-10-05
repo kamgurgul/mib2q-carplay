@@ -44,7 +44,7 @@ Dongles are detected and get standard CarPlay on the main screen. See *Known lim
 
 | | |
 | --- | --- |
-| Head unit | Audi **MHI2Q** with **Virtual Cockpit**. Developed and tested on an Audi A5 (B9) with MU1329. Update to the latest firmware first. |
+| Head unit | Audi **MHI2Q** with **Virtual Cockpit**. Developed and tested on an Audi A5 (F5) with MU1329. Update to the latest firmware first. |
 | Tools | **M.I.B. (More Incredible Bash)** working on the unit, access to the Green Engineering Menu, a FAT32 SD card |
 | Phone | iPhone with CarPlay. **The cluster map needs a USB cable** (not a wireless dongle). Tested with iOS 27. |
 

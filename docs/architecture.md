@@ -17,7 +17,7 @@ The one-page overview; each subsystem has its own note. Start at [INDEX](INDEX.m
 
 ## 📋 What the patch does
 
-Production implementation for Audi MHI2Q (developed on an Audi A5 B9 with MU1329; QNX 6.5 ARMv7) - stock `libairplay.so` 210.81 kept
+Production implementation for Audi MHI2Q (developed on an Audi A5 F5 with MU1329; QNX 6.5 ARMv7) - stock `libairplay.so` 210.81 kept
 throughout:
 
 - **Route guidance** - full HUD/BAP maneuver state ([rgd-activation](rgd/rgd-activation.md) - [bap-fctids](rgd/bap-fctids.md)) plus a custom

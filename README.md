@@ -44,7 +44,7 @@ CarPlay automatically.
   [`docs/deploy/altscreen-mhi2q.md`](docs/deploy/altscreen-mhi2q.md).
 
 **Compatibility:** Audi MHI2Q units with a fully digital cluster (Virtual Cockpit).
-Developed and tested on an **Audi A5 (B9) with MU1329** firmware. Other MHI2Q
+Developed and tested on an **Audi A5 (F5) with MU1329** firmware. Other MHI2Q
 firmware and cluster layouts are untested; the Java patch is always built against
 your own unit's HMI (see [Build](#build)), but cluster geometry may need calibration.
 
