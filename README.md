@@ -4,7 +4,7 @@ CarPlay on the Audi Virtual Cockpit for **MHI2Q** head units: turn-by-turn
 guidance on the cluster and HUD, cover art, and, as an experimental option, the
 CarPlay map video itself on the cluster (AltScreen).
 
-![CarPlay in an Audi B9: the map on the Virtual Cockpit, CarPlay on the MMI screen](assets/carplay-virtual-cockpit.jpg)
+![CarPlay in an Audi A5: the map on the Virtual Cockpit, CarPlay on the MMI screen](assets/carplay-virtual-cockpit.jpg)
 
 > [!WARNING]
 > This modifies firmware processes and system configuration on your head unit.
@@ -43,9 +43,10 @@ CarPlay automatically.
   Status and open issues are in
   [`docs/deploy/altscreen-mhi2q.md`](docs/deploy/altscreen-mhi2q.md).
 
-**Compatibility:** MHI2Q units with a fully digital cluster (Virtual Cockpit). It was
-developed on MU1316 and is being tested on `MHI2Q_ER_AUG22_P5152`. Update to the latest
-firmware before installing.
+**Compatibility:** Audi MHI2Q units with a fully digital cluster (Virtual Cockpit).
+Developed and tested on an **Audi A5 (B9) with MU1329** firmware. Other MHI2Q
+firmware and cluster layouts are untested; the Java patch is always built against
+your own unit's HMI (see [Build](#build)), but cluster geometry may need calibration.
 
 ## Requirements
 
@@ -179,8 +180,11 @@ The manual SSH install, the exact config edits and the verification steps are in
 | `mods/uninstall_MoreIncredibleBash/` | remove it and restore the stock configs |
 | `mods/logging_MoreIncredibleBash/` | save all logs to `<card>/carplay_logs/NNN/`, then turn on verbose logging |
 | `mods/extract_lsd_MoreIncredibleBash/` | copy `lsd.jxe` to the card (read-only on the unit) |
+| `mods/menu_install_MoreIncredibleBash/` | add the **CarPlay-RGI** page to the Green Engineering Menu (every action below as a button) |
 | `rgd_enable_…` / `rgd_disable_…` | turn route guidance on/off at runtime |
-| `altscreen_on_…` / `altscreen_off_…` | turn the AltScreen advertisement on/off (A/B test, applies on the next phone connect) |
+| `altscreen_on_…` / `altscreen_off_…` | turn the AltScreen advertisement on/off (applies on the next phone connect) |
+| `altscreen_grid_…` | toggle the calibration grid over the cluster video |
+| `altscreen_safearea_…` | apply a custom AltScreen SafeArea from the card |
 
 ## Logs and diagnostics
 

@@ -10,7 +10,7 @@ Map of Content for the reverse-engineering and implementation notes. Each note c
 every factual claim is validated against a source (code / firmware / iOS binary) and states only the
 final verified fact. `reconciles:` frontmatter records which legacy docs were folded in.
 
-> **All topics seeded [x]** - 33 notes. `(!)` items inside notes are real product TODOs, not doc gaps.
+> **All topics seeded [x]** - 32 notes. `(!)` items inside notes are real product TODOs, not doc gaps.
 
 ## 🗂️ [architecture](architecture.md) - process topology, threading, boot / init - build, test & deploy  [x]
 
@@ -49,20 +49,20 @@ final verified fact. `reconciles:` frontmatter records which legacy docs were fo
 - [connect](deploy/connect.md) - USB / NCM / Bonjour connect flow + failure root cause
 - [session-lifecycle](deploy/session-lifecycle.md) - session audit: watchdog-hang, USB pre-RTSP class, resilience risks R1-R4
 
-## 🔧 Maintenance  [x]
-- [java-cleanup-audit](maintenance/java-cleanup-audit.md) - Java patch cleanup status; remaining dead accessors
+## 🗺️ AltScreen - CarPlay map video on the cluster  [x]
+- [altscreen-mhi2q](deploy/altscreen-mhi2q.md) - stream-111 hook + renderer, ctx 81/82, SafeArea/ViewAreas, PF port allowlist, runtime knobs, triage
+- [hw-decoder](altscreen/hw-decoder.md) - zero-copy Qualcomm OMX H.264 decode into displayable 99, software fallback
 
 ## 🔍 Reverse engineering - iOS  [x]
 - [accessoryd-rgd](re/ios/accessoryd-rgd.md) - ACCNav RGUpdate enum (accessoryd 23G71)
 - [carkitd-bonjour](re/ios/carkitd-bonjour.md) - iOS 26 vs 27 connect divergence
 - [maps-maneuvers](re/ios/maps-maneuvers.md) - Maps accNav enum + signed exit angle
 
-## 🔍 Reverse engineering - firmware (MIB2Q MU1316)  [x]
+## 🔍 Reverse engineering - firmware (MHI2Q MU1316 decompile, upstream)  [x]
 - [display-manager](re/firmware/display-manager.md) - DisplayManager + dmdt, window binding
 - [komo-widget-video](re/firmware/komo-widget-video.md) - KOMO widget video + gfxAvailable gate
 - [dsi-carkombi](re/firmware/dsi-carkombi.md) - DSICarKombi + DSIKombiSync2
 - [vc-aio-arrow](re/firmware/vc-aio-arrow.md) - why the VC-native AIO arrow path is blocked (InfoStates=6 rejected) -> BAP HUD instead
-- [phone-tab-gating](re/firmware/phone-tab-gating.md) - abandoned experiment: hiding the stock PHONE2 tab (why the lever failed)
 
 ---
 
@@ -74,10 +74,9 @@ Every note carries a `status` recording how its facts were checked.
 |---|---|---|
 | `verified-decompile` | confirmed by reading the disassembly/decompilation of the actual binary | rgd-tlv, rgd-activation, accessoryd-rgd, maps-maneuvers, carkitd-bonjour, display-manager, compositing, kdk-geometry (VC section) |
 | `verified-trace` | confirmed against the actual on-device log / config | connect |
-| `verified-source` | confirmed against this repo's source (ground truth for our own code) | architecture, iap2-interception, bus-protocol, cover-art, integration-seam, maneuver-mapping, bap-fctids, bargraph-sync, lane-guidance, vc-route-text, maneuver-renderer, display-contexts, kdk-geometry (HU), touchpad-dpad, steering-wheel, supervisor-lifecycle, session-lifecycle, java-cleanup-audit, dsi-carkombi, navsd-catalogue |
+| `verified-source` | confirmed against this repo's source (ground truth for our own code) | architecture, iap2-interception, bus-protocol, cover-art, integration-seam, maneuver-mapping, bap-fctids, bargraph-sync, lane-guidance, vc-route-text, maneuver-renderer, display-contexts, kdk-geometry (HU), touchpad-dpad, steering-wheel, supervisor-lifecycle, session-lifecycle, dsi-carkombi, navsd-catalogue |
 | `partially-verified` | code paths confirmed; some symbols only string-level / inferred | komo-widget-video (gfx-gate chain) |
 | `from-re-notes` | carried faithfully from prior RE notes; not re-verified in the binary this pass | vc-aio-arrow |
-| `abandoned` | investigation record of a feature that was tried and rolled back (not shipped) | phone-tab-gating |
 
 **Corrections the verification pass caught** (wrong facts inherited from legacy docs, now fixed):
 - `display-manager` - invented symbol names (`display_create_window` / `screen_manage_window`) -> real `CTerminal` + `CScreenHandler::evtNewWindow` / `CASIMostEncoder::setActiveDisplayable`.

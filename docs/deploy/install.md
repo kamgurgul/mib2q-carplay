@@ -40,7 +40,7 @@ eight files plus two in-place config edits.
 |---|---|---|---|
 | `libcarplay_hook.so` | `build/` (`build_hook.sh`) | `/mnt/app/root/hooks/` | 755 |
 | `maneuver_render` | `build/` (`build_renderers.sh`) | `/mnt/app/root/hooks/` | 755 |
-| `flag_atlas.rgba` | `maneuver_render/resources/` | `/mnt/app/root/hooks/` (read from there, `maneuver_render/main.c:45`) | 644 |
+| `flag_atlas.rgba` | `maneuver_render/resources/` | `/mnt/app/root/hooks/` (read from there by `maneuver_render`) | 644 |
 | `carplay_startup.sh`, `carplay_monitor.sh`, `carplay_processes.sh`, `carplay_cleanup.sh` | `deploy/smartphone_integrator/` | `/mnt/app/root/hooks/` | 755 |
 | `carplay_hook.jar` | `build/` (`build_java.sh`) | `/mnt/app/eso/hmi/lsd/jars/` | 644 |
 | `carplay_child.json` | `deploy/smartphone_integrator/` | not a file on the unit: spliced into `smartphone_integrator.json` as `children.carplay` | - |

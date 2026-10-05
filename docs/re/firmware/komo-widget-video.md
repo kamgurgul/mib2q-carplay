@@ -75,5 +75,5 @@ On this branch the cluster keeps showing the **stock native map** (its own MOST 
 maneuver plane is composited into that stream ([compositing](../../cluster/compositing.md)), so the patch does not need to drive
 the gfx gate itself. `BAPBridge.forceGfxAvailable` writes data rate + `gfxAvailable` only when
 `Util.isClusterMapMOST()` is true and is a no-op on the FPK cluster; forcing the data rate there parked
-the stock kombi map in its hidden context (see [java-cleanup-audit](../../maintenance/java-cleanup-audit.md)). Context 80 is selected on the
+the stock kombi map in its hidden context. Context 80 is selected on the
 RGI BAP start, not on a renderer first-frame handshake ([rgd-activation](../../rgd/rgd-activation.md), [display-contexts](../../cluster/display-contexts.md)).
