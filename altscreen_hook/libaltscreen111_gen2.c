@@ -480,20 +480,23 @@ static void gen2_resolve_stock_targets(void);
  * /tmp is RAM (/tmp -> /dev/shmem) and this log used to grow without bound:
  * ~1-1.5 MB per hour of driving, mostly "GEN2 FLIGHT" per-command traces (the
  * phone's updateFeedback every 2 s). Now:
- *  - the per-command FLIGHT traces are written only while /tmp/carplay_verbose
- *    exists (the logging mod sets it for a diagnostic session); MODES_CHANGED and
+ *  - the per-command FLIGHT traces are written only while a carplay_verbose
+ *    marker exists, /tmp/carplay_verbose (the logging mod sets it, until reboot)
+ *    or /mnt/app/carplay_verbose (persistent), like the other components; MODES_CHANGED and
  *    the stream[] setup lines stay, they are rare and always useful;
  *  - the file is capped at 512 KB, one previous file kept as .1.
  */
 #define U2_LOG_MAX_BYTES (512L * 1024L)
-static const char *g_verbose_marker = "/tmp/carplay_verbose";
 
 static int u2_verbose(void)
 {
     static time_t checked;
     static int on;
     time_t now = time(NULL);
-    if (now != checked) { checked = now; on = access(g_verbose_marker, F_OK) == 0; }
+    if (now != checked) {
+        checked = now;
+        on = access("/tmp/carplay_verbose", F_OK) == 0 || access("/mnt/app/carplay_verbose", F_OK) == 0;
+    }
     return on;
 }
 
