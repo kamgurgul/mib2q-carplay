@@ -34,6 +34,8 @@ uint64_t altr_hwdec_frames(altr_hwdec_t *d);
 /* 1 once the component reported an error or an unsupported port change. */
 int altr_hwdec_failed(altr_hwdec_t *d);
 
-void altr_hwdec_destroy(altr_hwdec_t *d);
+/* 0 = released. -1 = the decoder never left Executing; its buffers were left
+ * allocated on purpose and the caller must restart the process. */
+int altr_hwdec_destroy(altr_hwdec_t *d);
 
 #endif /* ALTR_HW_DECODE_H */

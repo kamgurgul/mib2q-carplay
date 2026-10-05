@@ -120,19 +120,27 @@ case $ACT in
         run_action altscreen_grid
         ;;
     hwdec)
-        # altscreen_render reads this per CarPlay connection. A failed hardware
-        # setup or decoder error removes it again (software decode continues).
-        M=/mnt/app/root/altscreen_render.hwdecode
+        # Hardware decode is the default; these markers turn it OFF. altscreen_render
+        # writes them itself after a real hardware failure (the /tmp one when /mnt/app
+        # is read-only). Read per CarPlay connection.
+        M=/mnt/app/root/altscreen_render.hwdecode.off
+        B=/tmp/altscreen_render.hwdecode.off
         mount -uw /mnt/app 2>/dev/null
-        if [ -e "$M" ]; then
-            rm -f "$M"; sync
-            echo "DONE. Hardware decoder OFF (software decode) from the next CarPlay connection."
+        rm -f /mnt/app/root/altscreen_render.hwdecode   # opt-in marker of older builds
+        if [ -e "$M" ] || [ -e "$B" ]; then
+            rm -f "$M" "$B"; sync
+            echo "DONE. Hardware decoder ON (default) from the next CarPlay connection."
         else
             : > "$M" || { echo "FAILED: cannot create $M"; exit 1; }
             sync
-            echo "DONE. Hardware decoder ON from the next CarPlay connection."
-            echo "If it fails it switches itself OFF; 'Save logs' shows why (hw_decode: lines)."
+            echo "DONE. Hardware decoder OFF (software decode) from the next CarPlay connection."
         fi
+        ;;
+    reacquire)
+        # Test: re-send the cluster showUI in the running session, so iOS picks
+        # which navigation app draws the VC map again (/tmp, consumed by the hook).
+        : > /tmp/mibr-alt111-gen2-reacquire || { echo "FAILED: cannot create the marker"; exit 1; }
+        echo "DONE. Cluster map re-requested (watch the VC; altscreen111.log: explicit reacquire)."
         ;;
     omxprobe)
         # altscreen_render consumes the marker within ~1 s and logs the Qualcomm
@@ -158,7 +166,7 @@ case $ACT in
         echo "DONE. CarPlay-RGI menu removed; it disappears after the next reboot."
         ;;
     *)
-        echo "usage: run.sh install|uninstall|logs|lsd|altscreen_on|altscreen_off|rgd_enable|rgd_disable|grid|safearea|safearea_reset|singleview|hwdec|omxprobe|remove_menu"
+        echo "usage: run.sh install|uninstall|logs|lsd|altscreen_on|altscreen_off|rgd_enable|rgd_disable|grid|safearea|safearea_reset|singleview|reacquire|hwdec|omxprobe|remove_menu"
         exit 2
         ;;
 esac

@@ -109,6 +109,11 @@
 #define ALT111_DEFAULT_HEIGHT 540
 #define ALT111_DEFAULT_WIDTH_MM 290
 /*
+ * Defaults now = the commercial MHI2Q package's view-area table (MU1329 Cinemo,
+ * libmhi2qcarplaycluster.so, same 1440x540 canvas; quoted by joeyQuery/
+ * MHI2-altScreen docs/cluster-controls.md): small dials 360,87,720x297, big dials
+ * 520,87,400x297. Our own photo estimate below agreed for the wide view.
+ *
  * Default SafeArea on the 1440x540 canvas (plane 99 sits at the stock map origin
  * 0,26). Measured from a photo of the stock VC map: the VC draws its own top info
  * bar over canvas rows <~94 and its bottom bar (altitude / route / scale) from
@@ -118,10 +123,10 @@
  * and the dials keeps it where the stock puck sits (~row 350). Override at runtime
  * with /mnt/app/root/mibr-carplay111-safearea.conf (GEM menu / altscreen_safearea).
  */
-#define ALT111_DEFAULT_SAFE_X 350
-#define ALT111_DEFAULT_SAFE_Y 94
-#define ALT111_DEFAULT_SAFE_W 740
-#define ALT111_DEFAULT_SAFE_H 310
+#define ALT111_DEFAULT_SAFE_X 360
+#define ALT111_DEFAULT_SAFE_Y 87
+#define ALT111_DEFAULT_SAFE_W 720
+#define ALT111_DEFAULT_SAFE_H 297
 /*
  * Second ViewArea: VC "classic" layout (big dials, small map window between
  * them). From a photo of the stock small map, scaled by the top info bar (same
@@ -130,10 +135,10 @@
  * reference. Canvas rows = panel rows - 26 (plane 99 origin). Override with
  * /mnt/app/root/mibr-carplay111-safearea-small.conf.
  */
-#define ALT111_DEFAULT_SMALL_SAFE_X 460
-#define ALT111_DEFAULT_SMALL_SAFE_Y 96
-#define ALT111_DEFAULT_SMALL_SAFE_W 520
-#define ALT111_DEFAULT_SMALL_SAFE_H 328
+#define ALT111_DEFAULT_SMALL_SAFE_X 520
+#define ALT111_DEFAULT_SMALL_SAFE_Y 87
+#define ALT111_DEFAULT_SMALL_SAFE_W 400
+#define ALT111_DEFAULT_SMALL_SAFE_H 297
 #else
 #define ALT111_TARGET_NAME "mu1440"
 #define ALT111_DEFAULT_PORT 6031
@@ -471,6 +476,33 @@ static int start_capture_server(void);
 static void gen2_runtime_ready(void);
 static void gen2_resolve_stock_targets(void);
 
+/*
+ * /tmp is RAM (/tmp -> /dev/shmem) and this log used to grow without bound:
+ * ~1-1.5 MB per hour of driving, mostly "GEN2 FLIGHT" per-command traces (the
+ * phone's updateFeedback every 2 s). Now:
+ *  - the per-command FLIGHT traces are written only while /tmp/carplay_verbose
+ *    exists (the logging mod sets it for a diagnostic session); MODES_CHANGED and
+ *    the stream[] setup lines stay, they are rare and always useful;
+ *  - the file is capped at 512 KB, one previous file kept as .1.
+ */
+#define U2_LOG_MAX_BYTES (512L * 1024L)
+static const char *g_verbose_marker = "/tmp/carplay_verbose";
+
+static int u2_verbose(void)
+{
+    static time_t checked;
+    static int on;
+    time_t now = time(NULL);
+    if (now != checked) { checked = now; on = access(g_verbose_marker, F_OK) == 0; }
+    return on;
+}
+
+static int u2_line_is_flight_trace(const char *fmt)
+{
+    if (strncmp(fmt, "GEN2 FLIGHT ", 12) != 0) return 0;
+    return strncmp(fmt + 12, "MODES_CHANGED", 13) != 0 && strncmp(fmt + 12, "stream[", 7) != 0;
+}
+
 static void logf_u2(const char *fmt, ...)
 {
     char buf[768];
@@ -478,6 +510,8 @@ static void logf_u2(const char *fmt, ...)
     int n;
     va_list ap;
     struct timespec ts;
+    struct stat st;
+    if (u2_line_is_flight_trace(fmt) && !u2_verbose()) return;
     clock_gettime(CLOCK_REALTIME, &ts);
     n = snprintf(buf, sizeof(buf), "%ld.%03ld [altscreen111] ", (long)ts.tv_sec, ts.tv_nsec / 1000000L);
     if (n < 0) return;
@@ -488,6 +522,13 @@ static void logf_u2(const char *fmt, ...)
     if ((size_t)n >= sizeof(buf) - 2) n = (int)sizeof(buf) - 2;
     buf[n++] = '\n';
     fd = open(g_log_path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd >= 0 && fstat(fd, &st) == 0 && st.st_size > U2_LOG_MAX_BYTES) {
+        char old[96];
+        close(fd);
+        snprintf(old, sizeof(old), "%s.1", g_log_path);
+        (void)rename(g_log_path, old);
+        fd = open(g_log_path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    }
     if (fd >= 0) { (void)write(fd, buf, (size_t)n); close(fd); }
 }
 
@@ -2230,10 +2271,12 @@ done:
 /*
  * ViewAreas advertised: 2 on MHI2Q (0 = wide VC map, 1 = classic small map),
  * switched in-session with updateViewArea from the VC's FctID 54 large/small map
- * report (Java -> CMD_ALT_ZONE -> altscreen111_view_area). Both views use the
- * full canvas; only the SafeArea differs, so iOS moves the puck and its overlays
- * into the window the VC actually shows. The marker below falls back to the
- * single view, which is what every earlier vehicle test used.
+ * report (Java -> CMD_ALT_ZONE -> altscreen111_view_area).
+ * Both views are the full canvas and differ in SafeArea only; the switch takes
+ * effect because updateViewArea carries adjacentViewAreas (see
+ * command_update_view). A smaller view-1 rect was tried (log set 015) and is
+ * inert, as joeyQuery/MHI2-altScreen also found. The marker below falls back to
+ * the single view.
  */
 static const char *g_single_view_marker = "/mnt/app/root/mibr-carplay111-viewareas.single";
 static int g_view_count = 1;
@@ -2260,14 +2303,15 @@ static void add_reference_viewarea(CFMutableDictionaryRef alt)
     for(v=0; v<g_view_count; ++v){
         CFMutableDictionaryRef view=NULL,safe=NULL;
         int safe_w,safe_h,safe_x,safe_y;
+        int area_x=0, area_y=0, area_w=g_width, area_h=g_height;
         load_safearea_config(v,&safe_x,&safe_y,&safe_w,&safe_h);
         view=dict_new();
         safe=dict_new();
         if(!view||!safe){ if(view)p_CFRelease(view); if(safe)p_CFRelease(safe); break; }
-        set_i64(view,"widthPixels",g_width);
-        set_i64(view,"heightPixels",g_height);
-        set_i64(view,"originXPixels",0);
-        set_i64(view,"originYPixels",0);
+        set_i64(view,"widthPixels",area_w);
+        set_i64(view,"heightPixels",area_h);
+        set_i64(view,"originXPixels",area_x);
+        set_i64(view,"originYPixels",area_y);
         set_i64(safe,"widthPixels",safe_w);
         set_i64(safe,"heightPixels",safe_h);
         set_i64(safe,"originXPixels",safe_x);
@@ -2281,8 +2325,8 @@ static void add_reference_viewarea(CFMutableDictionaryRef alt)
         p_CFArrayAppendValue(areas,view);
         p_CFRelease(safe);
         p_CFRelease(view);
-        logf_u2("GEN2 ViewArea[%d] %s full=%dx%d safe=%dx%d@%d,%d",v,v?"classic":"wide",
-                g_width,g_height,safe_w,safe_h,safe_x,safe_y);
+        logf_u2("GEN2 ViewArea[%d] %s area=%dx%d@%d,%d safe=%dx%d@%d,%d",v,v?"classic":"wide",
+                area_w,area_h,area_x,area_y,safe_w,safe_h,safe_x,safe_y);
     }
     k=s_cf("viewAreas");
     p_CFDictionarySetValue(alt,k,areas);
@@ -2768,6 +2812,34 @@ static CFMutableDictionaryRef command_update_view(unsigned view)
     set_str(params,"uuid",g_alt_uuid);
     set_i64(params,"viewAreaIndex",(int64_t)view);
     set_i64(params,"animationDurationMillis",0);
+    /*
+     * adjacentViewAreas = every other advertised view. Without it iOS acknowledges
+     * updateViewArea (status 0) but keeps the first layout (our log sets 013/015;
+     * joeyQuery/MHI2-altScreen TRACE-013 on a B9 VC: animation, transition
+     * control and a different view rect were all inert, only this worked).
+     */
+    {
+        typedef CFTypeRef (*cfnum_create_t)(CFTypeRef, int, const void *);
+        static cfnum_create_t num_create;
+        CFMutableArrayRef adj;
+        unsigned v;
+        int n = 0;
+        if(!num_create) num_create=(cfnum_create_t)dlsym(RTLD_DEFAULT,"CFNumberCreate");
+        adj = num_create ? p_CFArrayCreateMutable(NULL,0,p_array_callbacks) : NULL;
+        if(adj){
+            for(v=0; v<(unsigned)g_view_count; ++v){
+                int64_t idx=(int64_t)v;
+                CFTypeRef num;
+                if(v==view) continue;
+                num=num_create(NULL,4 /* kCFNumberSInt64Type */,&idx);
+                if(num){ p_CFArrayAppendValue(adj,num); p_CFRelease(num); ++n; }
+            }
+            { CFStringRef k=s_cf("adjacentViewAreas"); p_CFDictionarySetValue(params,k,adj); p_CFRelease(k); }
+            p_CFRelease(adj);
+        }
+        logf_u2("GEN2 updateViewArea index=%u adjacentViewAreas=%d%s",view,n,
+                num_create?"":" (CFNumberCreate missing)");
+    }
     { CFStringRef k=s_cf("params"); p_CFDictionarySetValue(req,k,params); p_CFRelease(k); }
     p_CFRelease(params); return req;
 }

@@ -5,7 +5,7 @@
  *   - OMX.qcom.video.decoder.avc from /mnt/app/armle/lib/libOmxCore.so;
  *   - output buffers = the QNX screen window buffers (OMX_UseBuffer), window format
  *     from convertColorFormatOMX2Screen (0x7F000004 -> 0x1000C, tiled NV12) and
- *     usage 0x486 (READ|WRITE|VIDEO|OVERLAY), as stock's wfd images were created;
+ *     usage 0x86 (stock's 0x486 minus OVERLAY: the cluster is composited+captured);
  *   - SPS/PPS as OMX_BUFFERFLAG_CODECCONFIG (0x80), pictures as ENDOFFRAME (0x10)
  *     (COMXVideoDecoder::job_decodeFrame);
  *   - decode-order output via OMX.QCOM.index.config.video.DisplayPictureBuffer
@@ -36,6 +36,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include <libavcodec/avcodec.h>
 
@@ -45,8 +46,10 @@
 
 struct altr_hwdec {
     int width, height;
-    cluster_surface_t *cs;
+    cluster_surface_t *cs;      /* visible RGBA window 99 (composited + captured) */
     screen_window_t win;
+    screen_context_t sctx;
+    screen_window_t dwin;       /* hidden decode window: the decoder's output buffers */
     screen_buffer_t sbuf[HW_MAX_OUT];
     uint8_t *sptr[HW_MAX_OUT];
 
@@ -72,6 +75,8 @@ struct altr_hwdec {
     int shown;              /* output index on screen, -1 */
     volatile uint64_t frames;
     int64_t ts;
+    uint64_t first_input_ms;
+    int busy_drops;
 
     AVCodecContext *pctx;
     AVCodecParserContext *parser;
@@ -135,35 +140,66 @@ static OMX_ERRORTYPE on_fill_done(OMX_HANDLETYPE h, void *app, OMX_BUFFERHEADERT
 
     if (!d->executing || d->failed || idx < 0 || idx >= d->nout)
         return 0;   /* draining: the component returns it on the Idle transition */
+    /* Never hand b itself back from inside its own FillBufferDone: the Qualcomm
+     * component rejects that (log set 017, FillThisBuffer failed on the first
+     * picture). Hold it and return the previous one instead - the pattern that
+     * ran 1289 pictures in log set 011. b's pixels are already copied when the
+     * blit+post below returns (WAIT_IDLE), so holding it costs one buffer. */
+    give_back = NULL;
     if (b->nFilledLen > 0) {
+        /* Hardware blit (tiled NV12 -> RGBA) into the visible window's next render
+         * buffer, then post. Post flushes the blit; WAIT_IDLE means the decoder
+         * buffer is no longer read when it is handed back below. Only this callback
+         * thread touches the screen while the decoder runs. */
+        screen_buffer_t dst[4] = { NULL, NULL, NULL, NULL };
         int rect[4] = { 0, 0, d->width, d->height };
-        /* Only this callback thread posts or hands output back. WAIT_IDLE: when it
-         * returns, the previous picture is no longer scanned out, so giving it back
-         * to the decoder cannot tear the visible frame. */
-        if (screen_post_window(d->win, d->sbuf[idx], 1, rect, SCREEN_WAIT_IDLE) == 0) {
+        int attr[] = {
+            SCREEN_BLIT_SOURCE_X, 0, SCREEN_BLIT_SOURCE_Y, 0,
+            SCREEN_BLIT_SOURCE_WIDTH, d->width, SCREEN_BLIT_SOURCE_HEIGHT, d->height,
+            SCREEN_BLIT_DESTINATION_X, 0, SCREEN_BLIT_DESTINATION_Y, 0,
+            SCREEN_BLIT_DESTINATION_WIDTH, d->width, SCREEN_BLIT_DESTINATION_HEIGHT, d->height,
+            SCREEN_BLIT_END
+        };
+        if (screen_get_window_property_pv(d->win, SCREEN_PROPERTY_RENDER_BUFFERS, (void **)dst) != 0 ||
+            !dst[0]) {
+            fprintf(stderr, "hw_decode: no render buffer on window 99 errno=%d -> software fallback\n", errno);
+            d->failed = 1;
+        } else if (screen_blit(d->sctx, dst[0], d->sbuf[idx], attr) != 0) {
+            fprintf(stderr, "hw_decode: screen_blit tiled NV12 -> RGBA failed errno=%d -> software fallback\n",
+                    errno);
+            d->failed = 1;
+        } else if (screen_post_window(d->win, dst[0], 1, rect, SCREEN_WAIT_IDLE) != 0) {
+            fprintf(stderr, "hw_decode: screen_post_window failed errno=%d\n", errno);
+        } else {
             pthread_mutex_lock(&d->lock);
-            if (d->shown >= 0) give_back = d->out[d->shown];
-            d->shown = idx;
             d->frames++;
             pthread_mutex_unlock(&d->lock);
-        } else {
-            fprintf(stderr, "hw_decode: screen_post_window failed errno=%d\n", errno);
-            give_back = b;
         }
-    } else {
-        give_back = b;
+        if (d->failed) return 0;
     }
+    pthread_mutex_lock(&d->lock);
+    if (d->shown >= 0) give_back = d->out[d->shown];
+    d->shown = idx;
+    pthread_mutex_unlock(&d->lock);
 
-    if (give_back && d->c->FillThisBuffer(d->h, give_back) != 0) {
-        fprintf(stderr, "hw_decode: FillThisBuffer failed -> software fallback\n");
-        d->failed = 1;
+    if (give_back) {
+        OMX_ERRORTYPE e = d->c->FillThisBuffer(d->h, give_back);
+        /* A picture still in flight while teardown moves the component to Idle is
+         * refused with 0x80001018 (IncorrectStateOperation): expected, not a
+         * decoder failure (log set 018, right before "closed after 18 pictures"). */
+        if (e != 0 && d->executing) {
+            fprintf(stderr, "hw_decode: FillThisBuffer failed 0x%x -> software fallback\n", e);
+            d->failed = 1;
+        }
     }
     return 0;
 }
 
 /* ---- helpers ---- */
 
-static int wait_state(altr_hwdec_t *d, OMX_U32 want, int ms)
+/* abort_on_failure: setup gives up at the first error; teardown must still wait
+ * for the component, or a merely failed decoder looks "stuck" (log set 017). */
+static int wait_state(altr_hwdec_t *d, OMX_U32 want, int ms, int abort_on_failure)
 {
     struct timespec t;
     int ok;
@@ -172,7 +208,7 @@ static int wait_state(altr_hwdec_t *d, OMX_U32 want, int ms)
     t.tv_nsec += (long)(ms % 1000) * 1000000L;
     if (t.tv_nsec >= 1000000000L) { t.tv_sec++; t.tv_nsec -= 1000000000L; }
     pthread_mutex_lock(&d->lock);
-    while (d->state != want && !d->failed)
+    while (d->state != want && !(abort_on_failure && d->failed))
         if (pthread_cond_timedwait(&d->cond, &d->lock, &t) == ETIMEDOUT) break;
     ok = d->state == want;
     pthread_mutex_unlock(&d->lock);
@@ -223,7 +259,7 @@ static int map_screen_buffers(altr_hwdec_t *d)
     long y_bytes = (long)d->outdef.format.video.nStride * (long)d->outdef.format.video.nSliceHeight;
     long uv_expected = (y_bytes + 8191L) & ~8191L;
 
-    if (screen_get_window_property_pv(d->win, SCREEN_PROPERTY_RENDER_BUFFERS, (void **)d->sbuf) != 0) {
+    if (screen_get_window_property_pv(d->dwin, SCREEN_PROPERTY_RENDER_BUFFERS, (void **)d->sbuf) != 0) {
         fprintf(stderr, "hw_decode: RENDER_BUFFERS failed errno=%d\n", errno);
         return -1;
     }
@@ -291,7 +327,18 @@ static int send_input(altr_hwdec_t *d, const uint8_t *p, size_t n, OMX_U32 flags
     if (d->nin_free && !d->failed) idx = d->in_free[--d->nin_free];
     pthread_mutex_unlock(&d->lock);
     if (d->failed) return -1;
-    if (idx < 0) { fprintf(stderr, "hw_decode: input buffers busy, AU dropped\n"); return 0; }
+    if (idx < 0) {
+        /* Log set 016: a decoder that cannot write its output buffers stops
+         * returning input; give up quickly instead of dropping forever. */
+        if (++d->busy_drops >= 5) {
+            fprintf(stderr, "hw_decode: decoder stalled (input never returned) -> software fallback\n");
+            d->failed = 1;
+            return -1;
+        }
+        fprintf(stderr, "hw_decode: input buffers busy, AU dropped\n");
+        return 0;
+    }
+    d->busy_drops = 0;
 
     b = d->in[idx];
     if (n > b->nAllocLen) {
@@ -380,17 +427,48 @@ altr_hwdec_t *altr_hwdec_create(int width, int height, int displayable_id)
             d->indef.nBufferSize);
     enable_decode_order(d);
 
+    /*
+     * Two windows (log sets 011/015/016):
+     *  - the decoder's output must be stock's allocation, usage 0x486 with
+     *    OVERLAY: with 0x86 the decoder never wrote a picture and stopped
+     *    returning input (016);
+     *  - but an OVERLAY window on the cluster goes to a hardware pipe the MOST
+     *    capture never sees (011: 1289 pictures posted, VC black).
+     * So the decoder writes into a HIDDEN window (never shown, so no pipe) and
+     * every picture is hardware-blitted (tiled NV12 -> RGBA) into a normal
+     * managed RGBA window 99, the same kind of plane the GL path uses.
+     */
     memset(&cfg, 0, sizeof(cfg));
     cfg.id = displayable_id;
     cfg.width = width;
     cfg.height = height;
-    cfg.format = omx_screen_format_for(d->outdef.format.video.eColorFormat);
-    cfg.usage = 0x486;   /* stock: READ | WRITE | VIDEO | OVERLAY */
-    cfg.nbuffers = d->nout;
+    cfg.format = 8;                 /* SCREEN_FORMAT_RGBA8888, like the GL path */
+    cfg.usage = 0x0E;               /* NATIVE | WRITE | READ: blit destination */
+    cfg.nbuffers = 2;
     cfg.transparent = 0;
     d->cs = cluster_surface_create(&cfg);
     if (!d->cs) goto fail;
     d->win = cluster_surface_window(d->cs);
+    d->sctx = cluster_surface_context(d->cs);
+    {
+        const char *u = getenv("ALTR_HW_USAGE");
+        int fmt = omx_screen_format_for(d->outdef.format.video.eColorFormat);
+        int usage = (u && *u) ? (int)strtol(u, NULL, 0) : 0x486;   /* stock decoder allocation */
+        int size[2] = { width, height }, hidden = 0;
+        if (screen_create_window(&d->dwin, d->sctx) != 0 ||
+            screen_set_window_property_iv(d->dwin, SCREEN_PROPERTY_FORMAT, &fmt) != 0 ||
+            screen_set_window_property_iv(d->dwin, SCREEN_PROPERTY_USAGE, &usage) != 0 ||
+            screen_set_window_property_iv(d->dwin, SCREEN_PROPERTY_SIZE, size) != 0 ||
+            screen_set_window_property_iv(d->dwin, SCREEN_PROPERTY_BUFFER_SIZE, size) != 0 ||
+            screen_set_window_property_iv(d->dwin, SCREEN_PROPERTY_VISIBLE, &hidden) != 0 ||
+            screen_create_window_buffers(d->dwin, d->nout) != 0) {
+            fprintf(stderr, "hw_decode: hidden decode window (fmt 0x%x usage 0x%x x%d) failed errno=%d\n",
+                    fmt, usage, d->nout, errno);
+            goto fail;
+        }
+        fprintf(stderr, "hw_decode: decode window fmt=0x%x usage=0x%x nbuf=%d (hidden), "
+                "display window 99 RGBA via screen_blit\n", fmt, usage, d->nout);
+    }
     if (map_screen_buffers(d) != 0) goto fail;
 
     if (d->c->SendCommand(d->h, OMX_CommandStateSet, OMX_StateIdle, NULL) != 0) goto fail;
@@ -408,9 +486,9 @@ altr_hwdec_t *altr_hwdec_create(int width, int height, int displayable_id)
             goto fail;
         }
     }
-    if (wait_state(d, OMX_StateIdle, 2000) != 0) goto fail;
+    if (wait_state(d, OMX_StateIdle, 2000, 1) != 0) goto fail;
     if (d->c->SendCommand(d->h, OMX_CommandStateSet, OMX_StateExecuting, NULL) != 0 ||
-        wait_state(d, OMX_StateExecuting, 2000) != 0) goto fail;
+        wait_state(d, OMX_StateExecuting, 2000, 1) != 0) goto fail;
 
     pthread_mutex_lock(&d->lock);
     d->executing = 1;
@@ -425,19 +503,35 @@ altr_hwdec_t *altr_hwdec_create(int width, int height, int displayable_id)
     d->parser = av_parser_init(AV_CODEC_ID_H264);
     if (!d->pctx || !d->parser) goto fail;
 
-    fprintf(stderr, "hw_decode: running (zero-copy into displayable %d, screen format 0x%x)\n",
-            displayable_id, cfg.format);
+    fprintf(stderr, "hw_decode: running (decode into hidden 0x%x buffers, blit to displayable %d)\n",
+            omx_screen_format_for(d->outdef.format.video.eColorFormat), displayable_id);
     return d;
 
 fail:
     fprintf(stderr, "hw_decode: setup failed -> software path\n");
-    altr_hwdec_destroy(d);
+    if (altr_hwdec_destroy(d) != 0) {
+        fprintf(stderr, "hw_decode: exiting so the monitor restarts a clean renderer\n");
+        _exit(3);
+    }
     return NULL;
+}
+
+static uint64_t mono_ms(void)
+{
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (uint64_t)t.tv_sec * 1000u + (uint64_t)(t.tv_nsec / 1000000L);
 }
 
 int altr_hwdec_feed(altr_hwdec_t *d, const uint8_t *data, size_t len)
 {
     if (!d || d->failed) return -1;
+    if (!d->first_input_ms) d->first_input_ms = mono_ms();
+    else if (!d->frames && mono_ms() - d->first_input_ms > 2000u) {
+        fprintf(stderr, "hw_decode: no picture 2 s after the first input -> software fallback\n");
+        d->failed = 1;
+        return -1;
+    }
     while (len > 0) {
         uint8_t *au = NULL;
         int au_size = 0;
@@ -454,34 +548,45 @@ int altr_hwdec_feed(altr_hwdec_t *d, const uint8_t *data, size_t len)
 uint64_t altr_hwdec_frames(altr_hwdec_t *d) { return d ? d->frames : 0; }
 int altr_hwdec_failed(altr_hwdec_t *d) { return d ? d->failed : 1; }
 
-void altr_hwdec_destroy(altr_hwdec_t *d)
+int altr_hwdec_destroy(altr_hwdec_t *d)
 {
-    int i;
-    if (!d) return;
+    int i, stuck = 0;
+    if (!d) return 0;
     if (d->h) {
         pthread_mutex_lock(&d->lock);
         d->executing = 0;
         pthread_mutex_unlock(&d->lock);
         if (d->state == OMX_StateExecuting) {
             d->c->SendCommand(d->h, OMX_CommandStateSet, OMX_StateIdle, NULL);
-            wait_state(d, OMX_StateIdle, 2000);
+            if (wait_state(d, OMX_StateIdle, 2000, 0) != 0) stuck = 1;
+        }
+        if (stuck) {
+            /* The component still owns our buffers: freeing them (or the windows
+             * they live in) could let the decoder write into freed memory, and
+             * FreeBuffer/FreeHandle can block forever (log set 016). Leak it all;
+             * the caller restarts the process, which releases everything. */
+            fprintf(stderr, "hw_decode: decoder stuck in state %u; leaving it to process exit\n",
+                    d->state);
+            return -1;
         }
         if (d->state == OMX_StateIdle)
             d->c->SendCommand(d->h, OMX_CommandStateSet, OMX_StateLoaded, NULL);
         for (i = 0; i < HW_MAX_IN; ++i) if (d->in[i]) d->c->FreeBuffer(d->h, 0, d->in[i]);
         for (i = 0; i < HW_MAX_OUT; ++i) if (d->out[i]) d->c->FreeBuffer(d->h, 1, d->out[i]);
-        if (d->state == OMX_StateIdle) wait_state(d, OMX_StateLoaded, 2000);
+        if (d->state == OMX_StateIdle) wait_state(d, OMX_StateLoaded, 2000, 0);
         d->omx_free_handle(d->h);
         d->h = NULL;
     }
     if (d->omx_deinit) d->omx_deinit();
     if (d->parser) av_parser_close(d->parser);
     if (d->pctx) avcodec_free_context(&d->pctx);
-    if (d->cs) cluster_surface_destroy(d->cs);   /* after the decoder released its buffers */
+    if (d->dwin) screen_destroy_window(d->dwin);   /* after the decoder released its buffers */
+    if (d->cs) cluster_surface_destroy(d->cs);
     pthread_cond_destroy(&d->cond);
     pthread_mutex_destroy(&d->lock);
     fprintf(stderr, "hw_decode: closed after %llu pictures\n", (unsigned long long)d->frames);
     free(d);
+    return 0;
 }
 
 #else /* !PLATFORM_QNX: host build has no OMX/screen */
@@ -490,6 +595,6 @@ altr_hwdec_t *altr_hwdec_create(int w, int h, int id) { (void)w; (void)h; (void)
 int altr_hwdec_feed(altr_hwdec_t *d, const uint8_t *p, size_t n) { (void)d; (void)p; (void)n; return -1; }
 uint64_t altr_hwdec_frames(altr_hwdec_t *d) { (void)d; return 0; }
 int altr_hwdec_failed(altr_hwdec_t *d) { (void)d; return 1; }
-void altr_hwdec_destroy(altr_hwdec_t *d) { (void)d; }
+int altr_hwdec_destroy(altr_hwdec_t *d) { (void)d; return 0; }
 
 #endif

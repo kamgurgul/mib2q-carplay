@@ -1,7 +1,7 @@
 ---
 title: Hardware H.264 decode for the cluster stream (stream 111)
 tags: [altscreen, omx, decoder, re]
-status: experimental (opt-in, untested on the car)
+status: default ON (vehicle-tested, log set 018)
 sources:
   - firmware: /mnt/app/eso/lib/libairplay.so (copied by the logging mod to carplay_logs/hwdecNNN/)
   - logs: carplay_logs/007/hwdec, 008/hwdec (omx_libs.txt, dio_libs.txt)
@@ -47,23 +47,36 @@ extensions: SyntaxHdr = 0x7F100001, DisplayPictureBuffer = 0x7F100008
 
 ## Hardware decode (`altscreen_render/hw_decode.c`, opt-in)
 
-GEM CarPlay-RGI -> *HW decoder ON / OFF* (`/mnt/app/root/altscreen_render.hwdecode`), read per
-CarPlay connection, created on the first stream bytes:
+**Default ON** since log set 018. Turned OFF by `/mnt/app/root/altscreen_render.hwdecode.off`
+(GEM CarPlay-RGI -> *HW decoder ON / OFF*) or, for the rest of the boot, `/tmp/altscreen_render.hwdecode.off`.
+After a real hardware failure the renderer writes both itself (the /mnt/app one only when that
+partition is writable) and stays on software decode. Read per CarPlay connection; the decoder
+is created on the first stream bytes.
 
-1. window 99 with format `omx_screen_format_for(output colour)` (0x1000C), usage 0x486, as many
-   buffers as the decoder wants (12);
-2. the screen buffers must match the decoder layout (pointer, stride >= 1536, chroma offset)
-   or the session falls back - the decoder never writes past a screen buffer;
-3. decode-order output via `DisplayPictureBuffer` (stock `enableDecoderOrderMode`);
-4. 3 allocated input buffers, `OMX_UseBuffer` on the 12 screen buffers, Idle -> Executing;
-5. AUs split by the FFmpeg H.264 parser; leading SPS/PPS sent with 0x80 (CODECCONFIG),
-   pictures with 0x10 (ENDOFFRAME), like `COMXVideoDecoder::job_decodeFrame`;
-6. `FillBufferDone` posts that screen buffer (`SCREEN_WAIT_IDLE`) and hands the previous one
-   back to the decoder.
+What the car taught us:
 
-Any setup failure, OMX error or unsupported port-settings change logs a `hw_decode:` reason,
-switches the marker OFF and continues with FFmpeg + GLES (the tee is reconnected so the hook
-re-primes with a fresh IDR).
+| log | output window | result |
+| --- | --- | --- |
+| 011 | decoder buffers = window 99, usage 0x486 (stock, with OVERLAY) | 1289 pictures decoded and posted, **VC black**: an OVERLAY window goes to a hardware pipe the cluster capture never sees |
+| 015/016 | same, usage 0x86 (no OVERLAY) | decoder **never wrote a picture**, stopped returning input, teardown hung: the decoder needs stock's 0x486 allocation |
+| 017 | hidden 0x486 decode window + `screen_blit` to RGBA window 99 | first picture decoded and blitted; then `FillThisBuffer` on the same header inside its own `FillBufferDone` was rejected. Fixed: hand back the *previous* picture's buffer (as in 011). Teardown no longer mistakes a failed decoder for a stuck one. |
+| 018 | same, buffer handed back one picture later | **works**: 3120 pictures in one session, renderer CPU ≈2.9 ms/picture (software: ≈24 ms). The only error, `0x80001018` (IncorrectStateOperation), was a picture in flight during teardown - now ignored. |
+
+Current design:
+
+1. a **hidden** decode window (format 0x1000C, usage 0x486, 12 buffers, never visible, so no
+   pipe) whose buffers are checked against the decoder layout and given to `OMX_UseBuffer`;
+2. a normal managed **RGBA window 99** (format 8, usage NATIVE|READ|WRITE, 2 buffers) - the same
+   kind of plane the GL path uses, so it is composited into the captured cluster image;
+3. per picture, `screen_blit` tiled NV12 -> RGBA (the 2D blitter) into window 99, post with
+   `SCREEN_WAIT_IDLE`, then hand the *previous* picture's buffer back to the decoder (never the one
+   inside its own `FillBufferDone`);
+4. decode-order output, CODECCONFIG / ENDOFFRAME flags as stock.
+
+Fail-safe: a blit error, no picture 2 s after the first input, 5 input stalls in a row, an OMX
+error or a port change -> `hw_decode:` reason, HW decoder switched OFF, software path. A decoder
+that will not leave Executing is never freed (its DMA could hit freed memory): the renderer exits
+and `carplay_monitor.sh` restarts a clean one.
 
 ## Plan
 

@@ -4,6 +4,8 @@ CarPlay on the Audi Virtual Cockpit for **MHI2Q** head units: turn-by-turn
 guidance on the cluster and HUD, cover art, and, as an experimental option, the
 CarPlay map video itself on the cluster (AltScreen).
 
+![CarPlay in an Audi B9: the map on the Virtual Cockpit, CarPlay on the MMI screen](assets/carplay-virtual-cockpit.jpg)
+
 > [!WARNING]
 > This modifies firmware processes and system configuration on your head unit.
 > Use it only on a unit you own, back up every file you change, and accept that
@@ -18,6 +20,7 @@ CarPlay map video itself on the cluster (AltScreen).
 - [Logs and diagnostics](#logs-and-diagnostics)
 - [Tests](#tests)
 - [Repository layout](#repository-layout)
+- [TODO](#todo)
 - [Credits](#credits)
 - [License](#license)
 
@@ -228,7 +231,36 @@ The Java suites need `stock/base.jar` and a host JDK 8 in `stock/jdk/` (or set `
 | `stock/` | not in Git: your `lsd.jxe`, `base.jar`, libs, test JDK |
 | `build/` | build outputs (not in Git) |
 
+## TODO
+
+- [ ] **Wireless CarPlay dongles need more investigation.** The tested dongle
+  (`smartBox-xxxx`, a generic adapter sold under many brands) gives standard CarPlay on
+  the main screen but no map on the Virtual Cockpit. What we found:
+  - it always identifies itself as an iPhone 7 on iOS 14.4 (`model=iPhone9,1`,
+    `osBuildVersion=18D70`, `sourceVersion=535.3`), whichever phone is behind it;
+  - it never requests the cluster stream (type 111), even when the AltScreen display is
+    advertised, and with the advertisement it failed to connect or dropped within
+    seconds, so the hook now sends this sender the stock `/info`;
+  - it does not answer CarPlay route-guidance requests, so the turn-by-turn arrow does
+    not work through it either.
+
+  A dongle that forwards the cluster stream would work without changes on the car side:
+  `SETUP … types=111` in `/tmp/altscreen111.log` shows it. Open points: test other
+  adapters (reports mention OTTOCAST U2-AIR and AAWireless TWO+), check firmware updates,
+  and look at custom firmware for Carlinkit-class hardware
+  ([ludwig-v/wireless-carplay-dongle-reverse-engineering](https://github.com/ludwig-v/wireless-carplay-dongle-reverse-engineering)).
+- [ ] **Android Auto support** on the Virtual Cockpit (map and turn-by-turn).
+
 ## Credits
+
+> [!IMPORTANT]
+> **The biggest thanks go to
+> [Mr-MIBonk/M.I.B._More-Incredible-Bash](https://github.com/Mr-MIBonk/M.I.B._More-Incredible-Bash)**,
+> the base this mod is built on. M.I.B. is what makes it possible to run custom scripts
+> on the head unit from an SD card at all: every install, update, uninstall and log
+> collection here runs through its **Run Custom Script**, and its Green Engineering Menu
+> integration is where the CarPlay-RGI menu lives. Without M.I.B. none of this would reach
+> the car.
 
 This repository combines and builds on the work of others:
 

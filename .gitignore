@@ -30,3 +30,4 @@ mods/install_MoreIncredibleBash/mod/carplay/*
 /stock/*
 !/stock/README.md
 /mods/menu_install_MoreIncredibleBash/mod/carplay_menu/
+/release/

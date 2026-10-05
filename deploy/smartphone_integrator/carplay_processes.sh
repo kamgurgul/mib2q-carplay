@@ -173,5 +173,6 @@ cp_cap_log()
 cp_cap_all_logs()
 {
     cp_cap_log /tmp/maneuver_render.log
+    cp_cap_log /tmp/altscreen_render.log
     cp_cap_log "${1:-/tmp/carplay_wrapper.log}"
 }

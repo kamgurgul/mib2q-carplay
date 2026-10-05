@@ -1363,8 +1363,11 @@ static bool rgd_message_handler(hook_context_t* ctx, const iap2_frame_t* frame) 
         }
         rgd_mark_first_response(frame->msgid);
 
-        LOG_INFO(LOG_MODULE, "Update: state=%u road=\"%s\" dest=\"%s\"",
-                 upd.route_state, upd.current_road, upd.destination);
+        LOG_INFO(LOG_MODULE, "Update: state=%u road=\"%s\" dest=\"%s\"%s%s%s",
+                 upd.route_state, upd.current_road, upd.destination,
+                 (upd.present & RGD_UPD_SOURCE_NAME) ? " app=\"" : "",
+                 (upd.present & RGD_UPD_SOURCE_NAME) ? upd.source_name : "",
+                 (upd.present & RGD_UPD_SOURCE_NAME) ? "\"" : "");
 
         /*
          * Track update presence and handle route_state transitions.

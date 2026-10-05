@@ -382,12 +382,16 @@ Tuning without a rebuild (GEM CarPlay-RGI menu):
 
 ### Classic VC layout (big dials, small map window)
 
-The hook advertises **two ViewAreas** (both the full canvas, different SafeAreas):
+The hook advertises **two full-canvas ViewAreas** that differ in SafeArea. Defaults are the commercial MHI2Q
+package's table (MU1329 Cinemo `libmhi2qcarplaycluster.so`, same 1440x540 canvas, quoted by
+[joeyQuery/MHI2-altScreen](https://github.com/joeyQuery/MHI2-altScreen) `docs/cluster-controls.md`). **`updateViewArea`
+must carry `adjacentViewAreas`** (the other view indices): without it iOS acknowledged every switch (log sets 013/015,
+status 0) but kept the first layout; a smaller view-1 rectangle was equally inert (015, and their TRACE-013).
 
 | index | VC layout | built-in SafeArea | override file |
 | --- | --- | --- | --- |
-| 0 | wide map | x=350 y=94 w=740 h=310 | `/mnt/app/root/mibr-carplay111-safearea.conf` |
-| 1 | classic small map | x=460 y=96 w=520 h=328 | `/mnt/app/root/mibr-carplay111-safearea-small.conf` |
+| 0 | wide map (small dials) | x=360 y=87 w=720 h=297 | `/mnt/app/root/mibr-carplay111-safearea.conf` |
+| 1 | classic small map (big dials) | x=520 y=87 w=400 h=297 | `/mnt/app/root/mibr-carplay111-safearea-small.conf` |
 
 The classic window was measured from a stock photo scaled by the VC top bar (~536x331 panel px,
 the 420x330 Audi window of the recovered reference). VC FctID 54 (`largeMapView`, the same signal
@@ -397,7 +401,7 @@ as `ClusterLayers ... stage=popup|inTube`) selects the view: Java sends `CMD_ALT
 the next `/info`. GEM *Apply SafeArea from SD* reads `carplay_safearea.conf` and
 `carplay_safearea_small.conf`; *Classic-view SafeArea ON / OFF* falls back to one ViewArea.
 
-The hook logs what it advertised: `GEN2 ViewArea[n] wide|classic full=1440x540 safe=...` and
+The hook logs what it advertised: `GEN2 ViewArea[n] wide|classic area=... safe=...` and
 `gen2 view area -> n`.
 
 ### Senders that get the stock /info

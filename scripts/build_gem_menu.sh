@@ -31,7 +31,8 @@ grid|grid|Calibration grid ON / OFF (toggle)
 safearea|safearea|Apply SafeArea from SD (carplay_safearea*.conf)
 safearea_reset|safearea_reset|Reset SafeArea to built-in
 singleview|singleview|Classic-view SafeArea ON / OFF (2 ViewAreas)
-hwdec|hwdec|HW decoder ON / OFF (toggle, experimental)
+reacquire|reacquire|Re-request cluster map (test app switching)
+hwdec|hwdec|HW decoder ON / OFF (toggle, default ON)
 omxprobe|omxprobe|HW decoder probe (OMX, logs only)
 lsd|lsd|Copy stock lsd.jxe to SD
 uninstall|uninstall|Uninstall CarPlay (restore stock)

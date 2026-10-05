@@ -7,7 +7,7 @@
 # its UI inside that rectangle, so it must be the part of the 1440x540 canvas the
 # VC actually shows (measure it with the altscreen_grid mod).
 # A line "reset" in safearea.conf removes the override (back to the hook's built-in
-# SafeArea x=350 y=94 w=740 h=310, measured from the stock VC map).
+# SafeArea x=360 y=87 w=720 h=297, the commercial MHI2Q table).
 # Out-of-range values are ignored by the hook, which then logs it and keeps the built-in SafeArea.
 # Reconnect the phone/dongle to apply; no reboot.
 #

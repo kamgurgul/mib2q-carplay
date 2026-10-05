@@ -323,17 +323,53 @@ static void gl_shutdown(struct app *a)
 #endif
 
 #ifdef PLATFORM_QNX
-/* Hardware decode (GEM CarPlay-RGI -> "HW decoder ON / OFF"). Read per tee
- * connection; a failed attempt removes the marker so the next sessions stay on
- * the proven software path until it is switched on again. */
-#define ALTR_HWDEC_MARKER "/mnt/app/root/altscreen_render.hwdecode"
+/* Hardware decode is the DEFAULT (log set 018: 3120 pictures in one session at
+ * ~2.9 ms renderer CPU per picture vs ~24 ms in software). This marker turns it
+ * OFF (GEM CarPlay-RGI -> "HW decoder ON / OFF"); a real hardware failure
+ * creates it, so later sessions stay on the software path until switched back
+ * on. Read per tee connection. */
+#define ALTR_HWDEC_OFF_MARKER "/mnt/app/root/altscreen_render.hwdecode.off"
+/* /mnt/app is normally read-only to us; the /tmp twin always works and keeps a
+ * failed hardware path off for the rest of this boot either way. */
+#define ALTR_HWDEC_OFF_BOOT   "/tmp/altscreen_render.hwdecode.off"
+
+static int hw_wanted(void)
+{
+    return access(ALTR_HWDEC_OFF_MARKER, F_OK) != 0 && access(ALTR_HWDEC_OFF_BOOT, F_OK) != 0;
+}
+
+static void hw_switch_off(void)
+{
+    int fd = open(ALTR_HWDEC_OFF_BOOT, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd >= 0) close(fd);
+    fd = open(ALTR_HWDEC_OFF_MARKER, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd >= 0) close(fd);
+    else fprintf(stderr, "altscreen_render: %s not writable (errno %d); off for this boot only\n",
+                 ALTR_HWDEC_OFF_MARKER, errno);
+}
+
+/* Close the hardware session. A decoder stuck in Executing keeps our buffers:
+ * switch hardware decode OFF and exit, so carplay_monitor.sh restarts a clean
+ * renderer (software path) instead of this one hanging or reusing them. */
+static void hw_close(struct app *a)
+{
+    if (!a->hw) return;
+    if (altr_hwdec_destroy(a->hw) != 0) {
+        hw_switch_off();
+        set_live(0);
+        fprintf(stderr, "altscreen_render: stuck hardware decoder; HW decoder switched OFF, "
+                "exiting for a clean restart\n");
+        _exit(3);
+    }
+    a->hw = NULL;
+}
 
 static void hw_give_up(struct app *a, const char *why)
 {
     fprintf(stderr, "altscreen_render: hardware decode %s; back to software decode "
             "(HW decoder switched OFF)\n", why);
-    if (a->hw) { altr_hwdec_destroy(a->hw); a->hw = NULL; }
-    unlink(ALTR_HWDEC_MARKER);
+    hw_switch_off();
+    hw_close(a);
 }
 
 /* The software path draws with GLES on its own window 99; bring it back if the
@@ -373,8 +409,8 @@ int main(void)
     a.surf = EGL_NO_SURFACE;
     a.ctx = EGL_NO_CONTEXT;
     a.disp_id = env_i("ALTR_DISPLAYABLE_ID", 99);
-    if (access(ALTR_HWDEC_MARKER, F_OK) == 0) {
-        fprintf(stderr, "altscreen_render: hardware decode requested; GL window deferred\n");
+    if (hw_wanted()) {
+        fprintf(stderr, "altscreen_render: hardware decode (default); GL window deferred\n");
     } else if (gl_init(&a, a.disp_id) != 0) {
         write_status("gl_error", 0, 0, 0);
         gl_shutdown(&a);
@@ -423,7 +459,7 @@ int main(void)
                 ssize_t n = recv(fd, buf, sizeof(buf), 0);
                 if (n <= 0) break;
 #ifdef PLATFORM_QNX
-                if (!a.hw && !a.hw_tried && access(ALTR_HWDEC_MARKER, F_OK) == 0) {
+                if (!a.hw && !a.hw_tried && hw_wanted()) {
                     a.hw_tried = 1;
                     gl_shutdown(&a);             /* frees displayable 99 for the decoder */
                     a.hw = altr_hwdec_create(a.surface_w, a.surface_h, a.disp_id);
@@ -465,7 +501,7 @@ int main(void)
 
         close(fd);
 #ifdef PLATFORM_QNX
-        if (a.hw) { altr_hwdec_destroy(a.hw); a.hw = NULL; }
+        hw_close(&a);
         a.hw_tried = 0;
 #endif
         altr_decode_flush(dec);
@@ -477,7 +513,7 @@ int main(void)
 
 done:
 #ifdef PLATFORM_QNX
-    if (a.hw) { altr_hwdec_destroy(a.hw); a.hw = NULL; }
+    hw_close(&a);
 #endif
     set_live(0);
     write_status("stopped", a.last_w, a.last_h, a.frames);
