@@ -1053,7 +1053,21 @@ public class ClusterService implements NaviMoKoKDKConstants, PowerEventListener 
         this.mapScaleTimer.cancel();
     }
 
+    /* Stock: GALHandler.updateNaviAppState(naviIsRunningOnSmartphone) -> here ->
+     * CombiBAPListener.setGALState -> BAP InfoStates (FctID 38) = 6 while Android Auto owns
+     * navigation, which takes the VC out of its map view.  Android Auto: VcMapViewGate
+     * replaces true with false only while the AA cluster video context (81/82) is shown. */
     public void updateGALState(boolean flag) {
+        boolean value = flag;
+        try {
+            value = com.luka.carplay.aa.VcMapViewGate.onStockGalState(
+                com.luka.carplay.aa.ClusterGalSink.of(this), flag);
+        } catch (Throwable t) { /* never break the stock path */ }
+        this.combiBAPListener.setGALState(value);
+    }
+
+    /** VcMapViewGate re-forward on a cluster-video context edge (runs on NavigationJobs). */
+    public void forwardGALStateRaw(boolean flag) {
         this.combiBAPListener.setGALState(flag);
     }
 

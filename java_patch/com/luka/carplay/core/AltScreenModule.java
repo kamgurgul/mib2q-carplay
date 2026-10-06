@@ -2,7 +2,8 @@
  * AltScreenModule — bridges altscreen_render's liveness signal to the cluster
  * context switcher.
  *
- * altscreen_render (the CarPlay cluster VIDEO renderer, displayable 99) rewrites
+ * altscreen_render (the cluster VIDEO renderer, displayable 99, for CarPlay AltScreen
+ * and the Android Auto cluster display alike) rewrites
  * /tmp/altscreen_render.live (pid + mtime) while frames are reaching the screen
  * and removes it when the tee closes or video stalls. A leftover file from a
  * crashed writer goes stale. This module polls that file and tells

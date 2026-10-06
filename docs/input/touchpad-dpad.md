@@ -17,6 +17,13 @@ the only input device stock leaves unbridged** - this patch adds the missing leg
 > touchpad `updateTouchEvents` -> `TerminalModeDSIKeyEventsController` (class-replaced) ->
 > **TouchpadController** -> stock DSI `postDpad` -> CarPlay session.
 
+## 🔧 Switch
+
+`/mnt/app/carplay_touchpad_dpad.off` (GEM *Touchpad as D-pad OFF*, mods `touchpad_dpad_on/off`)
+turns the bridge off from the next CarPlay connection: touchpad fingers then go to CarPlay
+exactly as stock sends them (raw coordinates, DSI touch input 0), and `TouchpadController`
+emits nothing. Read in `setTouchSink`, i.e. at every CarPlay start.
+
 ## 🔍 Model
 
 `TouchpadController` (formerly `CursorController` - it once drove an on-screen cursor, abandoned because the H.264

@@ -45,7 +45,8 @@
 #define HW_FRAME_US 33333
 
 struct altr_hwdec {
-    int width, height;
+    int width, height;          /* coded stream size: decoder ports + hidden decode window */
+    altr_view_t view;           /* shown rectangle, blitted 1:1 into window 99 */
     cluster_surface_t *cs;      /* visible RGBA window 99 (composited + captured) */
     screen_window_t win;
     screen_context_t sctx;
@@ -151,13 +152,16 @@ static OMX_ERRORTYPE on_fill_done(OMX_HANDLETYPE h, void *app, OMX_BUFFERHEADERT
          * buffer, then post. Post flushes the blit; WAIT_IDLE means the decoder
          * buffer is no longer read when it is handed back below. Only this callback
          * thread touches the screen while the decoder runs. */
+        /* The source rectangle is the view's crop of the coded picture (the whole
+         * picture for CarPlay); the blit is 1:1, never scaled. */
         screen_buffer_t dst[4] = { NULL, NULL, NULL, NULL };
-        int rect[4] = { 0, 0, d->width, d->height };
+        int rect[4] = { 0, 0, d->view.view_w, d->view.view_h };
         int attr[] = {
-            SCREEN_BLIT_SOURCE_X, 0, SCREEN_BLIT_SOURCE_Y, 0,
-            SCREEN_BLIT_SOURCE_WIDTH, d->width, SCREEN_BLIT_SOURCE_HEIGHT, d->height,
+            SCREEN_BLIT_SOURCE_X, d->view.crop_x, SCREEN_BLIT_SOURCE_Y, d->view.crop_y,
+            SCREEN_BLIT_SOURCE_WIDTH, d->view.view_w, SCREEN_BLIT_SOURCE_HEIGHT, d->view.view_h,
             SCREEN_BLIT_DESTINATION_X, 0, SCREEN_BLIT_DESTINATION_Y, 0,
-            SCREEN_BLIT_DESTINATION_WIDTH, d->width, SCREEN_BLIT_DESTINATION_HEIGHT, d->height,
+            SCREEN_BLIT_DESTINATION_WIDTH, d->view.view_w,
+            SCREEN_BLIT_DESTINATION_HEIGHT, d->view.view_h,
             SCREEN_BLIT_END
         };
         if (screen_get_window_property_pv(d->win, SCREEN_PROPERTY_RENDER_BUFFERS, (void **)dst) != 0 ||
@@ -372,18 +376,29 @@ static int submit_au(altr_hwdec_t *d, const uint8_t *p, size_t n)
 
 /* ---- public ---- */
 
-altr_hwdec_t *altr_hwdec_create(int width, int height, int displayable_id)
+altr_hwdec_t *altr_hwdec_create(const altr_view_t *view, int displayable_id)
 {
     OMX_CALLBACKTYPE cbs = { on_event, on_empty_done, on_fill_done };
     omx_fn_init omx_init;
     omx_fn_get_handle omx_get_handle;
     cluster_surface_cfg cfg;
     altr_hwdec_t *d;
-    int i;
+    int i, width, height;
 
+    if (!view || view->view_w <= 0 || view->view_h <= 0 ||
+        view->stream_w < view->view_w || view->stream_h < view->view_h ||
+        view->crop_x < 0 || view->crop_y < 0 ||
+        view->crop_x + view->view_w > view->stream_w ||
+        view->crop_y + view->view_h > view->stream_h) {
+        fprintf(stderr, "hw_decode: view outside the stream -> software path\n");
+        return NULL;
+    }
+    width = view->stream_w;
+    height = view->stream_h;
     d = (altr_hwdec_t *)calloc(1, sizeof(*d));
     if (!d) return NULL;
     d->width = width; d->height = height; d->shown = -1;
+    d->view = *view;
     pthread_mutex_init(&d->lock, NULL);
     pthread_cond_init(&d->cond, NULL);
 
@@ -440,8 +455,8 @@ altr_hwdec_t *altr_hwdec_create(int width, int height, int displayable_id)
      */
     memset(&cfg, 0, sizeof(cfg));
     cfg.id = displayable_id;
-    cfg.width = width;
-    cfg.height = height;
+    cfg.width = view->view_w;       /* window 99 = the shown rectangle */
+    cfg.height = view->view_h;
     cfg.format = 8;                 /* SCREEN_FORMAT_RGBA8888, like the GL path */
     cfg.usage = 0x0E;               /* NATIVE | WRITE | READ: blit destination */
     cfg.nbuffers = 2;
@@ -503,8 +518,10 @@ altr_hwdec_t *altr_hwdec_create(int width, int height, int displayable_id)
     d->parser = av_parser_init(AV_CODEC_ID_H264);
     if (!d->pctx || !d->parser) goto fail;
 
-    fprintf(stderr, "hw_decode: running (decode into hidden 0x%x buffers, blit to displayable %d)\n",
-            omx_screen_format_for(d->outdef.format.video.eColorFormat), displayable_id);
+    fprintf(stderr, "hw_decode: running (decode %dx%d into hidden 0x%x buffers, blit %dx%d at %d,%d "
+            "to displayable %d)\n", width, height,
+            omx_screen_format_for(d->outdef.format.video.eColorFormat),
+            view->view_w, view->view_h, view->crop_x, view->crop_y, displayable_id);
     return d;
 
 fail:
@@ -591,7 +608,7 @@ int altr_hwdec_destroy(altr_hwdec_t *d)
 
 #else /* !PLATFORM_QNX: host build has no OMX/screen */
 
-altr_hwdec_t *altr_hwdec_create(int w, int h, int id) { (void)w; (void)h; (void)id; return NULL; }
+altr_hwdec_t *altr_hwdec_create(const altr_view_t *v, int id) { (void)v; (void)id; return NULL; }
 int altr_hwdec_feed(altr_hwdec_t *d, const uint8_t *p, size_t n) { (void)d; (void)p; (void)n; return -1; }
 uint64_t altr_hwdec_frames(altr_hwdec_t *d) { (void)d; return 0; }
 int altr_hwdec_failed(altr_hwdec_t *d) { (void)d; return 1; }

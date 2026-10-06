@@ -27,6 +27,23 @@ typedef struct altr_frame {
 
 typedef void (*altr_frame_cb)(void *user, const altr_frame_t *f);
 
+/* What the renderer shows of each decoded picture: the view_w x view_h rectangle
+ * at (crop_x, crop_y), presented 1:1 in the cluster window. stream_w/h is the coded
+ * size the hardware decoder is opened with. CarPlay AltScreen: stream = view, crop
+ * 0,0. Android Auto: a 1920x1080 stream whose centred 1440x540 viewport is the
+ * cockpit terminal. */
+typedef struct altr_view {
+    int stream_w, stream_h;
+    int crop_x, crop_y;
+    int view_w, view_h;
+} altr_view_t;
+
+/* out = the part of in that v shows, sharing in's planes (no copy). The crop is
+ * clamped into the picture and kept on even (chroma) coordinates; a picture
+ * smaller than the view is passed through whole. Returns 1 when out is a crop,
+ * 0 when it is the whole picture. */
+int altr_frame_crop(const altr_frame_t *in, const altr_view_t *v, altr_frame_t *out);
+
 typedef struct altr_decoder altr_decoder_t;
 
 /* Create a decoder. cb is invoked once per decoded frame. NULL on failure. */

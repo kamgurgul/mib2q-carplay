@@ -9,6 +9,7 @@ SRC=$ROOT/mods/install_MoreIncredibleBash/mod/custom.sh
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 { echo 'set -u'; echo 'RES=$2; ROOT=$RES/root; HOOKS=/h; JARS=/j'
   sed -n '/^flat_dest()/,/^}/p' "$SRC"; sed -n '/^FLAT_ASSETS=/,/"$/p' "$SRC"
+  sed -n '/^OPTIONAL_ASSETS=/p' "$SRC"
   sed -n '/^list_payload()/,/^}/p' "$SRC"; echo 'list_payload "$1"'; } > "$T/h.sh"
 ASSETS=$(sed -n '/^FLAT_ASSETS=/,/"$/p' "$SRC" | tr -d '"' | sed 's/^FLAT_ASSETS=//')
 mkdir -p "$T/bin" "$T/tree/root/a" "$T/flat"

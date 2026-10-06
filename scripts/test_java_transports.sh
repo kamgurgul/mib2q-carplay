@@ -27,6 +27,14 @@ mkdir -p "$TEST_DIR/nav-init"
     -cp "$TEST_DIR/nav-init:$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR" \
     com.luka.carplay.rgd.GatedCombiServiceInitStateTest
 
+# Android Auto adapter: event sequence -> RouteGuidance text frames, lanes, views, VC gate.
+mkdir -p "$TEST_DIR/aa"
+"$TEST_JDK/bin/javac" -encoding UTF-8 \
+    -cp "$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR" -d "$TEST_DIR/aa" \
+    "$PROJECT_DIR/tests/AaRouteStateTest.java"
+"$TEST_JDK/bin/java" -cp "$TEST_DIR/aa:$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR" \
+    com.luka.carplay.aa.AaRouteStateTest
+
 # Exercise the actual lifecycle worker against controllable external modules.
 mkdir -p "$TEST_DIR/lifecycle"
 "$TEST_JDK/bin/javac" -encoding UTF-8 -d "$TEST_DIR/lifecycle" \
@@ -39,7 +47,7 @@ mkdir -p "$TEST_DIR/lifecycle"
     "$PROJECT_DIR/tests/stubs/app-lifecycle/com/luka/carplay/pdc/PdcSmallStageGuard.java" \
     "$PROJECT_DIR/tests/stubs/app-lifecycle/de/audi/app/terminalmode/IContext.java" \
     "$PROJECT_DIR/tests/stubs/app-lifecycle/de/audi/atip/base/IFrameworkAccess.java"
-for scenario in publication during-start replug failure bounce; do
+for scenario in publication during-start replug failure bounce owners; do
     "$TEST_JDK/bin/java" -cp "$TEST_DIR/lifecycle" com.luka.carplay.core.CarPlayAppLifecycleTest "$scenario"
 done
 # Parking resource policy also uses the freshly built shipping JAR.

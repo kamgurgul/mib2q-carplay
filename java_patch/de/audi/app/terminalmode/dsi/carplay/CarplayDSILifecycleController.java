@@ -1009,7 +1009,19 @@ public class CarplayDSILifecycleController extends AbstractDSIController impleme
                 this.this$0.dsiCarplaySafe.postTouchEvent(
                     1, screenActive, (TouchEvent[])screen.toArray(new TouchEvent[screen.size()]));
             }
-            if (padCount > 0 && padActive == 1) {
+            if (padCount > 0 && !TouchpadController.isDpadEnabled()) {
+                /* D-pad switched off: the touchpad fingers go to the phone as stock sends
+                 * them (raw coordinates, DSI touch input 0). */
+                ArrayList pad = new ArrayList(padCount);
+                for (int i = 0; i < atouchevent.length; i++) {
+                    if (!atouchevent[i].isTouchScreen())
+                        pad.add(new TouchEvent(atouchevent[i].getCurrentX(), atouchevent[i].getCurrentY()));
+                }
+                Collections.sort(pad, new TouchXComparator());
+                this.this$0.dsiCarplaySafe.postTouchEvent(
+                    0, padActive, (TouchEvent[])pad.toArray(new TouchEvent[pad.size()]));
+                c.onTouchEnd();
+            } else if (padCount > 0 && padActive == 1) {
                 c.onOneFinger(atouchevent[padFirstActive].getCurrentX(),
                     atouchevent[padFirstActive].getCurrentY());
             } else {

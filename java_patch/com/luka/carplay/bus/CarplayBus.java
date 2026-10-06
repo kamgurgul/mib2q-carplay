@@ -502,6 +502,29 @@ public final class CarplayBus {
         }
     }
 
+    /**
+     * Deliver a frame produced inside the HMI (Android Auto: no hook, no socket) exactly as
+     * dispatch() would: serialized on dispatchLock, and a STICKY frame with no listener yet
+     * is held in unheard[] so a late on() replays it.  Returns true when a listener consumed
+     * it.  Never throws.  Adapted from wasimlhr/mib2q-android-auto-cluster (GPL-3.0).
+     */
+    public boolean injectLocal(int type, int flags, byte[] payload) {
+        if (type < 0 || type >= MAX_TYPES || payload == null) return false;
+        synchronized (dispatchLock) {
+            Listener l;
+            synchronized (lock) {
+                l = listeners[type];
+                if (l != null) unheard[type] = null;
+                else if ((flags & FLAG_STICKY) != 0)
+                    unheard[type] = new Object[] { new Integer(flags), payload };
+            }
+            if (l == null) return false;
+            try { l.onFrame(type, flags, payload, payload.length); }
+            catch (Throwable t) { Log.w(TAG, "local listener 0x" + Integer.toHexString(type) + " threw: " + t); }
+            return true;
+        }
+    }
+
     /* caller holds lock */
     private void closeConnectionLocked(String why) {
         if (sock != null) Log.i(TAG, "closing connection (" + why + ")");

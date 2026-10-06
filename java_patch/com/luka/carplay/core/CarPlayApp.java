@@ -4,6 +4,13 @@
  * Called from the stock hook in TerminalModeBapCombi$ActiveDeviceStateListener:
  *   CarPlayApp.onActivate(ctx)   // CarPlay device connected  (ctx = IContext)
  *   CarPlayApp.onDeactivate()    // disconnected
+ * and from com.luka.carplay.aa.AaBridge for an Android Auto phone:
+ *   CarPlayApp.onActivateAndroidAuto(ctx) / onDeactivateAndroidAuto()
+ *
+ * One phone session at a time owns the modules.  The owner decides which modules
+ * run (MODULE_OWNERS) and how RgdModule takes over route guidance.  isActive()
+ * keeps its original meaning, "a CarPlay session is active", because every caller
+ * outside this package is CarPlay-specific (PDC screen guard, CarPlay cover art).
  *
  * TerminalMode callbacks only publish the desired active/context generation and
  * return.  A persistent daemon worker serializes every Module start/stop away
@@ -29,16 +36,33 @@ public final class CarPlayApp {
     private static final String TAG = "App";
     public static final String BUILD_ID = "@BUILD_ID@";
 
+    /* Phone session owners. */
+    public static final int OWNER_NONE         = 0;
+    public static final int OWNER_CARPLAY      = 1;
+    public static final int OWNER_ANDROID_AUTO = 2;
+    private static final int OWNER_ANY         = OWNER_CARPLAY | OWNER_ANDROID_AUTO;
+
     /* Modules, in start order. AltScreenModule follows ScreenModule because it
-     * feeds it the CarPlay-video liveness that selects cluster ctx 81/82. */
+     * feeds it the cluster-video liveness that selects cluster ctx 81/82 (CarPlay
+     * AltScreen or the Android Auto cluster display; one renderer serves both). */
     private static final Module[] MODULES = new Module[] {
         new ScreenModule(), new AltScreenModule(), new RgdModule(), new SteeringWheelInputModule()
+    };
+    /* Sessions each module runs for, parallel to MODULES.  The roller-press module is
+     * CarPlay-only: the patched CarPlay key controller swallows the collapsed DDS_SELECT
+     * that the same press also produces, Android Auto's controller does not. */
+    private static final int[] MODULE_OWNERS = new int[] {
+        OWNER_ANY, OWNER_ANY, OWNER_ANY, OWNER_CARPLAY
     };
 
     private static final Object lock = new Object();
     private static final Object lifecycleLock = new Object();
     private static final boolean[] started = new boolean[MODULES.length];
+    /* true while any phone session is active; owner says which. */
     private static volatile boolean active = false;
+    private static volatile int owner = OWNER_NONE;
+    /* Owner of the last applied activation (lifecycle worker under lifecycleLock). */
+    private static int appliedOwner = OWNER_NONE;
     private static volatile FrameworkRef fwRef;
     private static Thread retryThread;
     private static int retryGeneration;
@@ -68,8 +92,17 @@ public final class CarPlayApp {
 
     /** True while a CarPlay device is connected (onActivate..onDeactivate).
      *  REPLACE mode gates roller/key capture on this (whole-session takeover),
-     *  not on cluster-tab focus. */
-    public static boolean isActive() { return active; }
+     *  not on cluster-tab focus.  False during an Android Auto session. */
+    public static boolean isActive() { return active && owner == OWNER_CARPLAY; }
+
+    /** True while an Android Auto phone owns the session. */
+    public static boolean isAndroidAutoActive() { return active && owner == OWNER_ANDROID_AUTO; }
+
+    /** True while any phone session (CarPlay or Android Auto) is active. */
+    public static boolean isSessionActive() { return active; }
+
+    /** OWNER_CARPLAY, OWNER_ANDROID_AUTO, or OWNER_NONE without a session. */
+    public static int sessionOwner() { return active ? owner : OWNER_NONE; }
 
     /** Bring the transport up ALWAYS-ON, independent of any CarPlay session.
      *  Called from the patched TerminalModeBapCombi.init() (component start / boot),
@@ -87,7 +120,15 @@ public final class CarPlayApp {
         Log.i(TAG, "transport up (bus always-on) build=" + BUILD_ID);
     }
 
-    public static void onActivate(Object context) {
+    public static void onActivate(Object context) { publishActivate(context, OWNER_CARPLAY); }
+
+    /** Android Auto device ACTIVATING/ACTIVE (AaBridge).  A newer session of either kind
+     *  replaces the current one: the worker restarts the modules for the new owner. */
+    public static void onActivateAndroidAuto(Object context) {
+        publishActivate(context, OWNER_ANDROID_AUTO);
+    }
+
+    private static void publishActivate(Object context, int newOwner) {
         if (!(context instanceof IContext)) {
             Log.e(TAG, "context is not IContext: " + context);
             return;
@@ -98,8 +139,9 @@ public final class CarPlayApp {
             /* ACTIVATING may be repeated for the same TMDevice.  Publishing the
              * same desired edge twice must not restart modules that are already
              * converging on the worker/retry path. */
-            if (active && desiredContext == context) return;
+            if (active && desiredContext == context && owner == newOwner) return;
             active = true;                           /* visible to stock HMI immediately */
+            owner = newOwner;
             desiredContext = (IContext) context;
             serviceChangeGeneration++;
             lifecycleGeneration++;
@@ -107,11 +149,15 @@ public final class CarPlayApp {
         }
     }
 
-    private static int publishDeactivate() {
+    /** ownerFilter: only end a session of that owner (OWNER_ANY = whichever is active),
+     *  so a late disconnect of the previous phone cannot end the next phone's session. */
+    private static int publishDeactivate(int ownerFilter) {
         synchronized (lock) {
             ensureLifecycleWorkerLocked();
             if (!active && desiredContext == null) return lifecycleGeneration;
+            if (active && (owner & ownerFilter) == 0) return lifecycleGeneration;
             active = false;                          /* release stock HMI immediately */
+            owner = OWNER_NONE;
             desiredContext = null;
             serviceChangeGeneration++;
             lifecycleGeneration++;
@@ -120,13 +166,16 @@ public final class CarPlayApp {
         }
     }
 
-    public static void onDeactivate() { publishDeactivate(); }
+    public static void onDeactivate() { publishDeactivate(OWNER_CARPLAY); }
+
+    /** Android Auto device gone (AaBridge). */
+    public static void onDeactivateAndroidAuto() { publishDeactivate(OWNER_ANDROID_AUTO); }
 
     /** Component teardown is not the hot TMDevice callback.  Let it wait for
      * the already-published async cleanup before TerminalMode closes its OSGi
      * trackers; the bound prevents a broken module from hanging HMI shutdown. */
     public static void onDeactivateAndWait() {
-        int generation = publishDeactivate();
+        int generation = publishDeactivate(OWNER_ANY);
         long deadline = System.currentTimeMillis() + 3000L;
         synchronized (lock) {
             while (lifecycleAppliedGeneration != generation
@@ -195,12 +244,16 @@ public final class CarPlayApp {
                 stopRetry();
 
                 if (!wantActive) {
-                    Log.i(TAG, "onDeactivate async apply generation=" + generation);
+                    Log.i(TAG, "onDeactivate async apply generation=" + generation
+                        + " owner=" + ownerName(appliedOwner));
                     // Disconnect need not produce another HMI/parking callback.
                     // Restore the OPS screen and APS drawer on the lifecycle
                     // worker, outside the hot device callback/state lock.
-                    try { PdcSmallStageGuard.carPlayDisconnected(); }
-                    catch (Throwable t) { Log.w(TAG, "OPS presentation cleanup: " + t); }
+                    if (appliedOwner == OWNER_CARPLAY) {
+                        try { PdcSmallStageGuard.carPlayDisconnected(); }
+                        catch (Throwable t) { Log.w(TAG, "OPS presentation cleanup: " + t); }
+                    }
+                    appliedOwner = OWNER_NONE;
                     stopModules();
                     return;
                 }
@@ -209,11 +262,19 @@ public final class CarPlayApp {
                  * also belongs here, not on ActiveDeviceStateListener. */
                 FrameworkRef next = new FrameworkRef(context);
                 if (!lifecycleCurrent(generation, true, context)) return;
-                synchronized (lock) { fwRef = next; }
+                int sessionOwner;
+                synchronized (lock) { fwRef = next; sessionOwner = owner; }
 
                 Log.i(TAG, "onActivate async apply generation=" + generation
-                    + " build=" + BUILD_ID);
+                    + " owner=" + ownerName(sessionOwner) + " build=" + BUILD_ID);
                 CarplayBus.getInstance().start();        /* idempotent; off stock lifecycle thread */
+                /* A CarPlay -> Android Auto hand-over is an activation with no deactivate
+                 * in between: release CarPlay's OPS presentation here too. */
+                if (appliedOwner == OWNER_CARPLAY && sessionOwner != OWNER_CARPLAY) {
+                    try { PdcSmallStageGuard.carPlayDisconnected(); }
+                    catch (Throwable t) { Log.w(TAG, "OPS presentation cleanup: " + t); }
+                }
+                appliedOwner = sessionOwner;
                 stopModules();
                 if (!lifecycleCurrent(generation, true, context)) return;
                 if (!startPass(generation)
@@ -349,6 +410,12 @@ public final class CarPlayApp {
                 if (!active || expectedLifecycleGeneration != lifecycleGeneration
                         || fwRef != fw) return false;
                 if (started[i]) continue;
+                /* Not for this kind of session: counts as up, never started
+                 * (stopModules() still stops it, which is idempotent). */
+                if ((MODULE_OWNERS[i] & owner) == 0) {
+                    started[i] = true;
+                    continue;
+                }
             }
             boolean ok;
             try { ok = MODULES[i].start(fw); }
@@ -421,6 +488,14 @@ public final class CarPlayApp {
         Thread t;
         synchronized (lock) { retryGeneration++; t = retryThread; retryThread = null; }
         if (t != null) t.interrupt();
+    }
+
+    private static String ownerName(int o) {
+        switch (o) {
+            case OWNER_CARPLAY:      return "carplay";
+            case OWNER_ANDROID_AUTO: return "android-auto";
+            default:                 return "none";
+        }
     }
 
     private static boolean sleepInterruptibly(long ms) {

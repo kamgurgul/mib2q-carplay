@@ -112,11 +112,26 @@ if [ ! -f "$BASE/hwdec/libairplay.so" ]; then
     done
 fi
 
+# ---- Android Auto receiver (cluster-display profile for this firmware) ----
+# gal + libautoreceiver.so are copied once per card (carplay_logs/aa/), not per save:
+# a new receiver profile is made from them (docs/android-auto/firmware-porting.md).
+if [ ! -f "$BASE/aa/gal" ]; then
+    mkdir -p "$BASE/aa"
+    [ -f /mnt/app/eso/bin/apps/gal ] && cp /mnt/app/eso/bin/apps/gal "$BASE/aa/" 2>/dev/null
+    for d in /eso/lib /mnt/app/usr/lib /mnt/app/armle/lib /mnt/app/armle/lib/dll \
+             /mnt/app/armle/usr/lib /mnt/app/root/lib-target /mnt/app/eso/lib; do
+        [ -f "$d/libautoreceiver.so" ] && { cp "$d/libautoreceiver.so" "$BASE/aa/" 2>/dev/null; break; }
+    done
+    ls -l "$BASE/aa" > "$BASE/aa/ls.txt" 2>&1
+    cksum "$BASE"/aa/gal "$BASE"/aa/libautoreceiver.so > "$BASE/aa/cksum.txt" 2>&1
+fi
+
 # ---- logs and captures from /tmp (never the shared-memory objects also living there) ----
 mkdir "$OUT/tmp"
 for f in "$SRC"/*.log "$SRC"/*.log.* "$SRC"/carplay_* "$SRC"/*.pid \
          "$SRC"/altscreen_render.* "$SRC"/altscreen111.log \
-         "$SRC"/mibr-alt111* "$SRC"/mibr-carplay111.* "$SRC"/mibr-carplay111-*; do
+         "$SRC"/mibr-alt111* "$SRC"/mibr-carplay111.* "$SRC"/mibr-carplay111-* \
+         "$SRC"/aa_cluster_view "$SRC"/aa_lanes "$SRC"/aa_supervisor.owner; do
     [ -f "$f" ] || continue
     cp "$f" "$OUT/tmp/" 2>/dev/null || echo "copy failed: $f" >> "$OUT/info.txt"
 done
@@ -131,7 +146,8 @@ done
 # ---- crash dumps of our processes (dumper writes them to /mnt/ota/system/core) ----
 mkdir "$OUT/core"
 for f in /mnt/ota/system/core/dio_manager* /mnt/ota/system/core/maneuver_render* \
-         /mnt/ota/system/core/smartphone_integrator*; do
+         /mnt/ota/system/core/smartphone_integrator* /mnt/ota/system/core/gal* \
+         /mnt/ota/system/core/altscreen_render*; do
     [ -f "$f" ] && cp "$f" "$OUT/core/" 2>/dev/null
 done
 

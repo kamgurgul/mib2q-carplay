@@ -26,7 +26,7 @@ for sh in $shells; do
         f=$G/${p#/mnt/app/eso/hmi/engdefs/}
         [ -x "$f" ] || fail "$sh" "button target missing/not executable: $p"
     done
-    for a in install uninstall logging extract_lsd altscreen_on altscreen_off rgd_enable rgd_disable altscreen_grid altscreen_safearea; do
+    for a in install uninstall logging extract_lsd altscreen_on altscreen_off rgd_enable rgd_disable altscreen_grid altscreen_safearea aa_cluster_on aa_cluster_off touchpad_dpad_on touchpad_dpad_off; do
         cmp -s "$ROOT/mods/${a}_MoreIncredibleBash/mod/custom.sh" "$G/scripts/carplay/actions/$a/custom.sh" \
             || fail "$sh" "action $a differs from its mod"
     done

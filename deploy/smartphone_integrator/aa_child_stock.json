@@ -1,0 +1,22 @@
+{
+  "exec": "gal",
+  "path": "/mnt/app/eso/bin/apps",
+  "params": "",
+  "envs": [
+    "LD_LIBRARY_PATH=/eso/lib:/mnt/app/usr/lib:/mnt/app/armle/lib:/mnt/app/armle/graphics:/mnt/app/armle/lib/dll:/mnt/app/armle/usr/lib:/mnt/app/root/lib-target",
+    "IPL_CONFIG_DIR_GAL=/etc/eso/production"
+  ],
+  "startupTimeout": 13000,
+  "stopTimeout": 6000,
+  "watchdogTimeout": 60000,
+  "disableWatchdog": false,
+  "maxSetupRetries": 2,
+  "maxRuntimeRetries": 2,
+  "decoderUse": false,
+  "selfTermination": true,
+  "cleanupScript": "",
+  "retriesBeforeDowntime": 3,
+  "downtime": 10000,
+  "restartDelay": 0,
+  "portResetTime": 1500
+}

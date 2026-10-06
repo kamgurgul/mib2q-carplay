@@ -1,5 +1,5 @@
 /*
- * RgdModule — CarPlay route-guidance feature as a CarPlayApp Module.
+ * RgdModule — phone route-guidance feature (CarPlay and Android Auto) as a CarPlayApp Module.
  *
  * Adapter over the ported RouteGuidance/BAPBridge chain.  start() implements the
  * proven retry-until-ready gate: CombiBAPServiceNavi (and the ClusterService BAP
@@ -75,8 +75,11 @@ final class RgdModule implements Module {
         }
         /* REPLACE: don't report started until the RG gate is actually shut.  engageTakeover
          * returns false while ClusterService isn't up yet → CarPlayApp keeps retrying, so a
-         * connected session with no CarPlay navigation still gets stock RG blocked. */
-        if (!rg.engageTakeover()) {
+         * connected session with no CarPlay navigation still gets stock RG blocked.
+         * Android Auto takes over per phone route instead: BAPBridge.onStart() stops native
+         * guidance and shuts the gate for each route and onShutdown() reopens it, so Audi
+         * navigation keeps working while an Android phone is connected. */
+        if (CarPlayApp.sessionOwner() == CarPlayApp.OWNER_CARPLAY && !rg.engageTakeover()) {
             return false;
         }
         if (!rg.isRunning()) rg.start();                           /* subscribe only after gate is shut */

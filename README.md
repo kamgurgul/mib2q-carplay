@@ -1,8 +1,8 @@
 # mib2q-carplay
 
-CarPlay on the Audi Virtual Cockpit for **MHI2Q** head units: turn-by-turn
-guidance on the cluster and HUD, cover art, and, as an experimental option, the
-CarPlay map video itself on the cluster (AltScreen).
+CarPlay and Android Auto on the Audi Virtual Cockpit for **MHI2Q** head units:
+turn-by-turn guidance on the cluster and HUD, cover art, and the phone's own map video
+on the cluster (CarPlay AltScreen and the Android Auto cluster display).
 
 ![CarPlay in an Audi A5: the map on the Virtual Cockpit, CarPlay on the MMI screen](assets/carplay-virtual-cockpit.jpg)
 
@@ -26,8 +26,8 @@ CarPlay map video itself on the cluster (AltScreen).
 
 ## Features
 
-The base install needs no settings. Plug in the iPhone and the cluster features follow
-CarPlay automatically.
+The base install needs no settings. Plug in the phone and the cluster features follow
+CarPlay or Android Auto automatically.
 
 - **Turn-by-turn on the cluster.** A 3D maneuver arrow is drawn over the stock cluster
   map, with lane arrows, distance to the turn, arrival time and remaining distance.
@@ -38,13 +38,20 @@ CarPlay automatically.
 - **Head-up display.** The same maneuver icons, lanes and distance.
 - **Cover art** on the cluster media screen.
 - **Parking popups no longer hide CarPlay** (front PDC view).
-- **MMI touchpad → D-pad** so drags navigate CarPlay menus.
+- **MMI touchpad → D-pad** so drags navigate CarPlay menus (can be switched off: then
+  the touchpad goes to CarPlay the stock way).
 - **AltScreen (optional, experimental).** The CarPlay map video on the cluster.
   Status and open issues are in
   [`docs/deploy/altscreen-mhi2q.md`](docs/deploy/altscreen-mhi2q.md).
+- **Android Auto.** The Google Maps / Waze map video on the cluster (following the Large,
+  Classic and Sport cockpit layouts), the same turn arrow, distance, lanes, route text and
+  HUD as CarPlay, and Android Auto cover art. Tested on the car; the steering-wheel roller
+  does not zoom the Android Auto map (Android Auto has no zoom command for it). The cluster
+  map needs a receiver profile for the unit's `gal` (MU0918 and MU1329 are built in). See
+  [`docs/android-auto/overview.md`](docs/android-auto/overview.md).
 
 **Compatibility:** Audi MHI2Q units with a fully digital cluster (Virtual Cockpit).
-Developed and tested on an **Audi A5 (F5) with MU1329** firmware. Other MHI2Q
+Developed and tested on an **Audi A5 (F5) with MU1329** (`MHI2Q_ER_AUG22_P5152`) firmware. Other MHI2Q
 firmware and cluster layouts are untested; the Java patch is always built against
 your own unit's HMI (see [Build](#build)), but cluster geometry may need calibration.
 
@@ -109,8 +116,9 @@ including the optional test JDK, is in [`stock/README.md`](stock/README.md).
 From the repository root:
 
 ```sh
-./scripts/build_all.sh               # base + AltScreen
-ALTSCREEN=0 ./scripts/build_all.sh   # base only
+./scripts/build_all.sh                  # base + AltScreen + Android Auto map
+ALTSCREEN=0 ./scripts/build_all.sh      # no cluster video renderer / CarPlay video hook
+ANDROID_AUTO=0 ./scripts/build_all.sh   # no gal launcher / Android Auto cluster hook
 ```
 
 This runs every build below in order, then replaces
@@ -126,6 +134,8 @@ The individual builds write to `build/`:
 # optional: AltScreen (CarPlay map video on the cluster)
 bash scripts/build_altscreen_render.sh  # → build/altscreen_render
 ./scripts/build_altscreen_hook.sh       # → build/libaltscreen111_mhi2q.so
+# optional: Android Auto map video on the cluster (also needs altscreen_render)
+./scripts/build_aa_hook.sh              # → build/libaa_cluster_hook.so
 ```
 
 | Artifact | Runs as | Needed for |
@@ -135,6 +145,7 @@ bash scripts/build_altscreen_render.sh  # → build/altscreen_render
 | `carplay_hook.jar` | on the HMI's J9 boot classpath | cluster/HUD/BAP bridge, PDC, touchpad |
 | `altscreen_render` | cluster video process | AltScreen only |
 | `libaltscreen111_mhi2q.so` | second `LD_PRELOAD` in `dio_manager` | AltScreen only |
+| `libaa_cluster_hook.so` + `aa_startup.sh` | `LD_PRELOAD` in `gal` / its SI launcher | Android Auto map video only |
 
 Optional switches:
 
@@ -146,8 +157,10 @@ To stage by hand instead, copy the five `build/` outputs, plus
 `maneuver_render/resources/flag_atlas.rgba` and the four `carplay_*.sh` and
 `carplay_child.json` from `deploy/smartphone_integrator/`, into
 `mods/install_MoreIncredibleBash/mod/carplay/`. The installer stops before writing
-anything if one of the eight base files is missing. The AltScreen pair and
-`carplay_child.json` are picked up when present.
+anything if one of the eight base files is missing. The AltScreen pair, the Android Auto
+files (`libaa_cluster_hook.so`, `aa_startup.sh`, `aa_child.json`) and
+`carplay_child.json` are picked up when present; with the Android Auto files the `gal`
+child of `smartphone_integrator.json` is replaced too.
 
 ## Install
 
@@ -182,6 +195,8 @@ The manual SSH install, the exact config edits and the verification steps are in
 | `mods/extract_lsd_MoreIncredibleBash/` | copy `lsd.jxe` to the card (read-only on the unit) |
 | `mods/menu_install_MoreIncredibleBash/` | add the **CarPlay-RGI** page to the Green Engineering Menu (every action below as a button) |
 | `rgd_enable_…` / `rgd_disable_…` | turn route guidance on/off at runtime |
+| `aa_cluster_on_…` / `aa_cluster_off_…` | turn the Android Auto cluster map on/off (applies on the next phone connect) |
+| `touchpad_dpad_on_…` / `touchpad_dpad_off_…` | MMI touchpad as CarPlay D-pad on/off; off = stock touchpad input (next CarPlay connect) |
 | `altscreen_on_…` / `altscreen_off_…` | turn the AltScreen advertisement on/off (applies on the next phone connect) |
 | `altscreen_grid_…` | toggle the calibration grid over the cluster video |
 | `altscreen_safearea_…` | apply a custom AltScreen SafeArea from the card |
@@ -197,7 +212,8 @@ before restarting.
 | `/tmp/carplay_java.log` | Java patch |
 | `/tmp/maneuver_render.log` | maneuver renderer |
 | `/tmp/carplay_wrapper.log` | startup wrapper and supervisor |
-| `/tmp/altscreen111.log`, `/tmp/altscreen_render.log` | AltScreen hook and renderer |
+| `/tmp/altscreen111.log`, `/tmp/altscreen_render.log` | AltScreen hook and renderer (both phone types) |
+| `/tmp/aa_cluster_hook.log`, `/tmp/aa_wrapper.log` | Android Auto hook in `gal` and its launcher |
 
 By default only warnings and errors are logged. `touch /mnt/app/carplay_verbose`
 enables full logging from the next phone connect. Without a shell, run
@@ -225,7 +241,8 @@ The Java suites need `stock/base.jar` and a host JDK 8 in `stock/jdk/` (or set `
 | `java_patch/`, `java_resources/` | Java patch for the HMI and its packed resources |
 | `maneuver_render/`, `common/` | GLES maneuver renderer and shared QNX Screen/GL code |
 | `altscreen_hook/` | AltScreen hook: `/info` advertisement, stream-111 receiver, decrypt, local tee |
-| `altscreen_render/` | AltScreen renderer: H.264 decode → GLES → cluster displayable 99 |
+| `altscreen_render/` | cluster video renderer (CarPlay AltScreen and Android Auto): H.264 decode → displayable 99 |
+| `aa_hook/` | Android Auto hook for `gal`: cluster display, loopback tee, nav translation, layouts |
 | `deploy/smartphone_integrator/` | on-unit startup/supervisor scripts and the SI child config |
 | `mods/*_MoreIncredibleBash/` | M.I.B. custom scripts (see above) |
 | `scripts/` | build entry points and test runners |
@@ -253,7 +270,9 @@ The Java suites need `stock/base.jar` and a host JDK 8 in `stock/jdk/` (or set `
   adapters (reports mention OTTOCAST U2-AIR and AAWireless TWO+), check firmware updates,
   and look at custom firmware for Carlinkit-class hardware
   ([ludwig-v/wireless-carplay-dongle-reverse-engineering](https://github.com/ludwig-v/wireless-carplay-dongle-reverse-engineering)).
-- [ ] **Android Auto support** on the Virtual Cockpit (map and turn-by-turn).
+- [ ] **Android Auto on other firmware.** The cluster map needs a receiver profile per `gal`
+  build ([`docs/android-auto/firmware-porting.md`](docs/android-auto/firmware-porting.md));
+  turn-by-turn and cover art work without one.
 
 ## Credits
 
@@ -271,6 +290,11 @@ This repository combines and builds on the work of others:
 - **[luka-dev/mib2q-carplay-rgi](https://github.com/luka-dev/mib2q-carplay-rgi)** by
   LuKa (@LuKa_dev) is the base of this project: the hook, Java patch, maneuver
   renderer, installer and most of the knowledge base.
+- **[wasimlhr/mib2q-android-auto-cluster](https://github.com/wasimlhr/mib2q-android-auto-cluster)**
+  is the source of the Android Auto support: the gal receiver hook, navigation
+  translation, layouts and the Java adapter (GPL-3.0-or-later). Its receiver hook adapts
+  [chopinwong01/mhi2-android-auto-video-vc](https://github.com/chopinwong01/mhi2-android-auto-video-vc)
+  (OneB1t / chopinwong01, GPL-3.0).
 - **[harman-f/mhi2_altscreen_carplay](https://github.com/harman-f/mhi2_altscreen_carplay)**
   provides the GEN2 AltScreen hook (`altscreen_hook/`), originally for Škoda MU1440.
 - **[luka-dev/qnx65-armv7-toolchain](https://github.com/luka-dev/qnx65-armv7-toolchain)**:

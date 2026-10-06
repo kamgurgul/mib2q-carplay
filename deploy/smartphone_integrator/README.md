@@ -1,5 +1,12 @@
 # CarPlay child supervisor deployment
 
+Android Auto uses the same pattern for `children.gal`: [`aa_child.json`](aa_child.json)
+starts [`aa_startup.sh`](aa_startup.sh), which publishes `/tmp/aa_supervisor.owner`, starts
+`carplay_monitor.sh` for that generation (renderers' library path, no `LD_PRELOAD`) and
+`exec`s the stock `gal`, preloading `libaa_cluster_hook.so` only when it is installed and
+`/mnt/app/root/aa_cluster.off` is absent. Every other field equals the stock gal child
+([`aa_child_stock.json`](aa_child_stock.json)). See `docs/android-auto/overview.md`.
+
 Replace `children.carplay` in
 `/mnt/system/etc/eso/production/smartphone_integrator.json` with
 [`carplay_child.json`](carplay_child.json).

@@ -40,6 +40,8 @@ byte-identical to stock.
 | `hook/` | C (ARM32 QNX), `LD_PRELOAD` into `dio_manager`; exports exactly 5 interposers | `libcarplay_hook.so` | [iap2-interception](hook/iap2-interception.md) [cover-art](hook/cover-art.md) [integration-seam](hook/integration-seam.md) |
 | `java_patch/` + `java_resources/` | Java 1.4 class overrides loaded by the HMI (`lsd`) + VC glyph table | `carplay_hook.jar` | [rgd-activation](rgd/rgd-activation.md) [display-contexts](cluster/display-contexts.md) [touchpad-dpad](input/touchpad-dpad.md) |
 | `maneuver_render/` | C EGL/GLES2 + C++11 scene engine (ARM QNX / macOS) | `maneuver_render` | [maneuver-renderer](cluster/maneuver-renderer.md) [compositing](cluster/compositing.md) |
+| `aa_hook/` | C (ARM32 QNX), `LD_PRELOAD` into `gal` only; exactly 9 interposers | `libaa_cluster_hook.so` | [android-auto overview](android-auto/overview.md) [firmware-porting](android-auto/firmware-porting.md) |
+| `altscreen_render/` | C, OMX/FFmpeg H.264 -> displayable 99; CarPlay :19820 or Android Auto :19821 | `altscreen_render` | [hw-decoder](altscreen/hw-decoder.md) [android-auto overview](android-auto/overview.md) |
 
 ## 🗂️ Process topology
 
@@ -50,9 +52,19 @@ smartphone_integrator            (boot-resident; spawns on phone connect)
       +- carplay_monitor.sh       per-generation renderer monitor (no hook)
           +- maneuver_render      TCP 127.0.0.1:19800  (Java -> renderer; outlives dio)
 
+smartphone_integrator            (Android phone)
+  +- aa_startup.sh                exec's into gal (same PID), same monitor script
+      = gal                       stock receiver + LD_PRELOAD libaa_cluster_hook.so
+                                  (cluster display tee 127.0.0.1:19821 -> altscreen_render)
+
 Java patch (lsd.jxe, alive from boot)
   +- CarplayBus server            TCP 127.0.0.1:19810  (hook <-> Java)
+  +- AaBridge                     Android Auto DSI -> CarplayBus.injectLocal (no socket)
 ```
+
+`CarPlayApp` runs one phone session at a time and records its owner (CarPlay or Android
+Auto). The owner decides which modules start and how route guidance takes over; see
+[android-auto overview](android-auto/overview.md).
 
 `LD_PRELOAD` is scoped to `dio_manager` only. See [supervisor-lifecycle](deploy/supervisor-lifecycle.md) for ownership and
 [bus-protocol](hook/bus-protocol.md) for the hook<->Java link.

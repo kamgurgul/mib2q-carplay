@@ -391,6 +391,9 @@ public final class ScreenModule implements Module {
             /* Context composition is now final: replay the last KDK popup geometry so a
              * navActive edge cannot leave planes 98/101/102 at their previous opacity. */
             com.luka.carplay.cluster.ClusterLayerController.reapply();
+            /* Android Auto: keep the VC in its map view while plane 99 is on terminal 1. */
+            com.luka.carplay.aa.VcMapViewGate.onClusterVideoShown(
+                ctx == CTX_CLUSTER_VIDEO || ctx == CTX_CLUSTER_VIDEO_NAV);
             Log.i(TAG, "cluster -> ctx " + ctx + " (active=" + clusterActive + ")");
         } catch (Throwable t) {
             Log.w(TAG, "switch(" + ctx + ") failed: " + t);

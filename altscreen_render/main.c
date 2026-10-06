@@ -1,12 +1,19 @@
 /*
- * altscreen_render — CarPlay cluster video renderer for Audi MHI2Q.
+ * altscreen_render — phone cluster video renderer for Audi MHI2Q
+ * (CarPlay AltScreen and the Android Auto cluster display).
  *
  * Pipeline:
- *   AltScreen hook tee (127.0.0.1:19820, Annex-B H.264)
- *     -> decode.c (libavcodec)               [host-tested]
- *     -> video_gles.c (YUV->RGB, GLES2)       [QNX]
+ *   loopback Annex-B H.264 tee, one of:
+ *     - CarPlay AltScreen hook (dio_manager)   127.0.0.1:19820, picture = window
+ *     - Android Auto cluster hook (gal)        127.0.0.1:19821, 1920x1080 picture
+ *       whose centred 1440x540 viewport is the cockpit terminal
+ *     -> hw_decode.c (Qualcomm OMX, blit of the view 1:1)   [QNX, default]
+ *        or decode.c (libavcodec) + video_gles.c          [host-tested / QNX]
  *     -> cluster_surface managed window, displayable 99   [QNX]
- *     -> DisplayManager composites ctx 82 -> MOST/LVDS -> Virtual Cockpit
+ *     -> DisplayManager composites ctx 81/82 -> MOST/LVDS -> Virtual Cockpit
+ *
+ * Only one phone session exists at a time, so this one process owns window 99
+ * for both: while idle it tries the CarPlay tee, then the Android Auto tee.
  *
  * Java (mib2q-carplay-rgi) owns cluster CONTEXT selection. This process only
  * owns the pixels of displayable 99 and reports liveness so Java can switch to
@@ -20,13 +27,20 @@
  *
  * Env:
  *   ALTR_TEE_HOST   (default 127.0.0.1)
- *   ALTR_TEE_PORT   (default 19820)
+ *   ALTR_TEE_PORT   CarPlay tee (default 19820)
+ *   ALTR_AA_TEE_PORT Android Auto tee (default 19821, 0 = off)
+ *   ALTR_AA_STREAM_WIDTH / ALTR_AA_STREAM_HEIGHT  AA picture (default 1920x1080)
+ *   ALTR_AA_CROP_X / ALTR_AA_CROP_Y  AA view origin (default: centred)
  *   ALTR_WIDTH      cluster surface width  (default 1440)   [QNX]
  *   ALTR_HEIGHT     cluster surface height (default 540)    [QNX]
  *   ALTR_DISPLAYABLE_ID (default 99)                         [QNX]
  *   ALTR_LIVE_FILE  (default /tmp/altscreen_render.live)
  *   ALTR_STATUS_FILE(default /tmp/altscreen_render.status)
  *   ALTR_LIVE_TIMEOUT_MS (default 500) — .live removed if no frame within this
+ *   ALTR_AA_LIVE_TIMEOUT_MS (default 0 = while connected) — same for Android Auto,
+ *                   which sends almost no pictures while its map does not change
+ *                   (car log 020: one picture every ~6 s), so a picture gap is not
+ *                   a lost stream there; the tee closing is
  *
  * Copyright (c) 2026
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -86,19 +100,45 @@ static uint64_t now_ms(void)
     return (uint64_t)ts.tv_sec*1000u + (uint64_t)(ts.tv_nsec/1000000L);
 }
 
+/* ---- tee sources ---- */
+
+/* Hardware decode is the DEFAULT (log set 018: 3120 pictures in one session at
+ * ~2.9 ms renderer CPU per picture vs ~24 ms in software). A marker turns it
+ * OFF (GEM CarPlay-RGI -> "HW decoder ON / OFF"); a real hardware failure
+ * creates it, so later sessions stay on the software path until switched back
+ * on. Read per tee connection. Each source has its own pair, so an Android Auto
+ * (1080p) decoder failure never switches CarPlay's proven path off. */
+#define ALTR_HWDEC_OFF_MARKER "/mnt/app/root/altscreen_render.hwdecode.off"
+/* /mnt/app is normally read-only to us; the /tmp twin always works and keeps a
+ * failed hardware path off for the rest of this boot either way. */
+#define ALTR_HWDEC_OFF_BOOT   "/tmp/altscreen_render.hwdecode.off"
+#define ALTR_AA_HWDEC_OFF_MARKER "/mnt/app/root/altscreen_render.aa.hwdecode.off"
+#define ALTR_AA_HWDEC_OFF_BOOT   "/tmp/altscreen_render.aa.hwdecode.off"
+
+struct source {
+    const char *name;           /* status/log name */
+    int port;
+    altr_view_t view;           /* what this stream shows in window 99 */
+    int live_timeout_ms;        /* .live removed this long after the last shown picture; 0 = never while connected */
+    const char *hw_off_marker;  /* persistent "hardware decode off" switch */
+    const char *hw_off_boot;    /* the same for this boot (/tmp) */
+};
+
 /* ---- liveness / status files (read by the Java cluster context module) ---- */
 static const char *g_live_file;
 static const char *g_status_file;
 static int g_live_written;
 static uint64_t g_live_touch_ms;
 
+static const char *g_source_name = "none";
+
 static void write_status(const char *state, int w, int h, uint64_t frames)
 {
     int fd = open(g_status_file, O_WRONLY|O_CREAT|O_TRUNC, 0644);
     if (fd < 0) return;
-    char b[192];
-    int n = snprintf(b, sizeof(b), "state=%s\nwidth=%d\nheight=%d\nframes=%llu\npid=%d\n",
-                     state, w, h, (unsigned long long)frames, (int)getpid());
+    char b[224];
+    int n = snprintf(b, sizeof(b), "state=%s\nsource=%s\nwidth=%d\nheight=%d\nframes=%llu\npid=%d\n",
+                     state, g_source_name, w, h, (unsigned long long)frames, (int)getpid());
     if (n > 0) (void)!write(fd, b, (size_t)n);
     close(fd);
 }
@@ -132,6 +172,8 @@ struct app {
     int last_w, last_h;
     uint64_t frames;
     uint64_t last_frame_ms;
+    uint64_t last_shown_ms;     /* last picture that reached the window; drives .live */
+    const struct source *src;   /* connected tee, NULL while idle */
 #ifdef PLATFORM_QNX
     altr_gles_t *gl;
     EGLDisplay dpy;
@@ -158,13 +200,19 @@ static void gl_shutdown(struct app *a);
 static void on_frame(void *user, const altr_frame_t *f)
 {
     struct app *a = (struct app *)user;
+    altr_frame_t shown;
+    if (a->src) altr_frame_crop(f, &a->src->view, &shown);
+    else shown = *f;
     a->frames++;
     a->last_w = f->width; a->last_h = f->height;
     a->last_frame_ms = now_ms();
 #ifdef PLATFORM_QNX
-    if (a->have_gl && a->gl && present_frame(a, f) == 0)
+    if (a->have_gl && a->gl && present_frame(a, &shown) == 0) {
+        a->last_shown_ms = a->last_frame_ms;
         set_live(1);
+    }
 #else
+    a->last_shown_ms = a->last_frame_ms;
     set_live(1);
 #endif
     if (a->frames <= 2 || (a->frames % 120) == 0)
@@ -323,29 +371,20 @@ static void gl_shutdown(struct app *a)
 #endif
 
 #ifdef PLATFORM_QNX
-/* Hardware decode is the DEFAULT (log set 018: 3120 pictures in one session at
- * ~2.9 ms renderer CPU per picture vs ~24 ms in software). This marker turns it
- * OFF (GEM CarPlay-RGI -> "HW decoder ON / OFF"); a real hardware failure
- * creates it, so later sessions stay on the software path until switched back
- * on. Read per tee connection. */
-#define ALTR_HWDEC_OFF_MARKER "/mnt/app/root/altscreen_render.hwdecode.off"
-/* /mnt/app is normally read-only to us; the /tmp twin always works and keeps a
- * failed hardware path off for the rest of this boot either way. */
-#define ALTR_HWDEC_OFF_BOOT   "/tmp/altscreen_render.hwdecode.off"
-
-static int hw_wanted(void)
+/* Hardware decode markers: see struct source. */
+static int hw_wanted(const struct source *s)
 {
-    return access(ALTR_HWDEC_OFF_MARKER, F_OK) != 0 && access(ALTR_HWDEC_OFF_BOOT, F_OK) != 0;
+    return access(s->hw_off_marker, F_OK) != 0 && access(s->hw_off_boot, F_OK) != 0;
 }
 
-static void hw_switch_off(void)
+static void hw_switch_off(const struct source *s)
 {
-    int fd = open(ALTR_HWDEC_OFF_BOOT, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int fd = open(s->hw_off_boot, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd >= 0) close(fd);
-    fd = open(ALTR_HWDEC_OFF_MARKER, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    fd = open(s->hw_off_marker, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd >= 0) close(fd);
     else fprintf(stderr, "altscreen_render: %s not writable (errno %d); off for this boot only\n",
-                 ALTR_HWDEC_OFF_MARKER, errno);
+                 s->hw_off_marker, errno);
 }
 
 /* Close the hardware session. A decoder stuck in Executing keeps our buffers:
@@ -355,7 +394,7 @@ static void hw_close(struct app *a)
 {
     if (!a->hw) return;
     if (altr_hwdec_destroy(a->hw) != 0) {
-        hw_switch_off();
+        hw_switch_off(a->src);
         set_live(0);
         fprintf(stderr, "altscreen_render: stuck hardware decoder; HW decoder switched OFF, "
                 "exiting for a clean restart\n");
@@ -366,9 +405,9 @@ static void hw_close(struct app *a)
 
 static void hw_give_up(struct app *a, const char *why)
 {
-    fprintf(stderr, "altscreen_render: hardware decode %s; back to software decode "
-            "(HW decoder switched OFF)\n", why);
-    hw_switch_off();
+    fprintf(stderr, "altscreen_render: %s hardware decode %s; back to software decode "
+            "(HW decoder switched OFF)\n", a->src->name, why);
+    hw_switch_off(a->src);
     hw_close(a);
 }
 
@@ -387,35 +426,88 @@ static int ensure_gl(struct app *a)
 }
 #endif
 
+/* Defaults for the two tee sources. */
+static void sources_init(struct source *src, int *nsrc, int surface_w, int surface_h)
+{
+    int sw, sh;
+    *nsrc = 0;
+
+    src[*nsrc].name = "carplay";
+    src[*nsrc].port = env_i("ALTR_TEE_PORT", 19820);
+    src[*nsrc].view.stream_w = src[*nsrc].view.view_w = surface_w;
+    src[*nsrc].view.stream_h = src[*nsrc].view.view_h = surface_h;
+    src[*nsrc].view.crop_x = src[*nsrc].view.crop_y = 0;
+    src[*nsrc].live_timeout_ms = env_i("ALTR_LIVE_TIMEOUT_MS", 500);
+    src[*nsrc].hw_off_marker = ALTR_HWDEC_OFF_MARKER;
+    src[*nsrc].hw_off_boot = ALTR_HWDEC_OFF_BOOT;
+    (*nsrc)++;
+
+    if (env_i("ALTR_AA_TEE_PORT", 19821) <= 0) return;
+    sw = env_i("ALTR_AA_STREAM_WIDTH", 1920);
+    sh = env_i("ALTR_AA_STREAM_HEIGHT", 1080);
+    if (sw < surface_w || sh < surface_h) {
+        fprintf(stderr, "altscreen_render: Android Auto stream %dx%d smaller than the %dx%d window; "
+                "Android Auto tee off\n", sw, sh, surface_w, surface_h);
+        return;
+    }
+    src[*nsrc].name = "android-auto";
+    src[*nsrc].port = env_i("ALTR_AA_TEE_PORT", 19821);
+    src[*nsrc].view.stream_w = sw;
+    src[*nsrc].view.stream_h = sh;
+    src[*nsrc].view.view_w = surface_w;
+    src[*nsrc].view.view_h = surface_h;
+    /* The phone lays its UI out in the centred viewport (width/height margins split
+     * evenly), so the default crop is the centre. */
+    src[*nsrc].view.crop_x = env_i("ALTR_AA_CROP_X", (sw - surface_w) / 2);
+    src[*nsrc].view.crop_y = env_i("ALTR_AA_CROP_Y", (sh - surface_h) / 2);
+    if (src[*nsrc].view.crop_x < 0 || src[*nsrc].view.crop_x > sw - surface_w)
+        src[*nsrc].view.crop_x = (sw - surface_w) / 2;
+    if (src[*nsrc].view.crop_y < 0 || src[*nsrc].view.crop_y > sh - surface_h)
+        src[*nsrc].view.crop_y = (sh - surface_h) / 2;
+    src[*nsrc].live_timeout_ms = env_i("ALTR_AA_LIVE_TIMEOUT_MS", 0);
+    src[*nsrc].hw_off_marker = ALTR_AA_HWDEC_OFF_MARKER;
+    src[*nsrc].hw_off_boot = ALTR_AA_HWDEC_OFF_BOOT;
+    (*nsrc)++;
+}
+
 int main(void)
 {
     struct app a;
+    struct source src[2];
+    int nsrc, k;
     memset(&a, 0, sizeof(a));
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
     signal(SIGPIPE, SIG_IGN);
 
     const char *host = env_s("ALTR_TEE_HOST", "127.0.0.1");
-    int port = env_i("ALTR_TEE_PORT", 19820);
     g_live_file   = env_s("ALTR_LIVE_FILE",   "/tmp/altscreen_render.live");
     g_status_file = env_s("ALTR_STATUS_FILE", "/tmp/altscreen_render.status");
     unlink(g_live_file); /* a predecessor crash must not pin ctx 81/82 */
-    int live_timeout = env_i("ALTR_LIVE_TIMEOUT_MS", 500);
     a.surface_w = env_i("ALTR_WIDTH", 1440);
     a.surface_h = env_i("ALTR_HEIGHT", 540);
+    sources_init(src, &nsrc, a.surface_w, a.surface_h);
+    for (k = 0; k < nsrc; k++)
+        fprintf(stderr, "altscreen_render: source %s port %d stream %dx%d view %dx%d at %d,%d\n",
+                src[k].name, src[k].port, src[k].view.stream_w, src[k].view.stream_h,
+                src[k].view.view_w, src[k].view.view_h, src[k].view.crop_x, src[k].view.crop_y);
 
 #ifdef PLATFORM_QNX
     a.dpy = EGL_NO_DISPLAY;
     a.surf = EGL_NO_SURFACE;
     a.ctx = EGL_NO_CONTEXT;
     a.disp_id = env_i("ALTR_DISPLAYABLE_ID", 99);
-    if (hw_wanted()) {
-        fprintf(stderr, "altscreen_render: hardware decode (default); GL window deferred\n");
-    } else if (gl_init(&a, a.disp_id) != 0) {
-        write_status("gl_error", 0, 0, 0);
-        gl_shutdown(&a);
-        set_live(0);
-        return 1;
+    {
+        int any_hw = 0;
+        for (k = 0; k < nsrc; k++) any_hw |= hw_wanted(&src[k]);
+        if (any_hw) {
+            fprintf(stderr, "altscreen_render: hardware decode (default); GL window deferred\n");
+        } else if (gl_init(&a, a.disp_id) != 0) {
+            write_status("gl_error", 0, 0, 0);
+            gl_shutdown(&a);
+            set_live(0);
+            return 1;
+        }
     }
 #else
     fprintf(stderr, "altscreen_render: host build (headless tee sink, no GL)\n");
@@ -435,20 +527,31 @@ int main(void)
 
     uint8_t buf[32768];
     while (!g_stop) {
+        const struct source *s = NULL;
+        int fd = -1;
         omx_probe_poll(a.surface_w, a.surface_h);
-        int fd = tee_connect(host, port);
+        /* Only one phone session exists at a time, so at most one tee listens. */
+        for (k = 0; k < nsrc && fd < 0; k++) {
+            s = &src[k];
+            fd = tee_connect(host, s->port);
+        }
         if (fd < 0) {
             set_live(0);
+            g_source_name = "none";
             write_status("waiting_tee", a.last_w, a.last_h, a.frames);
             sleep(1);
             continue;
         }
-        fprintf(stderr, "altscreen_render: connected to tee %s:%d\n", host, port);
+        a.src = s;
+        a.last_shown_ms = 0;
+        g_source_name = s->name;
+        fprintf(stderr, "altscreen_render: connected to %s tee %s:%d\n", s->name, host, s->port);
         write_status("connected", a.last_w, a.last_h, a.frames);
 
         /* Recv loop with a poll so we can drop .live when frames stall and exit
          * on signal. */
         for (;;) {
+            uint64_t now;
             if (g_stop) { close(fd); goto done; }
             omx_probe_poll(a.surface_w, a.surface_h);
             fd_set rd; struct timeval tv;
@@ -459,10 +562,10 @@ int main(void)
                 ssize_t n = recv(fd, buf, sizeof(buf), 0);
                 if (n <= 0) break;
 #ifdef PLATFORM_QNX
-                if (!a.hw && !a.hw_tried && hw_wanted()) {
+                if (!a.hw && !a.hw_tried && hw_wanted(s)) {
                     a.hw_tried = 1;
                     gl_shutdown(&a);             /* frees displayable 99 for the decoder */
-                    a.hw = altr_hwdec_create(a.surface_w, a.surface_h, a.disp_id);
+                    a.hw = altr_hwdec_create(&s->view, a.disp_id);
                     a.hw_frames_seen = 0;
                     if (!a.hw) {
                         hw_give_up(&a, "setup failed");
@@ -481,8 +584,8 @@ int main(void)
                     if (hf > a.hw_frames_seen) {
                         a.frames += hf - a.hw_frames_seen;
                         a.hw_frames_seen = hf;
-                        a.last_w = a.surface_w; a.last_h = a.surface_h;
-                        a.last_frame_ms = now_ms();
+                        a.last_w = s->view.view_w; a.last_h = s->view.view_h;
+                        a.last_frame_ms = a.last_shown_ms = now_ms();
                         set_live(1);
                         if (a.frames <= 2 || (a.frames % 120) == 0)
                             write_status("decoding_hw", a.last_w, a.last_h, a.frames);
@@ -495,7 +598,14 @@ int main(void)
             } else if (r < 0 && errno != EINTR) {
                 break;
             }
-            if (a.last_frame_ms && (now_ms() - a.last_frame_ms) > (uint64_t)live_timeout)
+            /* Heartbeat while the last picture is recent (or, timeout 0, for the
+             * whole connection): Android Auto sends almost no pictures while its
+             * map is still, and that must not drop ctx 81/82. */
+            now = now_ms();
+            if (a.last_shown_ms && (s->live_timeout_ms <= 0 ||
+                                    (now - a.last_shown_ms) <= (uint64_t)s->live_timeout_ms))
+                set_live(1);
+            else if (a.last_shown_ms)
                 set_live(0);
         }
 
@@ -506,9 +616,12 @@ int main(void)
 #endif
         altr_decode_flush(dec);
         set_live(0);
+        a.last_shown_ms = 0;
         write_status("tee_closed", a.last_w, a.last_h, a.frames);
-        fprintf(stderr, "altscreen_render: tee closed; frames so far=%llu\n",
-                (unsigned long long)a.frames);
+        fprintf(stderr, "altscreen_render: %s tee closed; frames so far=%llu\n",
+                s->name, (unsigned long long)a.frames);
+        a.src = NULL;
+        g_source_name = "none";
     }
 
 done:

@@ -10,7 +10,8 @@
 #         name goes to its fixed on-unit path (see flat_dest);
 #       * tree: carplay/root/<on-unit path> copied onto "/".
 #   - in-place runtime patches (per-unit / stock-dependent), done here:
-#       * smartphone_integrator.json  - replace the "carplay" child by path
+#       * smartphone_integrator.json  - replace the "carplay" child by path, and the
+#                                       "gal" (Android Auto) child when the release has it
 #       * dio_manager.json            - register the iAP2 route-guidance message IDs
 # No CRC gymnastics, no lock dir. Atomic renames. Upgrade-safe: a stock backup of
 # each edited config is kept once so uninstall restores the original.
@@ -43,12 +44,15 @@ flat_dest() {
         carplay_startup.sh|carplay_monitor.sh|carplay_processes.sh|carplay_cleanup.sh) echo "$HOOKS/$1" ;;
         carplay_hook.jar) echo "$JARS/$1" ;;
         libaltscreen111_mhi2q.so|altscreen_render) echo "$HOOKS/$1" ;;  # optional AltScreen
+        libaa_cluster_hook.so|aa_startup.sh) echo "$HOOKS/$1" ;;          # optional Android Auto
         *) return 1 ;;
     esac
 }
-# Optional AltScreen (CarPlay cluster VIDEO) assets. Present => installed; absent
-# => skipped, base RGI install unaffected. See docs/deploy/altscreen-mhi2q.md.
-OPTIONAL_ASSETS="libaltscreen111_mhi2q.so altscreen_render"
+# Optional assets. Present => installed; absent => skipped, base RGI install
+# unaffected. AltScreen (cluster VIDEO renderer + CarPlay hook, see
+# docs/deploy/altscreen-mhi2q.md) and Android Auto (gal launcher + cluster hook,
+# see docs/android-auto/overview.md).
+OPTIONAL_ASSETS="libaltscreen111_mhi2q.so altscreen_render libaa_cluster_hook.so aa_startup.sh"
 
 CFG=/mnt/system/etc/eso/production/smartphone_integrator.json
 DIO=/mnt/system/etc/eso/production/dio_manager.json
@@ -91,7 +95,7 @@ list_payload() {
     for a in $OPTIONAL_ASSETS; do
         if [ -f "$RES/$a" ]; then
             printf '%s|%s\n' "$RES/$a" "$(flat_dest "$a")" >> "$1"
-            echo "  (+ optional AltScreen asset: $a)"
+            echo "  (+ optional asset: $a)"
         fi
     done
     if [ -d "$ROOT" ]; then
@@ -108,21 +112,24 @@ list_payload() {
     [ -s "$1" ] || { echo "no payload in $RES (release files or root/ tree)"; rm -f "$1"; return 1; }
 }
 
-# ---- smartphone_integrator.json: replace the "carplay" child by path ----------
-patch_json() {
-    FRAG=$RES/carplay_child.json
+# ---- smartphone_integrator.json: replace a child by path ----------------------
+# patch_child <child> <fragment> <launcher>: replace children.<child> with the
+# fragment. <launcher> names our wrapper, so a config that already runs it is not
+# taken as the stock backup.
+patch_child() {
+    CHILD=$1; FRAG=$2; LAUNCHER=$3
     [ -f "$CFG" ]  || { echo "  WARN no SI config at $CFG - skipping json"; return 0; }
-    [ -f "$FRAG" ] || { echo "  WARN no carplay_child.json resource - skipping json"; return 0; }
+    [ -f "$FRAG" ] || { echo "  WARN no ${FRAG##*/} resource - skipping json"; return 0; }
     tmp=$CFG.carplay-new.$$
     : > "$tmp" || { echo "FAILED create $tmp"; return 1; }
     state=copy; hits=0; depth=0
     while IFS= read -r line || [ -n "$line" ]; do
         if [ "$state" = copy ]; then
             case $line in
-                *'"carplay"'*:*)
+                *"\"$CHILD\""*:*)
                     set -f; set -- $line; set +f
                     compact=; for part in "$@"; do compact=$compact$part; done
-                    [ "$compact" = '"carplay":{' ] || { echo "  WARN unsupported carplay layout"; rm -f "$tmp"; return 1; }
+                    [ "$compact" = "\"$CHILD\":{" ] || { echo "  WARN unsupported $CHILD layout"; rm -f "$tmp"; return 1; }
                     hits=$((hits+1)); state=skip; depth=0 ;;
                 *) printf '%s\n' "$line" >> "$tmp"; continue ;;
             esac
@@ -130,17 +137,30 @@ patch_json() {
         opens=$(count_char "$line" '{'); closes=$(count_char "$line" '}')
         depth=$((depth + opens - closes))
         if [ "$depth" -le 0 ]; then
-            printf '        "carplay": ' >> "$tmp"
+            printf '        "%s": ' "$CHILD" >> "$tmp"
             cat "$FRAG" >> "$tmp"
-            printf '%s\n' "${line##*\}}" >> "$tmp"       # keep the trailing comma
+            rest=${line##*\}}                                 # keep the trailing comma;
+            [ -z "$rest" ] || printf '%s\n' "$rest" >> "$tmp"  # nothing else: no blank line
             state=copy
         fi
     done < "$CFG"
-    [ "$hits" = 1 ] && [ "$state" = copy ] || { echo "  WARN expected one carplay child (hits=$hits)"; rm -f "$tmp"; return 1; }
+    [ "$hits" = 1 ] && [ "$state" = copy ] || { echo "  WARN expected one $CHILD child (hits=$hits)"; rm -f "$tmp"; return 1; }
     o=$(grep -c '"exec"' "$CFG"); n=$(grep -c '"exec"' "$tmp")
     [ "$o" = "$n" ] || { echo "  WARN SI child count changed ($o->$n)"; rm -f "$tmp"; return 1; }
-    grep -q 'carplay_startup.sh' "$CFG" || backup_once "$CFG" "$CFG.carplay-stock" || { rm -f "$tmp"; return 1; }
-    chmod 644 "$tmp"; mv -f "$tmp" "$CFG" && echo "  SI json patched"
+    if ! grep -q 'carplay_startup.sh' "$CFG" && ! grep -q 'aa_startup.sh' "$CFG"; then
+        backup_once "$CFG" "$CFG.carplay-stock" || { rm -f "$tmp"; return 1; }
+    fi
+    grep -q "$LAUNCHER" "$CFG" || [ -e "$CFG.carplay-stock" ] || {
+        echo "  WARN $CHILD child left as is: no $CFG.carplay-stock to restore it from"; rm -f "$tmp"; return 1; }
+    chmod 644 "$tmp"; mv -f "$tmp" "$CFG" && echo "  SI json: $CHILD child patched"
+}
+
+patch_json() {
+    patch_child carplay "$RES/carplay_child.json" carplay_startup.sh || return 1
+    # Android Auto: only when the release carries the gal launcher and its fragment.
+    if [ -f "$RES/aa_startup.sh" ] && [ -f "$RES/aa_child.json" ]; then
+        patch_child gal "$RES/aa_child.json" aa_startup.sh
+    fi
 }
 
 # ---- dio_manager.json: register the route-guidance message IDs ----------------

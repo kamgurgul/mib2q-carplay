@@ -10,7 +10,7 @@ Map of Content for the reverse-engineering and implementation notes. Each note c
 every factual claim is validated against a source (code / firmware / iOS binary) and states only the
 final verified fact. `reconciles:` frontmatter records which legacy docs were folded in.
 
-> **All topics seeded [x]** - 32 notes. `(!)` items inside notes are real product TODOs, not doc gaps.
+> **All topics seeded [x]** - 34 notes. `(!)` items inside notes are real product TODOs, not doc gaps.
 
 ## 🗂️ [architecture](architecture.md) - process topology, threading, boot / init - build, test & deploy  [x]
 
@@ -35,6 +35,10 @@ final verified fact. `reconciles:` frontmatter records which legacy docs were fo
 - [compositing](cluster/compositing.md) - maneuver overlay over native map, HU->MOST->VC H.264
 - [maneuver-renderer](cluster/maneuver-renderer.md) - :19800 protocol, C++ scene engine, visible area, watchdog
 - [kdk-geometry](cluster/kdk-geometry.md) - KDK backings 101/102, VC Fct44/Fct54-driven visibility & stage, HU geometry table
+
+## 🤖 Android Auto  [x]
+- [overview](android-auto/overview.md) - what works without / with the gal hook, topology, Java bridge, cluster map, switches, logs
+- [firmware-porting](android-auto/firmware-porting.md) - receiver profiles: get gal + libautoreceiver.so, compute, verify layouts, trial marker
 
 ## 🎛️ Input  [x]
 - [touchpad-dpad](input/touchpad-dpad.md) - MMI touchpad -> DPAD bridge (TouchpadController)
@@ -74,7 +78,8 @@ Every note carries a `status` recording how its facts were checked.
 |---|---|---|
 | `verified-decompile` | confirmed by reading the disassembly/decompilation of the actual binary | rgd-tlv, rgd-activation, accessoryd-rgd, maps-maneuvers, carkitd-bonjour, display-manager, compositing, kdk-geometry (VC section) |
 | `verified-trace` | confirmed against the actual on-device log / config | connect |
-| `verified-source` | confirmed against this repo's source (ground truth for our own code) | architecture, iap2-interception, bus-protocol, cover-art, integration-seam, maneuver-mapping, bap-fctids, bargraph-sync, lane-guidance, vc-route-text, maneuver-renderer, display-contexts, kdk-geometry (HU), touchpad-dpad, steering-wheel, supervisor-lifecycle, session-lifecycle, dsi-carkombi, navsd-catalogue |
+| `verified-on-car` | confirmed working in the car (logs + driver report) | android-auto overview |
+| `verified-source` | confirmed against this repo's source (ground truth for our own code) | architecture, iap2-interception, bus-protocol, cover-art, integration-seam, maneuver-mapping, bap-fctids, bargraph-sync, lane-guidance, vc-route-text, maneuver-renderer, display-contexts, kdk-geometry (HU), touchpad-dpad, steering-wheel, supervisor-lifecycle, session-lifecycle, dsi-carkombi, navsd-catalogue, android-auto firmware-porting |
 | `partially-verified` | code paths confirmed; some symbols only string-level / inferred | komo-widget-video (gfx-gate chain) |
 | `from-re-notes` | carried faithfully from prior RE notes; not re-verified in the binary this pass | vc-aio-arrow |
 

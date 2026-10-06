@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build a complete, versioned release: release/mib2q-carplay-<version>/ and its .zip.
 #
-#   ./scripts/build_release.sh              # version 1.0, full build first
+#   ./scripts/build_release.sh              # version 1.1, full build first
 #   VERSION=1.1 ./scripts/build_release.sh
 #   NO_BUILD=1 ./scripts/build_release.sh   # reuse the current staged build
 #
@@ -17,7 +17,7 @@ set -euo pipefail
 [ "$#" -eq 0 ] || { echo "usage: [VERSION=x.y] [NO_BUILD=1] ./scripts/build_release.sh"; exit 2; }
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="${VERSION:-1.0}"
+VERSION="${VERSION:-1.1}"
 NAME="mib2q-carplay-$VERSION"
 OUT="$PROJECT_DIR/release/$NAME"
 MODS="$PROJECT_DIR/mods"
@@ -33,7 +33,8 @@ fi
 
 RELEASE_FILES="libcarplay_hook.so maneuver_render flag_atlas.rgba carplay_startup.sh
 carplay_monitor.sh carplay_processes.sh carplay_cleanup.sh carplay_hook.jar
-carplay_child.json altscreen_render libaltscreen111_mhi2q.so"
+carplay_child.json altscreen_render libaltscreen111_mhi2q.so
+libaa_cluster_hook.so aa_startup.sh aa_child.json"
 for f in $RELEASE_FILES; do
     [ -s "$STAGED/$f" ] || { echo "ERROR: $STAGED/$f missing - run without NO_BUILD=1"; exit 1; }
 done
@@ -58,7 +59,7 @@ cp -R "$MODS/menu_install_MoreIncredibleBash/mod/carplay_menu" "$OUT/SD-CARD/mod
 
 # Extras: single M.I.B. mods (the setup covers install + menu)
 for m in uninstall logging altscreen_on altscreen_off rgd_enable rgd_disable \
-         altscreen_grid altscreen_safearea extract_lsd; do
+         altscreen_grid altscreen_safearea extract_lsd aa_cluster_on aa_cluster_off touchpad_dpad_on touchpad_dpad_off; do
     src="$MODS/${m}_MoreIncredibleBash/mod"
     [ -s "$src/custom.sh" ] || { echo "ERROR: missing $src/custom.sh"; exit 1; }
     mkdir -p "$OUT/extras/MIB-mods/$m/mod"

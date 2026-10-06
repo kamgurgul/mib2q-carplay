@@ -151,7 +151,7 @@ case $ACT in
         echo "DONE. Probe requested; altscreen_render runs it within ~1 s."
         echo "Then press 'Save logs to SD' and send altscreen_render.log."
         ;;
-    uninstall|altscreen_on|altscreen_off|rgd_enable|rgd_disable)
+    uninstall|altscreen_on|altscreen_off|rgd_enable|rgd_disable|aa_cluster_on|aa_cluster_off|touchpad_dpad_on|touchpad_dpad_off)
         run_action "$ACT"
         ;;
     remove_menu)
@@ -166,7 +166,7 @@ case $ACT in
         echo "DONE. CarPlay-RGI menu removed; it disappears after the next reboot."
         ;;
     *)
-        echo "usage: run.sh install|uninstall|logs|lsd|altscreen_on|altscreen_off|rgd_enable|rgd_disable|grid|safearea|safearea_reset|singleview|reacquire|hwdec|omxprobe|remove_menu"
+        echo "usage: run.sh install|uninstall|logs|lsd|altscreen_on|altscreen_off|rgd_enable|rgd_disable|aa_cluster_on|aa_cluster_off|touchpad_dpad_on|touchpad_dpad_off|grid|safearea|safearea_reset|singleview|reacquire|hwdec|omxprobe|remove_menu"
         exit 2
         ;;
 esac

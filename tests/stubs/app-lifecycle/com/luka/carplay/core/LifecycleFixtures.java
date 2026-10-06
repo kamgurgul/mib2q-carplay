@@ -13,7 +13,8 @@ abstract class LifecycleTestModule implements Module {
         } catch (Exception e) { throw new AssertionError(e); }
     }
     static final Object gate = new Object();
-    static final int[] starts = new int[3], stops = new int[3];
+    /* 0 screen, 1 rgd, 2 steering-wheel input (CarPlay only, last), 3 altscreen */
+    static final int[] starts = new int[4], stops = new int[4];
     static int blockIndex = -1, entered = -1;
     static boolean released;
     static volatile boolean badLockOrder;
@@ -49,7 +50,9 @@ abstract class LifecycleTestModule implements Module {
     static int count(int index) { synchronized (gate) { return starts[index]; } }
 }
 final class ScreenModule extends LifecycleTestModule { ScreenModule() { super(0); } }
-final class RgdModule extends LifecycleTestModule { RgdModule() { super(1); } }
+final class AltScreenModule extends LifecycleTestModule { AltScreenModule() { super(3); } }
+/* CarPlayApp finds the navigation-rebind target by this name. */
+final class RgdModule extends LifecycleTestModule { RgdModule() { super(1); } public String name() { return "rgd"; } }
 final class SteeringWheelInputModule extends LifecycleTestModule { SteeringWheelInputModule() { super(2); } }
 final class FrameworkRef {
     static volatile boolean failNext;

@@ -108,6 +108,13 @@ public class TerminalModeBapCombi implements ITerminalModeComponent {
                         this.this$0.eventListener.resetCoverMerge();
                         com.luka.carplay.core.CarPlayApp.onActivate(this.this$0.context);
                     } catch (Throwable t) { /* never crash the stock flow */ }
+                } else if (tmdevice.isAndroidAutoDevice()) {
+                    /* Android Auto cover art (AaCoverArt) uses the same merge: start clean.
+                     * Its session lifecycle is driven by com.luka.carplay.aa.AaBridge. */
+                    try {
+                        com.luka.carplay.coverart.CoverArt.getInstance().resetSession();
+                        this.this$0.eventListener.resetCoverMerge();
+                    } catch (Throwable t) { /* never crash the stock flow */ }
                 }
             }
 
@@ -261,8 +268,9 @@ public class TerminalModeBapCombi implements ITerminalModeComponent {
             } catch (Throwable t) { /* component is shutting down */ }
         }
 
+        /* Phone sessions of both kinds: CarPlay (hook) and Android Auto (AaCoverArt). */
         private synchronized void applyCoverArt(String path, int artId) {
-            if (!com.luka.carplay.core.CarPlayApp.isActive() || !metadataFromCarPlay) return;
+            if (!com.luka.carplay.core.CarPlayApp.isSessionActive() || !metadataFromCarPlay) return;
             if (currentTitle.length() > 0 || currentArtist.length() > 0 || currentAlbum.length() > 0) {
                 int effId = artId;
                 if (sentWithoutCover) { effId = artId + 1; sentWithoutCover = false; }  /* new id forces VC refresh */
@@ -278,14 +286,15 @@ public class TerminalModeBapCombi implements ITerminalModeComponent {
             if (artist == null) artist = "";
             if (album == null) album = "";
             currentTitle = title; currentArtist = artist; currentAlbum = album;
-            metadataFromCarPlay = com.luka.carplay.core.CarPlayApp.isActive();
+            boolean phone = com.luka.carplay.core.CarPlayApp.isSessionActive();
+            metadataFromCarPlay = phone;
 
             com.luka.carplay.coverart.CoverArt ca = com.luka.carplay.coverart.CoverArt.getInstance();
-            if (com.luka.carplay.core.CarPlayApp.isActive() && ca.hasCoverArt()) {
+            if (phone && ca.hasCoverArt()) {
                 sentWithoutCover = false;
                 sendNowPlaying(title, artist, album, ca.getPath(), ca.getArtId());
             } else {
-                sentWithoutCover = com.luka.carplay.core.CarPlayApp.isActive();
+                sentWithoutCover = phone;
                 sendNowPlaying(title, artist, album, null, 0);
             }
         }

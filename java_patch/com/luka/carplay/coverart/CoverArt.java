@@ -79,8 +79,26 @@ public class CoverArt implements CarplayBus.Listener {
         if (type != CarplayBus.EVT_COVERART) return;
 
         CarplayBus.Data d = CarplayBus.parseText(payload, len);
-        long crc = d.num64("crc", 0);
-        String path = d.str("path", COVERART_PATH);
+        publish(d.num64("crc", 0), d.str("path", COVERART_PATH));
+    }
+
+    /** Artwork produced inside the HMI (Android Auto, com.luka.carplay.aa.AaCoverArt): the
+     *  same path as a hook EVT_COVERART. id doubles as the CRC/picture id; never 0. */
+    public void publishLocal(String path, int id) {
+        publish(id & 0xFFFFFFFFL, path);
+    }
+
+    /** The phone reports no artwork: the next now-playing update goes out without a picture.
+     *  Returns true when a picture was dropped. */
+    public synchronized boolean clearLocal() {
+        if (lastCrc == 0) return false;
+        lastCrc = 0;
+        artId = 0;
+        currentPath = COVERART_PATH;
+        return true;
+    }
+
+    private void publish(long crc, String path) {
         Callback cb;
         int newArtId;
         String newPath;

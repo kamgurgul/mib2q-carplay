@@ -18,11 +18,15 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "decode.h"   /* altr_view_t */
+
 typedef struct altr_hwdec altr_hwdec_t;
 
-/* Open the decoder and its managed cluster window (displayable id). NULL = use
- * the software path (the reason is logged to stderr). */
-altr_hwdec_t *altr_hwdec_create(int width, int height, int displayable_id);
+/* Open the decoder at view->stream_w x stream_h and its managed cluster window
+ * (displayable id, view->view_w x view_h). Each picture's crop rectangle is
+ * blitted 1:1 into the window. NULL = use the software path (the reason is
+ * logged to stderr). */
+altr_hwdec_t *altr_hwdec_create(const altr_view_t *view, int displayable_id);
 
 /* Feed Annex-B bytes in any chunking. <0 = the decoder failed; destroy it and
  * fall back. */

@@ -81,7 +81,26 @@ public class TouchpadController {
     public synchronized void setTouchSink(TouchSink s) {
         resetTouchState();
         this.sink = s;
-        if (s != null) warnedDpad = false;
+        if (s != null) {
+            warnedDpad = false;
+            refreshEnabled();
+        }
+    }
+
+    /* Switch (GEM "Touchpad as D-pad ON / OFF"): with this marker the MMI touchpad goes to the
+     * phone exactly as stock forwards it (raw touchpad input); read at every CarPlay start. */
+    public static final String OFF_MARKER = "/mnt/app/carplay_touchpad_dpad.off";
+    private static volatile boolean dpadEnabled = true;
+
+    /** False: the caller forwards touchpad fingers the stock way instead of calling us. */
+    public static boolean isDpadEnabled() { return dpadEnabled; }
+
+    private static void refreshEnabled() {
+        boolean on = true;
+        try { on = !new java.io.File(OFF_MARKER).exists(); }
+        catch (Throwable t) { /* keep the default */ }
+        if (on != dpadEnabled) Log.i(TAG, "touchpad as D-pad " + (on ? "ON" : "OFF (stock touchpad input)"));
+        dpadEnabled = on;
     }
 
     /* ============================================================

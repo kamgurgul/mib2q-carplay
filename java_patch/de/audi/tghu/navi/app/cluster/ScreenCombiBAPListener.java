@@ -17,6 +17,7 @@ import de.audi.tghu.navi.app.map.MapManager;
  * zooms the stock native map as usual; while the CarPlay cluster video (AltScreen,
  * plane 99) is on the VC the step is ALSO sent to the phone as CMD_ALT_ZOOM
  * (hook -> changeMapZoomLevel), and the hidden stock map keeps driving the scale bar.
+ * Android Auto has no zoom command for its cluster map, so there only stock zooms.
  */
 public final class ScreenCombiBAPListener extends CombiBAPListener {
     public ScreenCombiBAPListener(
@@ -59,7 +60,12 @@ public final class ScreenCombiBAPListener extends CombiBAPListener {
     public void setMapScale(int steps) {
         boolean connected = com.luka.carplay.core.ScreenModule.isConnected();
         boolean video = com.luka.carplay.core.ScreenModule.isAltScreenActive();
-        if (steps != 0 && connected && video) {
+        if (steps != 0 && connected && video
+                && com.luka.carplay.core.CarPlayApp.isAndroidAutoActive()) {
+            /* Android Auto has no zoom command for its cluster map: stock map/scale bar only. */
+            com.luka.carplay.framework.Log.i("AltZoom", "roller steps=" + steps
+                + " stock only (Android Auto cluster map has no zoom)");
+        } else if (steps != 0 && connected && video) {
             int clamped = steps > 127 ? 127 : (steps < -128 ? -128 : steps);
             boolean sent = com.luka.carplay.bus.CarplayBus.getInstance().sendBinary(
                 com.luka.carplay.bus.CarplayBus.CMD_ALT_ZOOM, new byte[]{(byte) clamped});

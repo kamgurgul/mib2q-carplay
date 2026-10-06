@@ -97,3 +97,35 @@ sh scripts/test_install_listing.sh
 
 printf '%-32s ' install_payload_test
 sh scripts/test_install_payload.sh
+
+printf '%-32s ' altscreen_view_test
+cc -std=c99 -O2 -Wall -Wextra -Werror -pedantic -Ialtscreen_render \
+    tests/altscreen_view_test.c altscreen_render/view.c -o "$OUT/altscreen_view"
+"$OUT/altscreen_view"
+
+printf '%-32s ' aa_navxlate_test
+cc -std=gnu99 -O1 -Wall -Wextra -Werror -Wno-unused-function \
+    tests/aa_navxlate_test.c -o "$OUT/aa_navxlate"
+"$OUT/aa_navxlate"
+
+printf '%-32s ' aa_uiconfig_test
+cc -std=gnu99 -O1 -Wall -Wextra -Werror -Wno-unused-function \
+    "-DAA_VIEW_PATH=\"$OUT/aa_view\"" "-DAA_FILE_INSETS=\"$OUT/aa_insets\"" "-DAA_FILE_DPI=\"$OUT/aa_dpi\"" \
+    tests/aa_uiconfig_test.c -ldl -o "$OUT/aa_uiconfig"
+"$OUT/aa_uiconfig"
+
+printf '%-32s ' aa_tee_test
+cc -std=gnu99 -O1 -Wall -Wextra -Werror -Iaa_hook \
+    tests/aa_tee_test.c aa_hook/aa_tee.c -lpthread -o "$OUT/aa_tee"
+"$OUT/aa_tee"
+
+printf '%-32s ' aa_tee_port
+# The gal hook's tee and altscreen_render's Android Auto source must agree.
+hook_port=$(sed -n 's/^#define AA_TEE_PORT_DEFAULT *\([0-9]*\).*/\1/p' aa_hook/aa_hook.h)
+render_port=$(sed -n 's/.*env_i("ALTR_AA_TEE_PORT", \([0-9]*\)).*/\1/p' altscreen_render/main.c | sort -u)
+[ -n "$hook_port" ] && [ "$hook_port" = "$render_port" ] \
+    || { echo "FAIL: hook tee port '$hook_port' vs renderer '$render_port'"; exit 1; }
+echo "Android Auto tee port $hook_port: hook and renderer agree"
+
+printf '%-32s ' aa_startup_test
+sh scripts/test_aa_startup.sh

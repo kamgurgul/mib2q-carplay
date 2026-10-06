@@ -2,7 +2,9 @@
 # The M.I.B. installer end to end in a sandbox: /mnt is redirected to a temp dir
 # and mount is a no-op. Checks the flat release layout (assets dropped straight into
 # mod/carplay/), the root/ tree layout, file modes, the SI child and dio_manager.json
-# edits with their .carplay-stock backups, and uninstall back to stock.
+# edits with their .carplay-stock backups, and uninstall back to stock. The flat
+# release also carries the optional Android Auto files (gal child replaced); the
+# tree release does not (gal child untouched).
 # Runs under every POSIX/ksh shell available here (QNX 6.5 /bin/sh is pdksh).
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -12,7 +14,15 @@ fail() { echo "FAIL ($1): $2"; exit 1; }
 mode() { stat -f %Lp "$1" 2>/dev/null || stat -c %a "$1"; }
 
 stock_si='{
+    "usb": {
+        "galUnsupportedProductIDs":[],
+        "carplayUnsupportedProductIDs":[]
+    },
     "children": {
+        "gal":{
+            "exec":"gal",
+            "path":"/mnt/app/eso/bin/apps"
+        },
         "carplay": {
             "exec": "dio_manager",
             "path": "/mnt/app/eso/bin/apps"
@@ -45,6 +55,10 @@ for sh in /bin/ksh /bin/mksh /bin/dash /bin/sh; do
         printf '%s\n' "$stock_si" > "$S/mnt/system/etc/eso/production/smartphone_integrator.json"
         printf '%s\n' "$stock_dio" > "$S/mnt/system/etc/eso/production/dio_manager.json"
         cp "$ROOT/deploy/smartphone_integrator/carplay_child.json" "$S/mod/carplay/"
+        if [ "$layout" = flat ]; then   # optional Android Auto files
+            cp "$ROOT/deploy/smartphone_integrator/aa_child.json" "$S/mod/carplay/"
+            for a in aa_startup.sh libaa_cluster_hook.so; do echo "$a" > "$S/mod/carplay/$a"; done
+        fi
         for a in $ASSETS; do
             case $a in carplay_hook.jar) d=mnt/app/eso/hmi/lsd/jars ;; *) d=mnt/app/root/hooks ;; esac
             if [ "$layout" = flat ]; then echo "$a" > "$S/mod/carplay/$a"
@@ -66,6 +80,16 @@ for sh in /bin/ksh /bin/mksh /bin/dash /bin/sh; do
         P=$S/mnt/system/etc/eso/production
         grep -q carplay_startup.sh "$P/smartphone_integrator.json" || fail "$sh $layout" "SI child not replaced"
         grep -q '"exec": "o"' "$P/smartphone_integrator.json" || fail "$sh $layout" "other SI child lost"
+        grep -q '"galUnsupportedProductIDs":\[\]' "$P/smartphone_integrator.json" || fail "$sh $layout" "gal USB list lost"
+        if [ "$layout" = flat ]; then
+            grep -q '"exec": "aa_startup.sh"' "$P/smartphone_integrator.json" || fail "$sh $layout" "gal child not replaced"
+            grep -q '"exec":"gal"' "$P/smartphone_integrator.json" && fail "$sh $layout" "stock gal child left"
+            for a in aa_startup.sh libaa_cluster_hook.so; do
+                [ "$(cat "$H/$a")" = "$a" ] && [ "$(mode "$H/$a")" = 755 ] || fail "$sh $layout" "$a not installed"
+            done
+        else
+            grep -q '"exec":"gal"' "$P/smartphone_integrator.json" || fail "$sh $layout" "gal child changed without AA files"
+        fi
         [ "$(grep -o '"0x520[0-4]"' "$P/dio_manager.json" | wc -l | tr -d ' ')" = 5 ] || fail "$sh $layout" "dio IDs"
         [ -e "$P/smartphone_integrator.json.carplay-stock" ] && [ -e "$P/dio_manager.json.carplay-stock" ] \
             || fail "$sh $layout" "stock backups missing"
@@ -75,7 +99,7 @@ for sh in /bin/ksh /bin/mksh /bin/dash /bin/sh; do
         grep -q '"exec": "dio_manager"' "$P/smartphone_integrator.json.carplay-stock" || fail "$sh $layout" "backup overwritten"
 
         run "$sh" "$layout" uninstall
-        for a in $ASSETS; do
+        for a in $ASSETS aa_startup.sh libaa_cluster_hook.so; do
             [ ! -e "$H/$a" ] && [ ! -e "$S/mnt/app/eso/hmi/lsd/jars/$a" ] || fail "$sh $layout" "$a not removed"
         done
         [ "$(cat "$P/smartphone_integrator.json")" = "$stock_si" ] || fail "$sh $layout" "SI json not restored"
@@ -83,4 +107,4 @@ for sh in /bin/ksh /bin/mksh /bin/dash /bin/sh; do
     done
     shells="${shells:-} $sh"
 done
-echo "M.I.B. installer flat + tree install/uninstall, NavActiveIgnore removal:$shells PASS"
+echo "M.I.B. installer flat + tree install/uninstall, Android Auto gal child, NavActiveIgnore removal:$shells PASS"
