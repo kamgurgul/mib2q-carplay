@@ -1,0 +1,126 @@
+name: Bug report
+description: Something does not work on the car (CarPlay, Android Auto, cluster map, arrow, HUD, ...)
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Please attach logs**: without them most issues cannot be diagnosed.
+
+        ## How to collect logs
+
+        Logs live in `/tmp` on the unit and are **lost on reboot**, so do not restart the head unit
+        between the steps below.
+
+        You can save logs in either of two ways:
+        - **Green Engineering Menu** -> **CarPlay-RGI** -> **Save logs to SD (+ verbose on)**, or
+        - copy `mods/logging_MoreIncredibleBash/` to the SD card and run it from M.I.B. like the installer.
+
+        Each run writes a new numbered folder `carplay_logs/NNN/` on the SD card.
+
+        1. Insert the SD card. **Start with the phone disconnected.**
+        2. **Save logs** (first dump). This also switches verbose logging on.
+        3. **Connect the phone** and **reproduce the issue**. Note the approximate time and what you did.
+        4. **Save logs** again (second dump, now with verbose logs of your session).
+        5. On a computer, **zip the whole `carplay_logs` folder** from the SD card (all `NNN` folders,
+           plus `aa/` and `hwdec*/` if present) and attach the zip to this issue.
+
+        If the zip is larger than GitHub allows (25 MB), upload it somewhere else
+        (Google Drive, Dropbox, ...) and paste the link below.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: What went wrong and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Connect the iPhone with a USB cable
+        2. Start navigation in Apple Maps
+        3. The cluster map stays black
+    validations:
+      required: true
+
+  - type: dropdown
+    id: projection
+    attributes:
+      label: Phone projection
+      options:
+        - CarPlay (wired)
+        - CarPlay (wireless dongle)
+        - Android Auto (wired)
+        - Android Auto (wireless dongle)
+    validations:
+      required: true
+
+  - type: input
+    id: phone
+    attributes:
+      label: Phone and OS version
+      placeholder: iPhone 15, iOS 26.0 / Pixel 8, Android 16
+    validations:
+      required: true
+
+  - type: input
+    id: nav_app
+    attributes:
+      label: Navigation app (if relevant)
+      placeholder: Apple Maps / Google Maps / Waze
+
+  - type: input
+    id: car
+    attributes:
+      label: Car and model year
+      placeholder: Audi A5 (F5) 2019
+    validations:
+      required: true
+
+  - type: input
+    id: firmware
+    attributes:
+      label: Head unit firmware
+      description: Train / version shown in the Green Engineering Menu or M.I.B.
+      placeholder: MU1329 (MHI2Q_ER_AUG22_P5152)
+    validations:
+      required: true
+
+  - type: input
+    id: release
+    attributes:
+      label: mib2q-carplay release
+      placeholder: "1.1"
+    validations:
+      required: true
+
+  - type: textarea
+    id: settings
+    attributes:
+      label: Non-default CarPlay-RGI settings
+      description: Anything you switched in the menu (cluster video, HW decoder, AA cluster map, touchpad, SafeArea, ...).
+      placeholder: none
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Drag the `carplay_logs` zip here, or paste a download link.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I started with the phone disconnected and saved logs once (verbose on).
+          required: true
+        - label: I connected the phone, reproduced the issue and saved logs a second time, without rebooting in between.
+          required: true
+        - label: I attached the whole `carplay_logs` folder as a zip (or a link to it).
+          required: true

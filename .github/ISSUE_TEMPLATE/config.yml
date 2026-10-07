@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Logs and diagnostics
+    url: https://github.com/kamgurgul/mib2q-carplay#logs-and-diagnostics
+    about: Where the logs are and how verbose logging works.
