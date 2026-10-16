@@ -37,12 +37,17 @@ public final class SteeringWheelInputModule implements Module {
     private static final int KEY_MFW_ROLLER_LEFT = 40;
     private static final int KST_RELEASED = 0;
     private static final int KST_PRESSED = 1;
+    /* The keypanel reports a held key itself: PRESSED(1), LONGPRESSED(3), LONGPRESSED2(4),
+     * LONGPRESSED3(5), RELEASED(0).  Stock KbdListener turns 3 into KEY_LONG_PRESSED. */
+    private static final int KST_LONGPRESSED = 3;
     private static final int ATTR_VALID = 1;
     private static final long COLLAPSED_SELECT_WINDOW_MS = 600L;
 
     private static final Object SELECT_LOCK = new Object();
     private static long pendingPressUntil;
     private static long pendingReleaseUntil;
+    /* Raw wheel key 40 is held: its stock LONG_PRESSED/repeat DDS_SELECT copies are ours too. */
+    private static boolean wheelHeld;
 
     private final RawKeyListener listener = new RawKeyListener();
     private FrameworkRef.ServiceHandle keyPanelHandle;
@@ -52,6 +57,11 @@ public final class SteeringWheelInputModule implements Module {
     private volatile IMMICombiScreenChangeManager combiManager;
     private ServiceRegistration listenerRegistration;
     private volatile boolean running;
+    /* Current key-40 press: map tab at PRESSED, and whether LONGPRESSED came before RELEASED.
+     * Guarded by pressLock, never the module monitor: start()/stop() hold that across DSI IPC. */
+    private final Object pressLock = new Object();
+    private boolean pressMapTab;
+    private boolean pressLong;
 
     public String name() { return "mfw-input"; }
 
@@ -76,9 +86,8 @@ public final class SteeringWheelInputModule implements Module {
         /* IMMICombiScreenChangeManager is OPTIONAL.  It belongs to the "MMI inside the cluster"
          * variant and is never registered on this A5-class unit, so requiring it left the module
          * permanently in the retry loop ("modules still pending after 10 s") and the MFW OK key
-         * was never hooked at all - in either view.  When it is absent the map-tab gate falls
-         * back to our own authoritative state, which onSteeringWheelOkPressed() re-checks anyway
-         * (CarPlay owns the cluster AND RGI is active). */
+         * was never hooked at all - in either view.  When it is absent the map-tab gate uses the
+         * VC's own main-map visibility (see isConfirmedMapTab()). */
         FrameworkRef.ServiceHandle combiHandle =
             fw.getServiceHandle(IMMICombiScreenChangeManager.class);
         if (combiHandle != null && !(combiHandle.service() instanceof IMMICombiScreenChangeManager)) {
@@ -160,15 +169,16 @@ public final class SteeringWheelInputModule implements Module {
                 pendingReleaseUntil = 0L;
                 return consume;
             }
-            return false;
+            /* LONG_PRESSED / repeat copies of a held wheel key 40 must not reach iOS either. */
+            return wheelHeld;
         }
     }
 
     private static void armCollapsedSelect(int rawState) {
         long until = System.currentTimeMillis() + COLLAPSED_SELECT_WINDOW_MS;
         synchronized (SELECT_LOCK) {
-            if (rawState == KST_PRESSED) pendingPressUntil = until;
-            else if (rawState == KST_RELEASED) pendingReleaseUntil = until;
+            if (rawState == KST_PRESSED) { pendingPressUntil = until; wheelHeld = true; }
+            else if (rawState == KST_RELEASED) { pendingReleaseUntil = until; wheelHeld = false; }
         }
     }
 
@@ -184,15 +194,21 @@ public final class SteeringWheelInputModule implements Module {
         synchronized (SELECT_LOCK) {
             pendingPressUntil = 0L;
             pendingReleaseUntil = 0L;
+            wheelHeld = false;
         }
     }
 
     private boolean isConfirmedMapTab() {
         if (!running) return false;
         IMMICombiScreenChangeManager manager = combiManager;
-        /* No combi manager on this variant: CarPlay owning the cluster with RGI up IS the
-         * "map tab" here, and that is exactly what the handler below verifies. */
-        if (manager == null) return ScreenModule.isConnected() && ScreenModule.isRouteGuidanceShown();
+        /* No combi manager on this variant: the VC's own main-map visibility (BAP
+         * MapViewAndOrientation) tells the map tab from the others.  Until the VC has reported
+         * it, CarPlay owning the cluster with RGI up stands in for the map tab. */
+        if (manager == null) {
+            int vcMap = ScreenModule.vcMainMapState();
+            if (vcMap >= 0) return ScreenModule.isConnected() && vcMap == 1;
+            return ScreenModule.isConnected() && ScreenModule.isRouteGuidanceShown();
+        }
         try {
             MMICombiDisplayStatus status = manager.getLastConfirmedDisplayStatus();
             return status != null
@@ -213,16 +229,38 @@ public final class SteeringWheelInputModule implements Module {
                 return;
             }
             if (keyCode != KEY_MFW_ROLLER_LEFT
-                    || (keyboardId != KBD_MFW && keyboardId != KBD_MFW_3GP)
-                    || (keyState != KST_PRESSED && keyState != KST_RELEASED)) return;
+                    || (keyboardId != KBD_MFW && keyboardId != KBD_MFW_3GP)) return;
+
+            if (keyState == KST_LONGPRESSED) {
+                synchronized (pressLock) {
+                    if (pressLong || !pressMapTab) return;
+                    pressLong = true;
+                }
+                Log.i(TAG, "MFW OK long press board=" + keyboardId);
+                ScreenModule.onSteeringWheelLongPress();
+                return;
+            }
+            if (keyState != KST_PRESSED && keyState != KST_RELEASED) return;
 
             armCollapsedSelect(keyState);
-            if (keyState != KST_PRESSED) return;
+            if (keyState == KST_PRESSED) {
+                boolean mapTab = isConfirmedMapTab();
+                Log.i(TAG, "MFW OK pressed board=" + keyboardId + " mapTab=" + mapTab);
+                synchronized (pressLock) {
+                    pressMapTab = mapTab;
+                    pressLong = false;
+                }
+                return;
+            }
 
-            boolean mapTab = isConfirmedMapTab();
-            Log.i(TAG, "MFW OK pressed board=" + keyboardId + " mapTab=" + mapTab);
-            if (!mapTab) return;
-            ScreenModule.onSteeringWheelOkPressed();
+            /* Short press acts on RELEASED, so a long press never toggles the route-info line. */
+            boolean shortPress;
+            synchronized (pressLock) {
+                shortPress = pressMapTab && !pressLong;
+                pressMapTab = false;
+                pressLong = false;
+            }
+            if (shortPress) ScreenModule.onSteeringWheelOkPressed();
         }
 
         public void asyncException(int errorCode, String errorString, int requestType) { }
