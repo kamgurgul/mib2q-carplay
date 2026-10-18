@@ -106,6 +106,10 @@
 #define PHONE_PORT 7100          /* preferred phone-facing listener port */
 #define HU_PORT_DEFAULT 7100     /* head-unit altscreen hook default (MHI2Q) */
 #define HU_MAIN_PEER_PORT 6030   /* dongle's stream-110 data socket peer port */
+#define HU_CONTROL_PEER_PORT 5000 /* dongle's AirPlay control socket peer port */
+#define HU_CONNECT_MS 1000       /* runs on the phone read path: keep it short */
+#define HU_RETRY_S 5             /* pre-connect retry interval */
+#define HU_MAX_TRIES 12          /* per head-unit key generation (~1 min) */
 #define SPSSI_SIZE 0x2b8         /* SetupProxyScreenSecurityInfo span, v129 */
 
 #define HDR_SIZE 128
@@ -272,6 +276,10 @@ static void bind_all(void) {
     k_features = s_cf("enabledFeatures");
     g_ok = k_type && k_conn && k_streams && k_displays && k_features;
     if (!g_ok) dlog("CF key alloc failed");
+    /* step-1 readiness signal for step 3: both must be non-zero, otherwise the
+     * head-unit key capture and the 111 injection are silently inactive */
+    dlog("bind ok=%d step=%d spssi=%p cpaa_base=%p", g_ok, CLUSTER_STEP,
+         (void *)g_spssi_lo, g_cpaa_base);
 }
 
 static int ready(void) {
@@ -488,6 +496,30 @@ OSStatus AirPlayReceiverSessionSetSecurityInfo(void *session, const uint8_t *key
     return e;
 }
 
+/* Which cipher does stock pick for the phone's 110 screen? (log-only; answers
+ * U2 in step 1). A wireless session with pair-verify can use ChaCha for the
+ * screen even when an AES master was set, and then the step-2 AES derivation
+ * for 111 would be wrong. Signatures from libAirPlay v129:
+ *   Screen_SetSecurityInfo(screen, key[16], iv[16])        0x1b3a0 -> AES_CTR_Init
+ *   Screen_SetChaChaSecurityInfo(screen, key, keyLen==32)  0x1b318 */
+static OSStatus (*r_scr_aes)(void *, const uint8_t *, const uint8_t *);
+static OSStatus (*r_scr_chacha)(void *, const uint8_t *, size_t);
+
+OSStatus AirPlayReceiverSessionScreen_SetSecurityInfo(void *screen, const uint8_t *key, const uint8_t *iv) {
+    if (!r_scr_aes) *(void **)&r_scr_aes = next_sym("AirPlayReceiverSessionScreen_SetSecurityInfo");
+    if (!r_scr_aes) return -1;
+    if (!disabled()) dlog("phone screen security: AES-CTR screen=%p", screen);
+    return r_scr_aes(screen, key, iv);
+}
+
+OSStatus AirPlayReceiverSessionScreen_SetChaChaSecurityInfo(void *screen, const uint8_t *key, size_t len) {
+    if (!r_scr_chacha) *(void **)&r_scr_chacha = next_sym("AirPlayReceiverSessionScreen_SetChaChaSecurityInfo");
+    if (!r_scr_chacha) return -1;
+    if (!disabled()) dlog("phone screen security: ChaCha20-Poly1305 keylen=%u screen=%p (step 2 AES path will not decrypt 111)",
+                          (unsigned)len, screen);
+    return r_scr_chacha(screen, key, len);
+}
+
 /* Head-unit 111 key: AES_CTR_Init called from SetupProxyScreenSecurityInfo.
  * The clone keeps 110's streamConnectionID, so 110's key == 111's key. */
 OSStatus AES_CTR_Init(void *ctx, const uint8_t *key, const uint8_t *iv) {
@@ -520,8 +552,13 @@ void CFArrayEnsureCreatedAndAppend(void **ioArray, const void *value) {
     if (t_busy || !ioArray || !*ioArray || !value) return;
     if (!caller_is_cpaa(ra)) return;
     if (!is_type((CFRef)value, cf_dict_type)) return;
-    if (dict_type((CFRef)value) != TYPE_MAIN) return;      /* only clone the main stream */
     if (!cf_dict_get((CFRef)value, k_conn)) return;        /* must be a stream dict */
+    {   /* clone the main stream only. The proven cluster_inject.c matched on
+         * streamConnectionID alone, so also accept a dict whose "type" is not
+         * set yet at append time; reject any other explicit type. */
+        int t = dict_type((CFRef)value);
+        if (t != TYPE_MAIN && t != -1) return;
+    }
     t_busy = 1;
     clone = cf_dict_copy(0, 0, (CFRef)value);
     if (clone) {
@@ -583,19 +620,25 @@ static int hu_port(void) {
     return (p > 0 && p < 65536) ? p : HU_PORT_DEFAULT;
 }
 
-/* Find the head-unit address = peer of the dongle's stream-110 data socket. */
+/* Find the head-unit address: the peer of the dongle's stream-110 data socket
+ * (HU port 6030), else the peer of its AirPlay control socket (HU port 5000,
+ * "Host:fe80::…%usb0:5000" in app.log). Both are outbound IPv6 link-local. */
 static int hu_addr(struct sockaddr_in6 *out) {
-    int fd, found = 0;
-    for (fd = 3; fd < 1024 && !found; fd++) {
-        struct sockaddr_in6 sa;
-        socklen_t sl = sizeof sa;
-        if (getpeername(fd, (struct sockaddr *)&sa, &sl) != 0) continue;
-        if (sa.sin6_family != AF_INET6) continue;
-        if (ntohs(sa.sin6_port) != HU_MAIN_PEER_PORT) continue;
-        *out = sa;                      /* keeps the %usb0 scope id */
-        found = 1;
+    static const int ports[] = { HU_MAIN_PEER_PORT, HU_CONTROL_PEER_PORT };
+    unsigned i;
+    int fd;
+    for (i = 0; i < sizeof ports / sizeof ports[0]; i++) {
+        for (fd = 3; fd < 1024; fd++) {
+            struct sockaddr_in6 sa;
+            socklen_t sl = sizeof sa;
+            if (getpeername(fd, (struct sockaddr *)&sa, &sl) != 0) continue;
+            if (sa.sin6_family != AF_INET6) continue;
+            if (ntohs(sa.sin6_port) != ports[i]) continue;
+            *out = sa;                  /* keeps the %usb0 scope id */
+            return 1;
+        }
     }
-    return found;
+    return 0;
 }
 
 static int hu_connect(void) {
@@ -603,7 +646,7 @@ static int hu_connect(void) {
     int fd, one = 1;
     long fl;
     struct pollfd pf;
-    if (!hu_addr(&sa)) { dlog("head-unit addr not found (no peer :6030)"); return -1; }
+    if (!hu_addr(&sa)) { dlog("head-unit addr not found (no peer :6030/:5000)"); return -1; }
     sa.sin6_port = htons((uint16_t)hu_port());
     fd = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
     if (fd < 0) return -1;
@@ -614,7 +657,7 @@ static int hu_connect(void) {
         close(fd); return -1;
     }
     pf.fd = fd; pf.events = POLLOUT; pf.revents = 0;
-    if (poll(&pf, 1, 3000) <= 0) { close(fd); dlog("head-unit connect timeout"); return -1; }
+    if (poll(&pf, 1, HU_CONNECT_MS) <= 0) { close(fd); dlog("head-unit connect timeout"); return -1; }
     {
         int err = 0; socklen_t el = sizeof err;
         getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &el);
@@ -755,24 +798,161 @@ static void dump_au(int *dfd, size_t *dn, const uint8_t *p, size_t n) {
     }
 }
 
+/* ---- head-unit relay (shared) -------------------------------------------
+ * The head-unit hook accepts ONE stream-111 connection per head-unit SETUP and
+ * closes its listener when that connection ends. The relay socket therefore
+ * belongs to the process, not to a receiver thread: it survives an iPhone 111
+ * reconnect (new receiver thread) and is dropped only on a send failure or when
+ * a new head-unit SETUP re-keys it (g_hu_gen). Only the current receiver
+ * (rx_gen == g_rx_gen) may write; g_relay_lock serializes. */
+static pthread_mutex_t g_relay_lock = PTHREAD_MUTEX_INITIALIZER;
+static struct {
+    int fd;              /* -1 = no socket */
+    int enc;             /* ctx valid (else plain, cluster_dual.plainhu) */
+    AesCtx ctx;          /* head-unit AES-CTR, continuous for the socket's life */
+    unsigned for_gen;    /* g_hu_gen the socket / tries belong to */
+    int dead;            /* gave up for for_gen; revived by the next g_hu_gen */
+    int tries;           /* connect attempts for for_gen */
+    time_t next_try;
+    int nokey_logged;
+    unsigned long relayed, err;
+} g_relay = { .fd = -1 };
+
+static void relay_drop_locked(int dead) {
+    if (g_relay.fd >= 0) close(g_relay.fd);
+    g_relay.fd = -1;
+    if (g_relay.enc) { r_ctr_final(&g_relay.ctx); g_relay.enc = 0; }
+    g_relay.dead = dead;
+}
+
+static int relay_current(unsigned rx_gen) {
+    int cur;
+    pthread_mutex_lock(&g_lock);
+    cur = (rx_gen == g_rx_gen);
+    pthread_mutex_unlock(&g_lock);
+    return cur;
+}
+
+/* Forward a (plain) VIDEO_CONFIG to an open head-unit socket. Marks this
+ * receiver as attached (so relay_frame does not replay it again) and returns 1
+ * when the caller should request a key frame (first config on a reused socket). */
+static int relay_config(unsigned rx_gen, int *thread_attached, const ScreenHeader *h, const uint8_t *body) {
+    int want_kf = 0;
+    if (!relay_current(rx_gen)) return 0;
+    pthread_mutex_lock(&g_relay_lock);
+    if (g_relay.fd >= 0) {
+        if (send_full(g_relay.fd, h, sizeof *h) != 0 || send_full(g_relay.fd, body, h->bodySize) != 0) {
+            g_relay.err++;
+            relay_drop_locked(1);
+            dlog("head-unit config forward failed; relay waits for the next head-unit SETUP");
+        } else if (!*thread_attached) {
+            *thread_attached = 1;
+            want_kf = 1;
+        }
+    }
+    pthread_mutex_unlock(&g_relay_lock);
+    return want_kf;
+}
+
+/* Relay one decrypted VIDEO_FRAME (body is re-encrypted in place).
+ * Returns 1 when the caller should request a key frame from the iPhone. */
+static int relay_frame(unsigned rx_gen, int *thread_attached, ScreenHeader *h, uint8_t *body,
+                       const ScreenHeader *cfg_hdr, const uint8_t *cfg, uint32_t cfg_len) {
+    uint8_t key[16], iv[16];
+    unsigned cur;
+    int have, want_kf = 0;
+    if (!relay_current(rx_gen)) return 0;
+    pthread_mutex_lock(&g_lock);
+    cur = g_hu_gen;
+    have = g_hu_key_valid;
+    if (have) { memcpy(key, g_hu_key, 16); memcpy(iv, g_hu_iv, 16); }
+    pthread_mutex_unlock(&g_lock);
+
+    pthread_mutex_lock(&g_relay_lock);
+    if (cur != g_relay.for_gen) {           /* new head-unit SETUP: fresh key, fresh tries */
+        if (g_relay.fd >= 0) dlog("head-unit re-keyed (hu_gen %u->%u); reconnecting", g_relay.for_gen, cur);
+        relay_drop_locked(0);
+        g_relay.for_gen = cur;
+        g_relay.tries = 0;
+        g_relay.next_try = 0;
+    }
+    if (!have && !g_relay.nokey_logged) {
+        g_relay.nokey_logged = 1;
+        dlog("relay: no head-unit screen key captured yet (111 not injected, or SPSSI caller check missed)");
+    }
+    if (g_relay.fd < 0 && have && !g_relay.dead) {
+        time_t now = time(0);
+        if (now >= g_relay.next_try) {
+            g_relay.next_try = now + HU_RETRY_S;
+            g_relay.tries++;
+            g_relay.fd = hu_connect();
+            if (g_relay.fd >= 0) {
+                g_relay.enc = (!flag(PLAINHU_FILE) && r_ctr_init(&g_relay.ctx, key, iv) == 0);
+                if (cfg && cfg_len &&               /* replay the real config header + body */
+                    (send_full(g_relay.fd, cfg_hdr, sizeof *cfg_hdr) != 0 ||
+                     send_full(g_relay.fd, cfg, cfg_len) != 0)) {
+                    g_relay.err++;
+                    relay_drop_locked(1);
+                    dlog("head-unit config replay failed; relay waits for the next head-unit SETUP");
+                } else {
+                    *thread_attached = 1;
+                    want_kf = 1;
+                }
+            } else if (g_relay.tries >= HU_MAX_TRIES) {
+                /* a failed connect does not consume the HU accept, so retry is
+                 * safe; but stop after ~1 min so a dead path stops costing frames */
+                g_relay.dead = 1;
+                dlog("head-unit connect gave up after %d tries for hu_gen=%u", g_relay.tries, cur);
+            }
+        }
+    }
+    memset(key, 0, sizeof key); memset(iv, 0, sizeof iv);
+    if (g_relay.fd >= 0) {
+        if (!*thread_attached) {                /* socket reused across an iPhone 111 reconnect */
+            *thread_attached = 1;
+            want_kf = 1;
+            if (cfg && cfg_len &&
+                (send_full(g_relay.fd, cfg_hdr, sizeof *cfg_hdr) != 0 ||
+                 send_full(g_relay.fd, cfg, cfg_len) != 0)) {
+                g_relay.err++;
+                relay_drop_locked(1);
+                dlog("head-unit config replay failed; relay waits for the next head-unit SETUP");
+            }
+        }
+    }
+    if (g_relay.fd >= 0) {
+        if (g_relay.enc) r_ctr_update(&g_relay.ctx, body, h->bodySize, body);   /* re-encrypt in place */
+        if (send_full(g_relay.fd, h, sizeof *h) != 0 || send_full(g_relay.fd, body, h->bodySize) != 0) {
+            g_relay.err++;
+            relay_drop_locked(1);
+            dlog("head-unit send failed; relay waits for the next head-unit SETUP (err=%lu)", g_relay.err);
+        } else {
+            g_relay.relayed++;
+        }
+    }
+    pthread_mutex_unlock(&g_relay_lock);
+    return want_kf;
+}
+
+static void relay_stats(unsigned long *relayed, unsigned long *err) {
+    pthread_mutex_lock(&g_relay_lock);
+    *relayed = g_relay.relayed;
+    *err = g_relay.err;
+    pthread_mutex_unlock(&g_relay_lock);
+}
+
 static void *rx_thread(void *varg) {
     struct rx_arg a = *(struct rx_arg *)varg;
     free(varg);
-    int listen_fd = a.listen_fd, c = -1, hu = -1, dfd = -1;
+    int listen_fd = a.listen_fd, c = -1, dfd = -1;
     size_t dn = 0;
-    AesCtx phone_ctx, hu_ctx;
-    int phone_valid = 0, hu_valid = 0;
+    AesCtx phone_ctx;
+    int phone_valid = 0, attached = 0;      /* attached: this thread fed the shared relay */
     int nal_len = 4, cfg_w = 0, cfg_h = 0;
     unsigned long frames = 0, idr = 0, bad = 0, relayed = 0, send_err = 0;
     uint8_t key[16], iv[16];
     /* full cached VIDEO_CONFIG (header + body), replaced on every config */
     ScreenHeader cfg_hdr; uint8_t *cfg = 0; uint32_t cfg_len = 0;
-    /* relay socket lifecycle: tracks the head-unit key generation it was keyed
-     * for; after a failure it stays dead until g_hu_gen advances (the HU hook
-     * accepts one connection per SETUP). next_try throttles pre-connect tries. */
-    unsigned hu_for_gen = 0;
-    int hu_dead = 0;
-    time_t next_try = 0;
     memset(&cfg_hdr, 0, sizeof cfg_hdr);
 
     /* derive the phone-side per-stream key */
@@ -825,11 +1005,9 @@ static void *rx_thread(void *varg) {
                     dlog("111 video config body=%u sps=%dx%d nal_len=%d", h.bodySize, cfg_w, cfg_h, nal_len);
                 }
                 /* forward a config update to an already-open head-unit socket (plain) */
-                if (hu >= 0 && (send_full(hu, &h, sizeof h) != 0 || send_full(hu, body, h.bodySize) != 0)) {
-                    send_err++; close(hu); hu = -1; hu_dead = 1;
-                    if (hu_valid) { r_ctr_final(&hu_ctx); hu_valid = 0; }
-                    dlog("head-unit config forward failed; relay stops until next HU SETUP");
-                }
+                if (STEP_RELAY && phone_valid && !disabled() && !flag(NORELAY_FILE) &&
+                    relay_config(a.gen, &attached, &h, body))
+                    ask_keyframe(a.session);
             }
         } else if (h.opcode == OP_VIDEO_FRAME) {
             if (body && h.bodySize) {
@@ -842,61 +1020,16 @@ static void *rx_thread(void *varg) {
                 if (!ok) bad++;
                 if (has_idr) idr++;
                 dump_au(&dfd, &dn, body, h.bodySize);
-                if (frames == 1 || frames % 300 == 0)
+                if (frames == 1 || frames % 300 == 0) {
+                    relay_stats(&relayed, &send_err);
                     dlog("111 frames=%lu idr=%lu bad=%lu nal_ok=%d relayed=%lu send_err=%lu",
                          frames, idr, bad, ok, relayed, send_err);
+                }
 
                 /* relay only makes sense once we have real H.264 (phone key valid) */
-                if (STEP_RELAY && phone_valid && !disabled() && !flag(NORELAY_FILE)) {
-                    unsigned cur_gen;
-                    int have;
-                    pthread_mutex_lock(&g_lock);
-                    cur_gen = g_hu_gen;
-                    have = g_hu_key_valid;
-                    if (have) { memcpy(key, g_hu_key, 16); memcpy(iv, g_hu_iv, 16); }
-                    pthread_mutex_unlock(&g_lock);
-
-                    /* a new head-unit SETUP (key gen advanced) revives the relay */
-                    if (hu_dead && cur_gen != hu_for_gen) hu_dead = 0;
-                    /* key gen advanced while connected: reconnect with the new key */
-                    if (hu >= 0 && cur_gen != hu_for_gen) {
-                        close(hu); hu = -1;
-                        if (hu_valid) { r_ctr_final(&hu_ctx); hu_valid = 0; }
-                        dlog("head-unit key changed (gen %u->%u); reconnecting", hu_for_gen, cur_gen);
-                    }
-
-                    if (hu < 0 && have && !hu_dead) {
-                        time_t now = time(0);
-                        if (now >= next_try) {
-                            next_try = now + 5;            /* throttle pre-connect attempts */
-                            hu = hu_connect();
-                            hu_for_gen = cur_gen;
-                            if (hu >= 0) {
-                                hu_valid = 0;
-                                if (!flag(PLAINHU_FILE) && r_ctr_init(&hu_ctx, key, iv) == 0) hu_valid = 1;
-                                if (cfg && cfg_len)       /* replay the real config header + body */
-                                    if (send_full(hu, &cfg_hdr, sizeof cfg_hdr) != 0 ||
-                                        send_full(hu, cfg, cfg_len) != 0) {
-                                        close(hu); hu = -1; hu_dead = 1;
-                                        if (hu_valid) { r_ctr_final(&hu_ctx); hu_valid = 0; }
-                                    }
-                                if (hu >= 0) ask_keyframe(a.session);
-                            } else {
-                                hu_dead = 1;              /* one accept per HU SETUP; wait for next gen */
-                            }
-                        }
-                    }
-                    if (hu >= 0) {
-                        if (hu_valid) r_ctr_update(&hu_ctx, body, h.bodySize, body);  /* re-encrypt in place */
-                        if (send_full(hu, &h, sizeof h) != 0 || send_full(hu, body, h.bodySize) != 0) {
-                            send_err++; close(hu); hu = -1; hu_dead = 1;
-                            if (hu_valid) { r_ctr_final(&hu_ctx); hu_valid = 0; }
-                            dlog("head-unit send failed; relay stops until next HU SETUP (send_err=%lu)", send_err);
-                        } else {
-                            relayed++;
-                        }
-                    }
-                }
+                if (STEP_RELAY && phone_valid && !disabled() && !flag(NORELAY_FILE) &&
+                    relay_frame(a.gen, &attached, &h, body, &cfg_hdr, cfg, cfg_len))
+                    ask_keyframe(a.session);           /* outside g_relay_lock */
             }
         }
         /* keepalive / forceKeyFrame / ignore: nothing */
@@ -904,16 +1037,15 @@ static void *rx_thread(void *varg) {
     }
 
 done:
+    relay_stats(&relayed, &send_err);
     dlog("111 receiver exit frames=%lu idr=%lu bad=%lu relayed=%lu send_err=%lu",
          frames, idr, bad, relayed, send_err);
-    memset(key, 0, sizeof key); memset(iv, 0, sizeof iv);
     if (listen_fd >= 0) close(listen_fd);   /* only set if we exited before accept */
     if (c >= 0) close(c);
-    if (hu >= 0) close(hu);
     if (dfd >= 0) close(dfd);
     free(cfg);
     if (phone_valid) r_ctr_final(&phone_ctx);
-    if (hu_valid) r_ctr_final(&hu_ctx);
+    /* the head-unit relay socket is shared and intentionally left open */
     if (a.session && cf_release) cf_release(a.session);   /* retained in start_receiver */
     return 0;
 }

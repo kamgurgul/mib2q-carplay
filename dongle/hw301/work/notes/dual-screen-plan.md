@@ -139,10 +139,69 @@ are kept below as the record of what each change addresses.
    - Rename the key-capture log to `head-unit screen key captured hu_gen=N`
      (it fires in every step, also in v1132, which is a useful step-1 signal).
 
-Known limitation, not a bug: the head-unit socket belongs to one receiver
-thread, so a phone 111 reconnect within the same head-unit session cannot
-relay again (the head-unit hook has closed its listener). Fix later (step D)
-by keeping the relay struct global, or by forcing a head-unit re-SETUP.
+### Second review pass (2026-10-18): applied
+
+Re-read of the first-pass fixes against the plan found these; all applied:
+
+- R1 (item 4 was wrong): a *failed connect* set the relay dead for the whole
+  head-unit session. A refused/timed-out connect never consumed the head-unit
+  hook's single accept, so it now retries every 5 s, up to 12 tries per
+  head-unit key generation (~1 min), then gives up until the next HU SETUP.
+  Only a lost *connected* socket waits for the next HU SETUP immediately.
+- R2: `hu_connect` waited up to 3 s on the phone read path (stalls iOS's 111
+  send). Now 1 s.
+- R3 (was "known limitation"): the head-unit socket is now one shared relay
+  (`g_relay` + `g_relay_lock`), not per receiver thread. An iPhone 111
+  reconnect reuses it (the head-unit hook accepts once per HU SETUP and would
+  not accept again); the new receiver replays its config once and requests a
+  key frame. Only the current receiver (`rx_gen == g_rx_gen`) writes.
+- R4: one-time log `relay: no head-unit screen key captured yet` so step 3
+  does not fail silently.
+- R5: head-unit address lookup falls back to the AirPlay control peer (:5000)
+  if no :6030 peer is found.
+- R6: log-only hooks on `Screen_SetSecurityInfo` (AES) and
+  `Screen_SetChaChaSecurityInfo` (screen, key, len==32; 0x1b318) report which
+  cipher stock uses for the phone's 110 screen, answering U2 in step 1.
+- R7: the 111 injection accepted only `type==110` at append time; the proven
+  cluster_inject.c matched on `streamConnectionID` alone. Now accepts 110 or
+  "type not set yet", rejects any other explicit type.
+- R8: `bind ok=… spssi=… cpaa_base=…` at bind time; both addresses must be
+  non-zero or step 3 key capture + injection are inactive.
+- Verified: the SETUP response stock returns is the `CFDictionaryCreateMutable`
+  dict from 0x16344, stored to `*outResponse` at 0x17590, so appending the 111
+  entry to it is safe.
+
+### Still open: needs evidence first (step-gated), then code
+
+1. **ChaCha on the phone screen (U2).** If step 1 logs
+   `phone screen security: ChaCha20-Poly1305` for 110, step 2's AES-CTR
+   decrypt of 111 is wrong (`nal_ok=0`). Then:
+   - RE the ChaCha branch of `AirPlayReceiverSessionSetup`'s screen case
+     (around 0x165b8: `session+0x3ec` test, call 0x12dcc) to get the 32-byte
+     key derivation (expected: pairing-session HKDF with a
+     `DataStream-Salt<cid>` salt and an output-key info string) and the
+     per-frame nonce/AAD layout used by `_AirPlayReceiverSessionScreen_ProcessFrame`.
+   - Capture the pairing session the same way (hook the derive call through
+     the PLT), derive for the 111 cid, decrypt with `chacha20_poly1305_*`
+     (exported by libCoreUtils).
+   - The head-unit side stays AES-CTR (the dongle↔HU log says
+     `use aes ctr security`), so only the phone side changes.
+2. **No 111 SETUP in step 1.** iOS does not treat the dongle as
+   cluster-capable. Try, one build each: root `features` bit 26 forced on (the
+   head-unit hook's A/B), `viewAreas` opt-in, and the URL variants the
+   head-unit hook uses (`ALT_URL_RGI_ON/OFF`). Do not continue to step 2.
+3. **Session drops right after a 111 SETUP in step 1.** Expected if iOS needs
+   the port: go straight to step 2.
+4. **Head-unit → phone cluster commands.** The head-unit hook sends
+   `showUI`/`stopUI`/`updateViewArea`/zoom to its sender, i.e. to CPAAProxyEx,
+   which does not know them; they are not forwarded to the iPhone. The cluster
+   still shows `initialURL`. If step 3 works but layout switching does not,
+   log the command dicts CPAAProxyEx receives and forward them with
+   `AirPlayReceiverSessionSendCommand` (step D).
+5. **`cluster_dump.on` needs a shell** to create and to fetch `c111.h264`; the
+   no-shell flow relies on `nal_ok`/`bad`/`sps=` in `dmesg.log` instead.
+6. **kmsg ring size.** `dmesg.log` is a ring snapshot. Pull logs soon after
+   the car test; the shim's periodic lines are every 300 frames (~10 s).
 
 Verified while reviewing (no change needed): `TearDown(session, request,
 reason, outDone)` takes the request dict in r1 and NULL-checks it (0x145c4);
