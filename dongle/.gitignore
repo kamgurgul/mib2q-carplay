@@ -1,0 +1,51 @@
+# ───────────────────────────────────────────────────────────────────────────
+# HW301 CarPlay dongle workspace — commit SOURCE and NOTES only.
+# Everything here is derived/regenerable or is vendor/owner binary data.
+#
+# Tracked (NOT ignored): work/src/*.c, work/tools/*, work/notes/*,
+#   work/ghidra/*.java + *.txt (scripts + decomp dumps), work/cmp/*.json,
+#   dongle_dump.py, fw_download.py, hw301/README.md.
+# ───────────────────────────────────────────────────────────────────────────
+
+# Python venv / caches
+**/.venv/
+**/__pycache__/
+*.pyc
+
+# Stock firmware: the original flashable OTA tars + the squashfs app.img the build
+# needs are committed for recovery/archival (negations near the end of this file).
+# The unpacked rootfs trees are large and derivable (unsquashfs app.img), so ignore.
+hw301/fw/v*/root/
+hw301/dongle_dump/
+
+# Generated: unsquashed build trees, extracted rootfs, packed OTA images, rollback
+hw301/work/build-v*/
+hw301/work/extract/
+hw301/work/out/
+hw301/work/rollback/
+hw301/work/third_party/
+
+# Device logs (owner's phone/car logs)
+hw301/work/logs/
+
+# Ghidra project DB + copied target binaries (keep the .java scripts + .txt decomp)
+hw301/work/ghidra/proj/
+
+# Scratch experiment dir (musl interposition test stubs; reproducible)
+hw301/work/exp/
+
+# Binary artifacts anywhere under the dongle tree
+*.img
+*.tar
+*.so
+*.o
+*.bin
+*.squashfs
+.DS_Store
+
+# …but DO keep the original stock firmware (flashable OTA + build input app.img).
+# Stock recovery: flash hw301_v129.tar. These override the *.img/*.tar rules above.
+!hw301/fw/hw301_v126.tar
+!hw301/fw/hw301_v129.tar
+!hw301/fw/v126/app.img
+!hw301/fw/v129/app.img

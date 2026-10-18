@@ -1,0 +1,509 @@
+    /g
+===== FUN_00038d00 @ 00038d00 ===== (GhidraScript)  
+/* WARNING: Removing unreachable block (ram,0x00039b98) */
+/* WARNING: Removing unreachable block (ram,0x00039984) */
+/* WARNING: Removing unreachable block (ram,0x000397cc) */
+/* WARNING: Removing unreachable block (ram,0x00039780) */
+/* WARNING: Removing unreachable block (ram,0x00039938) */
+/* WARNING: Removing unreachable block (ram,0x00039b44) */
+/* WARNING: Removing unreachable block (ram,0x00039bec) */
+/* WARNING: Restarted to delay deadcode elimination for space: stack */
+
+void FUN_00038d00(int param_1)
+
+{
+  int iVar1;
+  int iVar2;
+  int iVar3;
+  undefined4 uVar4;
+  undefined4 uVar5;
+  undefined4 uVar6;
+  int iVar7;
+  int iVar8;
+  int iVar9;
+  int iVar10;
+  int iVar11;
+  uint uVar12;
+  int iVar13;
+  int iVar14;
+  code *pcVar15;
+  uint uVar16;
+  int iVar17;
+  int iVar18;
+  int *piVar19;
+  int *piVar20;
+  uint uVar21;
+  bool bVar22;
+  undefined8 uVar23;
+  undefined8 uVar24;
+  longlong lVar25;
+  undefined8 uVar26;
+  undefined8 uVar27;
+  longlong lVar28;
+  uint local_16a0;
+  int iStack_169c;
+  int local_1688;
+  int local_1638;
+  undefined1 local_1630 [4];
+  undefined4 local_162c;
+  undefined1 auStack_1628 [128];
+  undefined1 auStack_15a8 [128];
+  undefined1 auStack_1528 [128];
+  undefined1 auStack_14a8 [128];
+  undefined1 auStack_1428 [128];
+  undefined1 auStack_13a8 [128];
+  char acStack_1328 [128];
+  char acStack_12a8 [128];
+  undefined1 auStack_1228 [128];
+  undefined1 auStack_11a8 [128];
+  undefined1 auStack_1128 [256];
+  uint local_1028 [1025];
+  memset(auStack_1628,0,0x80);
+  memset(auStack_15a8,0,0x80);
+  memset(auStack_1528,0,0x80);
+  memset(auStack_14a8,0,0x80);
+  memset(auStack_1428,0,0x80);
+  memset(auStack_13a8,0,0x80);
+  memset(auStack_1128,0,0x100);
+  iVar13 = DAT_00039cac;
+  MLOGD(DAT_00039cb4 + 0x38e10,DAT_00039cb0 + 0x38e0c,DAT_00039cac + 0x393d0,0x733,
+        *(undefined4 *)(param_1 + 0x8e8),*(undefined4 *)(param_1 + 0x4a0));
+  iVar1 = DAT_00039cbc;
+  iVar11 = DAT_00039cb8 + 0x38e24;
+  if ((*(int *)(param_1 + 0x8e8) != 0) || (*(int *)(param_1 + 0x4a0) == 0)) {
+    iVar13 = *(int *)(DAT_00039cbc + 0x38fa8);
+    *(int *)(DAT_00039cbc + 0x38fa8) = iVar13 + 1;
+    if (2 < iVar13) {
+      *(undefined4 *)(iVar1 + 0x38fa8) = 0;
+      TeardownProxyClient();
+      return;
+    }
+    usleep(1000000);
+    dispatch_async_f(**(undefined4 **)(iVar11 + DAT_00039cc0),0,DAT_00039cc4 + 0x38e90);
+    return;
+  }
+  iVar1 = CFBinaryPlistV0CreateWithData
+                    (*(undefined4 *)(param_1 + 0x49c),*(int *)(param_1 + 0x4a0),local_1630);
+  iVar18 = 0;
+  iVar2 = CFGetTypeID();
+  iVar3 = CFDictionaryGetTypeID();
+  if (iVar2 != iVar3) goto LAB_00039270;
+  uVar4 = CFArrayGetTypeID();
+  uVar4 = CFDictionaryGetTypedValue(iVar1,iVar13 + 0x393f8,uVar4,0);
+  iVar2 = CFArrayGetCount();
+  if (iVar2 < 1) {
+    piVar20 = *(int **)(iVar11 + DAT_00039cc8);
+  }
+  else {
+    piVar20 = *(int **)(iVar11 + DAT_00039cc8);
+    do {
+      while( true ) {
+        uVar5 = CFArrayGetValueAtIndex(uVar4,iVar18);
+        iVar3 = CFDictionaryGetInt64(uVar5,iVar13 + 0x39058,local_1028);
+        uVar6 = CFStringGetTypeID();
+        iVar7 = CFDictionaryGetTypedValue(uVar5,iVar13 + 0x39410,uVar6,local_1028);
+        uVar23 = CFDictionaryGetInt64(uVar5,iVar13 + 0x39424,local_1028);
+        uVar24 = CFDictionaryGetInt64(uVar5,iVar13 + 0x39440,local_1028);
+        if (iVar7 == 0) {
+          iVar14 = DAT_00039cd4 + 0x39034;
+        }
+        else {
+          iVar14 = CFStringGetCStringPtr(iVar7,0x8000100);
+        }
+        MLOGD(DAT_00039cd0 + 0x38f70,DAT_00039ccc + 0x38f64,iVar3,iVar14,uVar24,uVar23);
+        iVar7 = AudioTypeGetInt32Value(iVar7);
+        if (iVar3 == 100) break;
+        iVar18 = iVar18 + 1;
+        if (iVar3 == 0x65) {
+          *(undefined8 *)(piVar20 + iVar7 * 2 + 0x20) = uVar24;
+        }
+        if (iVar2 == iVar18) goto LAB_00039058;
+      }
+      iVar18 = iVar18 + 1;
+      *(undefined8 *)(piVar20 + iVar7 * 2 + 0x12) = uVar23;
+      *(undefined8 *)(piVar20 + iVar7 * 2 + 4) = uVar24;
+    } while (iVar2 != iVar18);
+  }
+LAB_00039058:
+  if (*piVar20 != 0) {
+    CFRelease();
+  }
+  iVar13 = CFArrayCreateCopy(0,uVar4);
+  *piVar20 = iVar13;
+  uVar4 = CFArrayGetTypeID();
+  uVar4 = CFDictionaryGetTypedValue(iVar1,DAT_00039cd8 + 0x396ec,uVar4,0);
+  if (piVar20[1] != 0) {
+    CFRelease();
+  }
+  iVar13 = CFArrayCreateCopy(0,uVar4);
+  piVar20[1] = iVar13;
+  iVar13 = CFArrayGetCount(uVar4);
+  if (0 < iVar13) {
+    iVar3 = 0;
+    iVar2 = DAT_00039cdc + 0x39338;
+    do {
+      uVar5 = CFArrayGetValueAtIndex(uVar4,iVar3);
+      iVar3 = iVar3 + 1;
+      iVar18 = CFDictionaryGetInt64(uVar5,iVar2,0);
+      if (iVar18 == 0x66) goto LAB_0003910c;
+    } while (iVar13 != iVar3);
+  }
+  AirPlayInfoArrayAddAudioLatency(piVar20 + 1,0x66,DAT_00039cf8 + 0x39c18,0,0,0,0,0);
+LAB_0003910c:
+  uVar4 = CFArrayGetTypeID();
+  uVar4 = CFDictionaryGetTypedValue(iVar1,DAT_00039ce0 + 0x39798,uVar4,0);
+  if (piVar20[2] != 0) {
+    CFRelease();
+  }
+  iVar13 = CFArrayCreateCopy(0,uVar4);
+  iVar2 = DAT_00039ce4 + 0x393ec;
+  piVar20[2] = iVar13;
+  CFDictionaryGetCString(iVar1,iVar2,auStack_1628,0x80,0);
+  if (piVar20[0x36] != 0) {
+    CFRelease();
+  }
+  iVar13 = CFStringCreateWithCString(0,auStack_1628,0x8000100);
+  piVar20[0x36] = iVar13;
+  uVar4 = CFArrayGetTypeID();
+  iVar13 = CFDictionaryGetTypedValue(iVar1,DAT_00039ce8 + 0x39844,uVar4,0);
+  if (iVar13 == 0) {
+    MLOGD(DAT_00039d9c + 0x39c88,DAT_00039d98 + 0x39c84,0);
+  }
+  else {
+    iVar3 = CFArrayGetCount();
+    MLOGD(DAT_00039cf0 + 0x391e8,DAT_00039cec + 0x391d8,iVar3);
+    iVar2 = DAT_00039cf4;
+    if (0 < iVar3) {
+      iVar7 = DAT_00039cf4 + 0x39460;
+      iVar18 = 0;
+      do {
+        uVar4 = CFDictionaryGetTypeID();
+        iVar14 = iVar18 + 1;
+        uVar4 = CFArrayGetTypedValueAtIndex(iVar13,iVar18,uVar4,local_1630);
+        uVar23 = CFDictionaryGetInt64(uVar4,iVar7,0);
+        if ((int)((ulonglong)uVar23 >> 0x20) == 0 && ((int)uVar23 == 0x6e || (int)uVar23 == 0)) {
+          piVar19 = piVar20 + 0x3c;
+          *(undefined1 *)piVar19 = 0;
+          CFDictionaryGetCString(uVar4,iVar2 + 0x3966c,piVar19,0x100,0);
+          uVar23 = CFDictionaryGetInt64(uVar4,iVar2 + 0x39544,0);
+          uVar24 = CFDictionaryGetInt64(uVar4,iVar2 + 0x398a8,0);
+          uVar21 = CFDictionaryGetInt64Ranged(uVar4,iVar2 + 0x398c4,0,0,0xffff,0,0);
+          iVar14 = iVar2 + 0x398d8;
+          iVar18 = DAT_00039da0 + 0x39e64;
+          piVar20[0x90] = uVar21 & 0xffff;
+          uVar21 = CFDictionaryGetInt64Ranged(uVar4,iVar14,0,0,0xffff,0,0);
+          piVar20[0x91] = uVar21 & 0xffff;
+          uVar21 = CFDictionaryGetInt64Ranged(uVar4,iVar2 + 0x398f0,0,0,0xffff,0,0);
+          uVar12 = piVar20[0x90];
+          uVar16 = piVar20[0x91];
+          piVar20[0x8d] = 0;
+          piVar20[0x8c] = 0;
+          piVar20[0x90] = uVar12 & 0xfffffffe;
+          piVar20[0x8e] = uVar12 & 0xfffffffe;
+          piVar20[0x91] = uVar16 & 0xfffffffe;
+          piVar20[0x8f] = uVar16 & 0xfffffffe;
+          piVar20[0x94] = uVar21 & 0xffff;
+          uVar21 = CFDictionaryGetInt64Ranged(uVar4,iVar2 + 0x39900,0,0,0xffff,0,0);
+          piVar20[0x92] = uVar21 & 0xffff;
+          uVar21 = CFDictionaryGetInt64Ranged(uVar4,iVar2 + 0x39918,0,0,0xffff,0,0);
+          iVar3 = DAT_00039da4 + 0x39f58;
+          uVar21 = uVar21 & 0xffff;
+          piVar20[0x93] = uVar21;
+          iVar8 = piVar20[0x92];
+          iVar17 = piVar20[0x94];
+          iVar9 = piVar20[0x91];
+          iVar10 = piVar20[0x90];
+          MLOGD(iVar18,iVar3,piVar19,iVar10,uVar23,uVar24,iVar10,iVar9,iVar17,iVar8,uVar21);
+          lVar25 = CFDictionaryGetInt64(uVar4,iVar2 + 0x39930,0);
+          iVar7 = (int)((ulonglong)lVar25 >> 0x20);
+          iVar3 = CFDictionaryGetValue(uVar4,iVar2 + 0x39948);
+          if (iVar3 == 0) {
+            MLOGD(iVar18,DAT_00039cfc + 0x392dc,0,iVar7,lVar25,uVar24,iVar10,iVar9,iVar17,iVar8,
+                  uVar21);
+          }
+          else {
+            uVar12 = CFArrayGetCount();
+            MLOGD(iVar18,DAT_00039da8 + 0x39fe4,uVar12,iVar7,lVar25,uVar24,iVar10,iVar9,iVar17,iVar8
+                  ,uVar21);
+            if ((0 < (int)uVar12) &&
+               (iVar18 = (int)uVar12 >> 0x1f, bVar22 = (uint)lVar25 < uVar12,
+               (int)(iVar7 - (iVar18 + (uint)bVar22)) < 0 !=
+               (SBORROW4(iVar7,iVar18) != SBORROW4(iVar7 - iVar18,(uint)bVar22)))) {
+              local_16a0 = 0;
+              iStack_169c = 0;
+              do {
+                uVar4 = CFArrayGetValueAtIndex(iVar3,local_16a0);
+                uVar23 = CFDictionaryGetInt64(uVar4,iVar2 + 0x398c4,0);
+                iVar18 = (int)uVar23;
+                uVar24 = CFDictionaryGetInt64(uVar4,iVar14,0);
+                iVar7 = (int)uVar24;
+                iVar10 = DAT_00039dac + 0x3a098;
+                uVar26 = CFDictionaryGetInt64(uVar4,iVar2 + 0x3995c,0);
+                iVar8 = (int)uVar26;
+                uVar27 = CFDictionaryGetInt64(uVar4,iVar2 + 0x39974,0);
+                iVar17 = (int)uVar27;
+                MLOGD(iVar10,DAT_00039db0 + 0x3a0fc,iVar8,(int)((ulonglong)uVar26 >> 0x20),uVar27,
+                      uVar23,uVar24);
+                iVar9 = CFDictionaryGetValue(uVar4,iVar2 + 0x3998c);
+                if (iVar9 != 0) {
+                  uVar23 = CFDictionaryGetInt64(iVar9,iVar2 + 0x398c4,0);
+                  iVar18 = (int)uVar23;
+                  uVar24 = CFDictionaryGetInt64(iVar9,iVar14,0);
+                  iVar7 = (int)uVar24;
+                  uVar26 = CFDictionaryGetInt64(iVar9,iVar2 + 0x3995c,0);
+                  iVar8 = (int)uVar26;
+                  uVar27 = CFDictionaryGetInt64(iVar9,iVar2 + 0x39974,0);
+                  iVar17 = (int)uVar27;
+                  lVar28 = CFDictionaryGetInt64(iVar9,iVar2 + 0x399a0,0);
+                  MLOGD(iVar10,DAT_00039db4 + 0x3a1cc,iVar8,(int)((ulonglong)uVar26 >> 0x20),uVar27,
+                        uVar23,uVar24,lVar28 != 0,0);
+                }
+                if (lVar25 == CONCAT44(iStack_169c,local_16a0)) {
+                  piVar20[0x8c] = iVar8;
+                  piVar20[0x8d] = iVar17;
+                  piVar20[0x8e] = iVar18;
+                  piVar20[0x8f] = iVar7;
+                }
+                bVar22 = 0xfffffffe < local_16a0;
+                local_16a0 = local_16a0 + 1;
+                iStack_169c = iStack_169c + (uint)bVar22;
+              } while ((int)local_16a0 < (int)uVar12);
+            }
+          }
+          break;
+        }
+        iVar18 = iVar14;
+      } while (iVar3 != iVar14);
+    }
+  }
+  if (piVar20[0x32] != 0) {
+    CFRelease();
+  }
+  iVar13 = CFArrayCreateCopy(0,iVar13);
+  piVar20[0x32] = iVar13;
+  uVar4 = CFArrayGetTypeID();
+  iVar13 = CFDictionaryGetTypedValue(iVar1,DAT_00039d00 + 0x39ad0,uVar4,0);
+  if (piVar20[0x2f] != 0) {
+    CFRelease();
+  }
+  iVar2 = 0;
+  piVar20[0x9a] = 0;
+  if (iVar13 != 0) {
+    iVar3 = CFArrayCreateCopy(0,iVar13);
+    piVar20[0x2f] = iVar3;
+    iVar3 = CFArrayGetCount(iVar13);
+    if (0 < iVar3) {
+      iVar18 = DAT_00039d08 + 0x39388;
+      iVar7 = DAT_00039d04 + 0x39b58;
+      do {
+        iVar8 = CFArrayGetValueAtIndex(iVar13,iVar2);
+        iVar14 = iVar18;
+        if (iVar8 != 0) {
+          iVar14 = CFStringGetCStringPtr(iVar8,0x8000100);
+        }
+        iVar2 = iVar2 + 1;
+        MLOGD(DAT_00039d10 + 0x393d8,DAT_00039d0c + 0x393d4,iVar14);
+        iVar14 = CFEqual(iVar8,iVar7);
+        if (iVar14 != 0) {
+          piVar20[0x9a] = 1;
+          break;
+        }
+      } while (iVar3 != iVar2);
+    }
+  }
+  iVar13 = DAT_00039d14;
+  CFDictionaryGetInt64(iVar1,DAT_00039d14 + 0x3974c,0);
+  uVar4 = CFArrayGetTypeID();
+  iVar13 = CFDictionaryGetTypedValue(iVar1,iVar13 + 0x39bf8,uVar4,0);
+  if (piVar20[0x33] != 0) {
+    CFRelease();
+  }
+  if (iVar13 == 0) {
+    piVar20[0x33] = 0;
+LAB_00039c90:
+    if (piVar20[0x34] != 0) {
+      CFRelease();
+      piVar20[0x34] = 0;
+    }
+  }
+  else {
+    uVar4 = CFArrayGetCount(iVar13);
+    MLOGD(DAT_00039d1c + 0x3946c,DAT_00039d18 + 0x39460,uVar4);
+    iVar13 = CFArrayCreateCopy(0,iVar13);
+    piVar20[0x33] = iVar13;
+    if ((iVar13 == 0) ||
+       (iVar18 = CFArrayGetCount(), iVar3 = DAT_00039d28, iVar2 = DAT_00039d20, iVar18 < 1))
+    goto LAB_00039c90;
+    iVar14 = DAT_00039d20 + 0x39918;
+    local_1638 = 0;
+    iVar7 = *(int *)(iVar11 + DAT_00039d24);
+    local_1688 = 0;
+    do {
+      uVar4 = CFArrayGetValueAtIndex(iVar13,local_1688);
+      memset(acStack_1328,0,0x80);
+      memset(acStack_12a8,0,0x80);
+      memset(auStack_1228,0,0x80);
+      memset(auStack_11a8,0,0x80);
+      CFDictionaryGetCString(uVar4,iVar3 + 0x39940,acStack_1328,0x80,0);
+      CFDictionaryGetCString(uVar4,iVar3 + 0x39850,auStack_1228,0x80,0);
+      CFDictionaryGetCString(uVar4,(int)&DAT_00039cd8 + iVar3,auStack_11a8,0x80,0);
+      memset(local_1028,0,0x1000);
+      local_162c = 0;
+      CFDictionaryGetData(uVar4,(int)&DAT_00039cec + iVar3,local_1028,0x1000,&local_162c,0);
+      uVar21 = local_1028[0] << 0x18 | (local_1028[0] >> 8 & 0xff) << 0x10 |
+               (local_1028[0] >> 0x10 & 0xff) << 8 | local_1028[0] >> 0x18;
+      MLOGD(DAT_00039d30 + 0x39620,DAT_00039d2c + 0x39608,(int)&DAT_00039d04 + iVar3,local_1688,
+            acStack_1328,auStack_1228,auStack_11a8,uVar21,local_162c);
+      if ((piVar20[0x34] != 0) && (iVar8 = CFArrayGetCount(), 0 < iVar8)) {
+        iVar17 = 0;
+        do {
+          iVar9 = CFArrayGetValueAtIndex(piVar20[0x34],iVar17);
+          iVar17 = iVar17 + 1;
+          if (iVar9 != 0) {
+            CFDictionaryGetCString(iVar9,iVar14,acStack_12a8,0x80,0);
+            CFDictionaryGetData(iVar9,(int)&DAT_00039cc4 + iVar2,local_1028,0x1000,&local_162c,0);
+            if (((local_1028[0] << 0x18 | (local_1028[0] >> 8 & 0xff) << 0x10 |
+                  (local_1028[0] >> 0x10 & 0xff) << 8 | local_1028[0] >> 0x18) == uVar21) &&
+               (iVar10 = strcmp(acStack_1328,acStack_12a8), iVar10 != 0)) {
+              CFDictionarySetCString(iVar9,(int)&DAT_00039cf0 + iVar2,acStack_1328,0x80);
+              local_1638 = local_1638 + 1;
+              MLOGD(DAT_00039d38 + 0x39710,DAT_00039d34 + 0x39708,auStack_1228,acStack_1328);
+              break;
+            }
+          }
+        } while (iVar8 != iVar17);
+      }
+      pcVar15 = *(code **)(iVar7 + 0xc);
+      if (pcVar15 != (code *)0x0) {
+        (*pcVar15)(acStack_1328,local_1028,local_162c);
+      }
+      local_1688 = local_1688 + 1;
+    } while (iVar18 != local_1688);
+    if (local_1638 == 0) goto LAB_00039c90;
+  }
+  lVar25 = CFDictionaryGetInt64(iVar1,DAT_00039d3c + 0x39fb8,local_1630);
+  iVar13 = DAT_00039d40 + 0x3a01c;
+  piVar20[0x96] = (uint)(lVar25 != 0);
+  piVar20[0x97] = 0;
+  lVar25 = CFDictionaryGetInt64(iVar1,iVar13,local_1630);
+  uVar21 = (uint)(lVar25 != 0);
+  iVar3 = DAT_00039d44 + 0x397f8;
+  piVar20[0x98] = uVar21;
+  piVar20[0x99] = 0;
+  iVar2 = DAT_00039d50;
+  iVar13 = DAT_00039d4c;
+  MLOGD(iVar3,DAT_00039d48 + 0x3981c,piVar20[0x96],piVar20[0x97],uVar21,0,uVar21,0);
+  CFDictionaryGetCString(iVar1,iVar13 + 0x39b94,auStack_15a8,0x80,0);
+  uVar4 = CFDictionaryGetTypeID();
+  uVar4 = CFDictionaryGetTypedValue(iVar1,iVar13 + 0x3a0c0,uVar4,0);
+  FUN_0003436c(uVar4,iVar2 + 0x39868,0);
+  MLOGD(iVar3,DAT_00039d54 + 0x3988c,*(undefined4 *)(iVar2 + 0x39868),
+        *(undefined4 *)(iVar2 + 0x3986c),*(undefined4 *)(iVar2 + 0x39870),
+        *(undefined4 *)(iVar2 + 0x39874));
+  MLOGD(iVar3,DAT_00039d58 + 0x398b0,*(undefined4 *)(iVar2 + 0x39878),
+        *(undefined4 *)(iVar2 + 0x3987c),*(undefined4 *)(iVar2 + 0x39880),
+        *(undefined4 *)(iVar2 + 0x39884));
+  iVar13 = DAT_00039d5c;
+  iVar3 = piVar20[0x37];
+  if ((*(uint *)(iVar2 + 0x39868) & 0xfffffffd) != 1) {
+    *(undefined4 *)(iVar2 + 0x39868) = 1;
+    *(undefined4 *)(iVar2 + 0x3986c) = 100;
+    *(undefined4 *)(iVar2 + 0x39870) = 100;
+  }
+  if ((*(uint *)(iVar13 + 0x39900) & 0xfffffffd) != 1) {
+    *(undefined4 *)(iVar13 + 0x39900) = 1;
+    *(undefined4 *)(iVar13 + 0x39904) = 100;
+    *(undefined4 *)(iVar13 + 0x39908) = 100;
+  }
+  if (iVar3 != 0) {
+    CFRelease();
+  }
+  CFDictionaryGetCString(iVar1,DAT_00039d60 + 0x39c9c,auStack_1528,0x80,local_1630);
+  iVar2 = CFStringCreateWithCString(0,auStack_1528,0x8000100);
+  iVar13 = DAT_00039d64;
+  piVar20[0x37] = iVar2;
+  CFDictionaryGetCString(iVar1,iVar13 + 0x3a1fc,auStack_14a8,0x80,local_1630);
+  if (piVar20[0x38] != 0) {
+    CFRelease();
+  }
+  iVar2 = CFStringCreateWithCString(0,auStack_14a8,0x8000100);
+  iVar13 = DAT_00039d68;
+  piVar20[0x38] = iVar2;
+  CFDictionaryGetCString(iVar1,iVar13 + 0x3a264,auStack_1428,0x80,0);
+  CFDictionaryGetCString(iVar1,iVar13 + 0x3a27c,auStack_13a8,0x80,0);
+  MLOGD(DAT_00039d70 + 0x399fc,DAT_00039d6c + 0x399f4,auStack_1528,auStack_14a8,auStack_1428,
+        auStack_13a8);
+  uVar4 = CFArrayGetTypeID();
+  iVar13 = CFDictionaryGetTypedValue(iVar1,iVar13 + 0x3a28c,uVar4,0);
+  if (piVar20[0x30] != 0) {
+    CFRelease();
+  }
+  if (iVar13 == 0) {
+    iVar13 = CFArrayCreateMutable(0,0,*(undefined4 *)(iVar11 + DAT_00039dbc));
+    piVar20[0x30] = iVar13;
+  }
+  else {
+    iVar13 = CFArrayCreateCopy(0,iVar13);
+    piVar20[0x30] = iVar13;
+    uVar4 = CFArrayGetCount();
+    MLOGD(DAT_00039d78 + 0x39a68,DAT_00039d74 + 0x39a5c,uVar4);
+  }
+  uVar4 = CFDataGetTypeID();
+  iVar13 = CFDictionaryGetTypedValue(iVar1,DAT_00039d7c + 0x3a374,uVar4,0);
+  if (piVar20[0x31] != 0) {
+    CFRelease();
+  }
+  iVar2 = 0;
+  if (iVar13 != 0) {
+    iVar2 = CFCopyCFData(iVar13,0,local_1630);
+  }
+  piVar20[0x31] = iVar2;
+  uVar4 = CFDictionaryGetTypeID();
+  iVar13 = CFDictionaryGetTypedValue(iVar1,DAT_00039d80 + 0x3a3dc,uVar4,0);
+  if (piVar20[0x2e] != 0) {
+    CFRelease();
+  }
+  iVar2 = 0;
+  if (iVar13 != 0) {
+    iVar2 = CFDictionaryCreateMutableCopy(0,0,iVar13);
+  }
+  iVar13 = DAT_00039d84;
+  piVar20[0x2e] = iVar2;
+  lVar25 = CFDictionaryGetInt64(iVar1,iVar13 + 0x3a448,local_1630);
+  if (lVar25 == 0) {
+    iVar13 = **(int **)(iVar11 + DAT_00039db8);
+  }
+  else {
+    iVar13 = **(int **)(iVar11 + DAT_00039d88);
+  }
+  piVar20[0x39] = iVar13;
+  lVar25 = CFDictionaryGetInt64(iVar1,DAT_00039d8c + 0x39fa0,local_1630);
+  if (lVar25 == 0) {
+    iVar13 = **(int **)(iVar11 + DAT_00039db8);
+  }
+  else {
+    iVar13 = **(int **)(iVar11 + DAT_00039d88);
+  }
+  piVar20[0x3a] = iVar13;
+  lVar25 = CFDictionaryGetInt64(iVar1,DAT_00039d90 + 0x3a50c,local_1630);
+  if (lVar25 == 0) {
+    iVar13 = **(int **)(iVar11 + DAT_00039db8);
+  }
+  else {
+    iVar13 = **(int **)(iVar11 + DAT_00039d88);
+  }
+  piVar20[0x3b] = iVar13;
+  iVar13 = DAT_00039d94;
+  CFDictionaryGetCString(iVar1,(int)&DAT_0003a580 + DAT_00039d94,auStack_1128,0x100,0);
+  CFDictionaryGetCString(iVar1,iVar13 + 0x39fe0,piVar20 + 0x7c,0x40,0);
+  CFDictionaryGetInt64(iVar1,(int)&DAT_0003a58c + iVar13,0);
+  AirplayClientSendCmdRecord();
+LAB_00039270:
+  if (iVar1 == 0) {
+    return;
+  }
+  CFRelease();
+  return;
+}
+
+ (GhidraScript)  

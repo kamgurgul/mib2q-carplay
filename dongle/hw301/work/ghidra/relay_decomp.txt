@@ -1,0 +1,768 @@
+openjdk version "21.0.12" 2026-07-21 LTS
+    /ghidra/Ghidra/Features/Decompiler/ghidra_scripts
+    /ghidra/Ghidra/Features/Base/ghidra_scripts
+    /ghidra/Ghidra/Features/BytePatterns/ghidra_scripts
+    /ghidra/Ghidra/Features/DecompilerDependent/ghidra_scripts
+    /ghidra/Ghidra/Debug/Debugger-rmi-trace/ghidra_scripts
+    /ghidra/Ghidra/Features/PyGhidra/ghidra_scripts
+    /ghidra/Ghidra/Processors/8051/ghidra_scripts
+    /ghidra/Ghidra/Features/BSim/ghidra_scripts
+    /ghidra/Ghidra/Debug/Debugger/ghidra_scripts
+    /ghidra/Ghidra/Features/FileFormats/ghidra_scripts
+    /ghidra/Ghidra/Processors/PIC/ghidra_scripts
+    /ghidra/Ghidra/Features/SystemEmulation/ghidra_scripts
+    /ghidra/Ghidra/Features/WildcardAssembler/ghidra_scripts
+    /ghidra/Ghidra/Processors/DATA/ghidra_scripts
+    /ghidra/Ghidra/Features/VersionTracking/ghidra_scripts
+    /ghidra/Ghidra/Features/PDB/ghidra_scripts
+    /ghidra/Ghidra/Processors/Atmel/ghidra_scripts
+    /g
+    /ghidra/Ghidra/Features/FunctionID/ghidra_scripts
+    /ghidra/Ghidra/Processors/JVM/ghidra_scripts
+    /ghidra/Ghidra/Features/GnuDemangler/ghidra_scripts
+    /ghidra/Ghidra/Features/MicrosoftCodeAnalyzer/ghidra_scripts
+    /ghidra/Ghidra/Features/SwiftDemangler/ghidra_scripts (HeadlessAnalyzer)  
+
+===== SendProxyScreenFrame @ 0005c400 =====
+
+int SendProxyScreenFrame(int param_1,int param_2,undefined4 param_3,undefined4 param_4)
+
+{
+  char cVar1;
+  int *piVar2;
+  int iVar3;
+  char *pcVar4;
+  int iVar5;
+  int *piVar6;
+  int iVar7;
+  int iVar8;
+  int iVar9;
+  
+  iVar3 = DAT_0005c688;
+  iVar8 = DAT_0005c68c + 0x5c424;
+  pthread_mutex_lock((pthread_mutex_t *)(DAT_0005c688 + 0x5c67c));
+  iVar5 = *(int *)(DAT_0005c690 + 0x5c430);
+  if (iVar5 < 0) {
+    iVar8 = -1;
+  }
+  else {
+    piVar2 = (int *)getFrameBuffer(param_2 + 0x90);
+    if (piVar2 == (int *)0x0) {
+      iVar8 = -0x1a48;
+    }
+    else {
+      memset(piVar2,0,0x80);
+      iVar9 = DAT_0005c694;
+      iVar7 = param_2 + -4;
+      *(undefined1 *)(piVar2 + 1) = 0;
+      piVar6 = piVar2 + 0x20;
+      *piVar2 = param_2;
+      *(char *)((int)piVar2 + 0x83) = (char)iVar7;
+      *(char *)(piVar2 + 0x20) = (char)((uint)iVar7 >> 0x18);
+      *(char *)((int)piVar2 + 0x81) = (char)((uint)iVar7 >> 0x10);
+      *(char *)((int)piVar2 + 0x82) = (char)((uint)iVar7 >> 8);
+      if (**(int **)(iVar8 + iVar9) == 0) {
+        iVar8 = AES_CTR_Update(iVar3 + 0x5c55c,piVar6,4,piVar6,param_4);
+        if ((iVar8 != 0) ||
+           (iVar8 = AES_CTR_Update(iVar3 + 0x5c55c,param_1 + 4,iVar7,piVar2 + 0x21,param_4),
+           iVar8 != 0)) goto LAB_0005c594;
+      }
+      else {
+        if (*(char *)(iVar3 + 0x5c424) == '\0') {
+          iVar8 = -0x1a35;
+          goto LAB_0005c594;
+        }
+        iVar9 = iVar3 + 0x5c428;
+        *piVar2 = param_2 + 0x10;
+        chacha20_poly1305_init_64x64(iVar9,iVar3 + 0x5c514,iVar3 + 0x5c534);
+        chacha20_poly1305_add_aad(iVar9,piVar2,0x80);
+        iVar8 = chacha20_poly1305_encrypt(iVar9,piVar6,4,piVar6);
+        iVar8 = chacha20_poly1305_encrypt(iVar9,param_1 + 4,iVar7,(int)piVar6 + iVar8);
+        iVar9 = chacha20_poly1305_final(iVar9,(int)piVar6 + iVar8,(int)piVar6 + *piVar2 + -0x10);
+        if (iVar8 + iVar9 != *piVar2 + -0x10) {
+          iVar8 = -0x1a6a;
+          goto LAB_0005c594;
+        }
+        pcVar4 = (char *)(iVar3 + 0x5c533);
+        do {
+          cVar1 = pcVar4[1];
+          pcVar4 = pcVar4 + 1;
+          *pcVar4 = cVar1 + '\x01';
+          if ((char)(cVar1 + '\x01') != '\0') break;
+        } while ((char *)(iVar3 + 0x5c53b) != pcVar4);
+      }
+      iVar3 = writen(iVar5,piVar2,*piVar2 + 0x80);
+      if (iVar3 == *piVar2 + 0x80) {
+LAB_0005c600:
+        pthread_mutex_unlock((pthread_mutex_t *)(DAT_0005c6ac + 0x5c870));
+        return 0;
+      }
+      piVar2 = __errno_location();
+      if (*piVar2 == 0) {
+        iVar8 = -0x1a2c;
+      }
+      else {
+        piVar2 = __errno_location();
+        iVar8 = *piVar2;
+        if (iVar8 == 0) goto LAB_0005c600;
+      }
+    }
+  }
+LAB_0005c594:
+  pthread_mutex_unlock((pthread_mutex_t *)(DAT_0005c698 + 0x5c800));
+  MLOGD(DAT_0005c6a4 + 0x5c5c8,DAT_0005c6a0 + 0x5c5c0,DAT_0005c69c + 0x5c6d8,iVar8);
+  if (*(int *)(DAT_0005c6a8 + 0x5c5d4) == -1) {
+    return iVar8;
+  }
+  TearDownProxyScreen(0);
+  return iVar8;
+}
+
+
+
+===== SendProxyScreenVideoConfigFrame @ 0005c19c =====
+
+int SendProxyScreenVideoConfigFrame
+              (undefined4 param_1,int param_2,int param_3,int param_4,undefined4 param_5,
+              undefined4 param_6,undefined4 param_7,undefined4 param_8)
+
+{
+  int *piVar1;
+  int iVar2;
+  int iVar3;
+  uint in_fpscr;
+  int iVar4;
+  int local_24;
+  
+  pthread_mutex_lock((pthread_mutex_t *)(DAT_0005c3d4 + 0x5c40c));
+  piVar1 = (int *)getFrameBuffer(param_4 * param_3);
+  if (piVar1 == (int *)0x0) {
+    iVar2 = -0x1a48;
+  }
+  else {
+    iVar3 = *(int *)(DAT_0005c3d8 + 0x5c1e0);
+    if (iVar3 < 0) {
+      iVar2 = -1;
+    }
+    else if (param_2 < 1) {
+      iVar2 = -0x1a31;
+    }
+    else {
+      MLOGD(DAT_0005c3e0 + 0x5c21c,DAT_0005c3e4 + 0x5c23c,DAT_0005c3dc + 0x5c308,param_3,param_4,
+            param_5,param_6,param_7,param_8,param_2);
+      local_24 = 0;
+      memset(piVar1,0,0x80);
+      *(undefined1 *)(piVar1 + 1) = 1;
+      iVar2 = _H264ConvertAnnexBToAVCC(param_1,param_2,piVar1 + 0x20,&local_24);
+      if (iVar2 == 0) {
+        *(undefined1 *)((int)piVar1 + 7) = 0;
+        iVar2 = VectorSignedToFloat(param_3,(byte)(in_fpscr >> 0x16) & 3);
+        *piVar1 = 0;
+        *(undefined1 *)((int)piVar1 + 6) = 0x54;
+        iVar4 = VectorSignedToFloat(param_4,(byte)(in_fpscr >> 0x16) & 3);
+        piVar1[4] = iVar2;
+        piVar1[5] = iVar4;
+        iVar2 = VectorSignedToFloat(param_5,(byte)(in_fpscr >> 0x16) & 3);
+        iVar4 = VectorSignedToFloat(param_6,(byte)(in_fpscr >> 0x16) & 3);
+        piVar1[8] = iVar2;
+        piVar1[0xc] = iVar2;
+        piVar1[9] = iVar4;
+        piVar1[0xd] = iVar4;
+        iVar2 = VectorSignedToFloat(param_7,(byte)(in_fpscr >> 0x16) & 3);
+        iVar4 = VectorSignedToFloat(param_8,(byte)(in_fpscr >> 0x16) & 3);
+        piVar1[10] = iVar2;
+        piVar1[0xb] = iVar4;
+        piVar1[0xe] = iVar4;
+        if (0 < local_24) {
+          iVar4 = local_24 + 0x80;
+          *piVar1 = local_24;
+          *(undefined1 *)((int)piVar1 + 6) = 0x14;
+          iVar2 = writen(iVar3,piVar1,iVar4);
+          if (iVar4 != iVar2) {
+            piVar1 = __errno_location();
+            if (*piVar1 == 0) {
+              iVar2 = -0x1a2c;
+            }
+            else {
+              piVar1 = __errno_location();
+              iVar2 = *piVar1;
+              if (iVar2 == 0) goto LAB_0005c338;
+            }
+            goto LAB_0005c35c;
+          }
+        }
+LAB_0005c338:
+        pthread_mutex_unlock((pthread_mutex_t *)(DAT_0005c3e8 + 0x5c5a8));
+        return 0;
+      }
+    }
+  }
+LAB_0005c35c:
+  pthread_mutex_unlock((pthread_mutex_t *)(DAT_0005c3ec + 0x5c5c8));
+  MLOGD(DAT_0005c3f8 + 0x5c390,DAT_0005c3f4 + 0x5c388,DAT_0005c3f0 + 0x5c480,iVar2);
+  if (*(int *)(DAT_0005c3fc + 0x5c39c) == -1) {
+    return iVar2;
+  }
+  TearDownProxyScreen(0);
+  return iVar2;
+}
+
+
+
+===== SetupProxyScreenSecurityInfo @ 0005b7c4 =====
+
+int SetupProxyScreenSecurityInfo(undefined4 param_1,undefined4 param_2)
+
+{
+  int iVar1;
+  char *pcVar2;
+  char *pcVar3;
+  int iVar4;
+  int iVar5;
+  int iVar6;
+  undefined1 *puVar7;
+  undefined1 *puVar8;
+  int *piVar9;
+  undefined4 uVar10;
+  undefined4 *puVar11;
+  char *local_160;
+  char *local_15c;
+  undefined4 local_158;
+  undefined4 uStack_154;
+  undefined4 uStack_150;
+  undefined4 uStack_14c;
+  undefined4 local_148;
+  undefined4 uStack_144;
+  undefined4 uStack_140;
+  undefined4 uStack_13c;
+  undefined4 local_138;
+  undefined4 uStack_134;
+  undefined4 uStack_130;
+  undefined4 uStack_12c;
+  undefined4 auStack_f8 [53];
+  undefined4 *puVar12;
+  
+  iVar4 = DAT_0005ba34;
+  local_160 = (char *)0x0;
+  local_15c = (char *)0x0;
+  memset(&local_158,0,0x20);
+  iVar6 = DAT_0005ba64;
+  piVar9 = *(int **)(iVar4 + 0x5b808 + DAT_0005ba38);
+  if (*piVar9 == 0) {
+    MLOGD(DAT_0005ba60 + 0x5b918,DAT_0005ba5c + 0x5b914,DAT_0005ba58 + 0x5b98c);
+    iVar1 = DAT_0005ba6c;
+    iVar5 = asprintf(&local_160,(char *)(iVar6 + 0x5b920),DAT_0005ba68 + 0x5b934);
+    iVar6 = asprintf(&local_15c,(char *)(iVar6 + 0x5b920),DAT_0005ba70 + 0x5b94c);
+    pcVar3 = local_15c;
+    pcVar2 = local_160;
+    SHA512_Init_compat(auStack_f8);
+    SHA512_Update_compat(auStack_f8,pcVar2,iVar5);
+    uVar10 = *(undefined4 *)(iVar4 + 0x5b808 + DAT_0005ba74);
+    SHA512_Update_compat(auStack_f8,uVar10,0x10,DAT_0005ba74,param_1,param_2);
+    SHA512_Final_compat(&local_138,auStack_f8);
+    *(undefined4 *)((int)&DAT_0005ba70 + iVar1) = local_138;
+    *(undefined4 *)((int)&DAT_0005ba74 + iVar1) = uStack_134;
+    *(undefined4 *)((int)&DAT_0005ba78 + iVar1) = uStack_130;
+    *(undefined4 *)(getFrameBuffer + iVar1) = uStack_12c;
+    SHA512_Init_compat(auStack_f8);
+    SHA512_Update_compat(auStack_f8,pcVar3,iVar6);
+    SHA512_Update_compat(auStack_f8,uVar10,0x10);
+    SHA512_Final_compat(&local_138,auStack_f8);
+    *(undefined4 *)(iVar1 + 0x5ba80) = local_138;
+    *(undefined4 *)(iVar1 + 0x5ba84) = uStack_134;
+    *(undefined4 *)(iVar1 + 0x5ba88) = uStack_130;
+    *(undefined4 *)(iVar1 + 0x5ba8c) = uStack_12c;
+    iVar4 = DAT_0005ba78;
+    puVar12 = &local_138;
+    do {
+      puVar11 = (undefined4 *)((int)puVar12 + 1);
+      *(undefined1 *)puVar12 = 0;
+      puVar12 = puVar11;
+    } while (puVar11 != auStack_f8);
+    iVar6 = DAT_0005ba78 + 0x5bb54;
+    AES_CTR_Final(iVar6);
+    iVar4 = AES_CTR_Init(iVar6,iVar4 + 0x5bb34,iVar4 + 0x5bb44);
+  }
+  else {
+    MLOGD(DAT_0005ba44 + 0x5b834,DAT_0005ba40 + 0x5b82c,DAT_0005ba3c + 0x5b8ac);
+    iVar4 = asprintf(&local_160,(char *)(DAT_0005ba4c + 0x5b850),DAT_0005ba48 + 0x5b848);
+    iVar4 = ProxyPairingSessionDeriveKey
+                      (*piVar9,local_160,iVar4,DAT_0005ba50 + 0x5b868,0x20,0x20,&local_158);
+    iVar6 = DAT_0005ba54;
+    if (iVar4 == 0) {
+      puVar8 = (undefined1 *)(DAT_0005ba54 + 0x5b898);
+      puVar7 = (undefined1 *)(DAT_0005ba54 + 0x5b9b0);
+      do {
+        *puVar8 = 0;
+        puVar8 = puVar8 + 1;
+      } while (puVar8 != puVar7);
+      *(undefined1 *)(iVar6 + 0x5b898) = 1;
+      *(undefined4 *)(iVar6 + 0x5b988) = local_158;
+      *(undefined4 *)(iVar6 + 0x5b98c) = uStack_154;
+      *(undefined4 *)(iVar6 + 0x5b990) = uStack_150;
+      *(undefined4 *)(iVar6 + 0x5b994) = uStack_14c;
+      *(undefined4 *)(iVar6 + 0x5b998) = local_148;
+      *(undefined4 *)(iVar6 + 0x5b99c) = uStack_144;
+      *(undefined4 *)(iVar6 + 0x5b9a0) = uStack_140;
+      *(undefined4 *)(iVar6 + 0x5b9a4) = uStack_13c;
+    }
+  }
+  if (local_160 != (char *)0x0) {
+    free(local_160);
+  }
+  if (local_15c != (char *)0x0) {
+    free(local_15c);
+  }
+  return iVar4;
+}
+
+
+
+===== SetupProxyScreen @ 0005c0d0 =====
+
+void SetupProxyScreen(undefined4 param_1)
+
+{
+  SetupProxyScreenEx(param_1,5000);
+  return;
+}
+
+
+
+===== recvCarPlayVideoFrame @ 00043970 =====
+
+/* CarPlayProxyApp::recvCarPlayVideoFrame(void*, unsigned int, bool) */
+
+void __thiscall
+CarPlayProxyApp::recvCarPlayVideoFrame
+          (CarPlayProxyApp *this,void *param_1,uint param_2,bool param_3)
+
+{
+  H264Codec *this_00;
+  void *__s2;
+  uint uVar1;
+  CarPlayProxyApp *this_01;
+  int iVar2;
+  byte bVar3;
+  uint uVar4;
+  int iVar5;
+  undefined1 *local_40 [2];
+  undefined1 auStack_38 [20];
+  
+  uVar4 = *(byte *)((int)param_1 + 4) & 0x1f;
+  if (uVar4 == 7) {
+    bVar3 = (*(byte *)(DAT_00043b58 + 0x43e58) ^ 1) & 1;
+  }
+  else {
+    bVar3 = 0;
+  }
+  if (bVar3 != 0) {
+    *(undefined1 *)(DAT_00043b58 + 0x43e58) = 1;
+    MString::fromHexBytes((uchar *)local_40,(int)param_1);
+    MLOGD(DAT_00043b70 + 0x43adc,DAT_00043b6c + 0x43ad8,local_40[0],param_2);
+    if (local_40[0] != auStack_38) {
+      operator_delete(local_40[0]);
+    }
+  }
+  if ((param_3) && (*(int *)(DAT_00043b60 + 0x439ec) != 0)) {
+    local_40[0] = (undefined1 *)0x0;
+    this_00 = (H264Codec *)(DAT_00043b68 + 0x43a4c);
+    *(undefined4 *)(DAT_00043b60 + 0x439ec) = 0;
+    __s2 = (void *)H264Codec::getEncodeHeader(this_00,(int *)local_40);
+    if ((__s2 != (void *)0x0) &&
+       (((undefined1 *)param_2 == local_40[0] && (iVar5 = memcmp(param_1,__s2,param_2), iVar5 == 0))
+       )) {
+      MLOGD(DAT_00043b7c + 0x43b2c,DAT_00043b78 + 0x43b24,DAT_00043b74 + 0x43bd4);
+    }
+    uVar1 = getAppInst();
+    MSNAppBase::postEvent(uVar1,(void *)0x4d1,0,0);
+    iVar5 = 5;
+    do {
+      this_01 = (CarPlayProxyApp *)getAppInst();
+      iVar2 = isProxyVideoStarted(this_01);
+      if (iVar2 != 0) {
+        usleep(300000);
+        break;
+      }
+      usleep(100000);
+      iVar5 = iVar5 + -1;
+    } while (iVar5 != 0);
+    iVar5 = isProxyVideoStarted(this);
+    if (iVar5 == 0) {
+      sendMainScreenModes(1,500,500,500);
+      return;
+    }
+  }
+  writeCarLifeVideoFrame(this,param_1,param_2,uVar4);
+  return;
+}
+
+
+
+===== writeCarLifeVideoFrame @ 0004340c =====
+
+/* CarPlayProxyApp::writeCarLifeVideoFrame(unsigned char const*, unsigned int, int) */
+
+void __thiscall
+CarPlayProxyApp::writeCarLifeVideoFrame
+          (CarPlayProxyApp *this,uchar *param_1,uint param_2,int param_3)
+
+{
+  int iVar1;
+  undefined8 uVar2;
+  
+  MMutex::lock();
+  uVar2 = GetTickCountMs();
+  *(undefined8 *)(this + 0x20b8) = uVar2;
+  if (this[0x214e] == (CarPlayProxyApp)0x0) goto LAB_000434a4;
+  if (this[0x214a] != (CarPlayProxyApp)0x0) {
+    if (this[0x214c] == (CarPlayProxyApp)0x0) {
+      if (param_3 != 7) {
+        if (*(int *)(this + 0x2424) == 2) {
+          if (*(int *)(DAT_00043614 + 0x43510) != 0) {
+            GalProxy::sendMediaDatas(*(int *)(DAT_00043614 + 0x43510),2,param_1,param_2);
+          }
+        }
+        else {
+          SendProxyScreenFrame(param_1,param_2);
+        }
+      }
+      goto LAB_000434a4;
+    }
+    if (param_3 != 5) {
+      MLOGD(DAT_00043624 + 0x435b0,DAT_00043620 + 0x435ac,param_3);
+      goto LAB_000434a4;
+    }
+    if (*(int *)(this + 0x2424) == 2) {
+      if (*(int *)(DAT_00043630 + 0x4360c) != 0) {
+        iVar1 = GalProxy::sendMediaDatas(*(int *)(DAT_00043630 + 0x4360c),2,param_1,param_2);
+        goto LAB_00043518;
+      }
+    }
+    else {
+      iVar1 = SendProxyScreenFrame(param_1,param_2);
+LAB_00043518:
+      if (iVar1 != 0) {
+        MLOGD(DAT_00043638 + 0x4360c,DAT_00043634 + 0x43608,iVar1);
+        goto LAB_000434a4;
+      }
+    }
+    this[0x214c] = (CarPlayProxyApp)0x0;
+    goto LAB_000434a4;
+  }
+  if (param_3 != 7) {
+    MLOGD(DAT_0004361c + 0x43544,DAT_00043618 + 0x43540,param_3);
+    MMutex::unlock();
+    return;
+  }
+  if (*(int *)(this + 0x2424) == 2) {
+    if (*(int *)(DAT_00043610 + 0x434ac) != 0) {
+      iVar1 = GalProxy::sendMediaCodecConfig(*(int *)(DAT_00043610 + 0x434ac),2,param_1,param_2);
+      goto LAB_00043490;
+    }
+  }
+  else {
+    iVar1 = SendProxyScreenVideoConfigFrame
+                      (param_1,param_2,*(undefined4 *)(this + 0x216c),*(undefined4 *)(this + 0x2170)
+                       ,*(undefined4 *)(this + 0x215c),*(undefined4 *)(this + 0x2160),
+                       *(undefined4 *)(this + 0x2164),*(undefined4 *)(this + 0x2168));
+LAB_00043490:
+    if (iVar1 != 0) {
+      MLOGD(DAT_0004362c + 0x435cc,DAT_00043628 + 0x435c8,iVar1);
+      goto LAB_000434a4;
+    }
+  }
+  this[0x214a] = (CarPlayProxyApp)0x1;
+  this[0x214c] = (CarPlayProxyApp)0x1;
+LAB_000434a4:
+  MMutex::unlock();
+  return;
+}
+
+
+
+===== handleVideoInit @ 0003fe34 =====
+
+/* CarPlayProxyApp::handleVideoInit(gal::DisplayType, gal::MediaCodecType, int, int, gal::Insets&)
+    */
+
+void __thiscall
+CarPlayProxyApp::handleVideoInit
+          (CarPlayProxyApp *this,undefined4 param_2,undefined4 param_3,int param_4,int param_5,
+          int param_6)
+
+{
+  int iVar1;
+  int iVar2;
+  int iVar3;
+  
+  MLOGD(DAT_0003ff14 + 0x3fe84,DAT_0003ff18 + 0x3fe94,DAT_0003ff10 + 0x3fea4,param_2,param_3,param_4
+        ,param_5,*(undefined4 *)(param_6 + 0x18),*(undefined4 *)(param_6 + 0x10),
+        *(undefined4 *)(param_6 + 0x1c),*(undefined4 *)(param_6 + 0x14));
+  iVar1 = getProxySessionInfos();
+  *(int *)(iVar1 + 0x240) = param_4;
+  *(int *)(iVar1 + 0x244) = param_5;
+  *(undefined4 *)(iVar1 + 0x230) = *(undefined4 *)(param_6 + 0x18);
+  *(undefined4 *)(iVar1 + 0x234) = *(undefined4 *)(param_6 + 0x10);
+  *(int *)(iVar1 + 0x238) = param_4 - (*(int *)(param_6 + 0x18) + *(int *)(param_6 + 0x1c));
+  iVar3 = *(int *)(param_6 + 0x10);
+  iVar2 = *(int *)(param_6 + 0x14);
+  *(undefined4 *)(iVar1 + 0x250) = 0x1e;
+  *(int *)(iVar1 + 0x23c) = param_5 - (iVar3 + iVar2);
+  MSNAppBase::postEvent((uint)this,(void *)0x463,0,0);
+  return;
+}
+
+
+
+===== handleVideoInit @ 0003ff1c =====
+
+/* non-virtual thunk to CarPlayProxyApp::handleVideoInit(gal::DisplayType, gal::MediaCodecType, int,
+   int, gal::Insets&) */
+
+void __thiscall CarPlayProxyApp::handleVideoInit(CarPlayProxyApp *this)
+
+{
+  handleVideoInit(this + -0x2094);
+  return;
+}
+
+
+
+===== SocketConnect @ 0002c580 =====
+
+void SocketConnect(void)
+
+{
+  (*(code *)PTR_SocketConnect_0017d1ec)();
+  return;
+}
+
+
+
+===== SocketConnect @ 00210110 =====
+
+/* WARNING: Control flow encountered bad instruction data */
+
+void SocketConnect(void)
+
+{
+                    /* WARNING: Bad instruction - Truncating control flow here */
+  halt_baddata();
+}
+
+
+
+===== writen @ 0003b148 =====
+
+size_t writen(int param_1,void *param_2,size_t param_3)
+
+{
+  ssize_t sVar1;
+  int *piVar2;
+  size_t __n;
+  int iVar3;
+  
+  if (param_3 == 0) {
+    return 0;
+  }
+  iVar3 = 0;
+  __n = param_3;
+  while( true ) {
+    sVar1 = write(param_1,param_2,__n);
+    if (sVar1 < 1) {
+      if (999 < iVar3) {
+        return 0xffffffff;
+      }
+    }
+    else {
+      do {
+        __n = __n - sVar1;
+        param_2 = (void *)((int)param_2 + sVar1);
+        if (__n == 0) {
+          return param_3;
+        }
+        sVar1 = write(param_1,param_2,__n);
+      } while (0 < sVar1);
+      iVar3 = 0;
+    }
+    piVar2 = __errno_location();
+    if ((*piVar2 != 4) && (piVar2 = __errno_location(), *piVar2 != 0xb)) break;
+    iVar3 = iVar3 + 1;
+    usleep(1000);
+  }
+  return 0xffffffff;
+}
+
+
+
+===== FUN_0005c7ec @ 0005c7ec =====
+
+/* WARNING: Type propagation algorithm not settling */
+
+void FUN_0005c7ec(int param_1)
+
+{
+  int iVar1;
+  int iVar2;
+  int iVar3;
+  int iVar4;
+  undefined4 uVar5;
+  int iVar6;
+  int iVar7;
+  int iVar8;
+  int *piVar9;
+  int iVar10;
+  int iVar11;
+  int iVar12;
+  pthread_mutex_t *__mutex;
+  int iVar13;
+  int iVar14;
+  int local_50 [3];
+  ushort local_44 [16];
+  
+  iVar1 = DAT_0005cbe4;
+  iVar14 = DAT_0005cbe0 + 0x5c810;
+  local_50[0] = 0;
+  MLOGD(iVar14,DAT_0005cbe8 + 0x5c820,DAT_0005cbe4 + 0x5c96c,*(undefined4 *)(param_1 + 0x8e8),
+        *(undefined4 *)(param_1 + 0x4a0));
+  iVar12 = DAT_0005cbec + 0x5c844;
+  if (*(int *)(param_1 + 0x8e8) != 0) {
+    local_50[0] = -0x1a35;
+    goto LAB_0005c89c;
+  }
+  if (*(int *)(param_1 + 0x4a0) == 0) {
+    return;
+  }
+  iVar2 = CFBinaryPlistV0CreateWithData
+                    (*(undefined4 *)(param_1 + 0x49c),*(int *)(param_1 + 0x4a0),local_50);
+  if (local_50[0] == 0) {
+    iVar3 = CFGetTypeID();
+    iVar4 = CFDictionaryGetTypeID();
+    if (iVar3 != iVar4) {
+      local_50[0] = -0x1a64;
+      goto LAB_0005cba0;
+    }
+    uVar5 = CFArrayGetTypeID();
+    iVar3 = CFDictionaryGetTypedValue(iVar2,iVar1 + 0x5c88c,uVar5,0);
+    if (iVar3 == 0) {
+      MLOGD(iVar14,DAT_0005cbf0 + 0x5c87c,0);
+    }
+    else {
+      iVar4 = CFArrayGetCount();
+      MLOGD(iVar14,DAT_0005cbf4 + 0x5c920,iVar4);
+      if (0 < iVar4) {
+        iVar10 = DAT_0005cbfc + 0x5c950;
+        __mutex = (pthread_mutex_t *)(DAT_0005cbf8 + 0x5cba8);
+        iVar13 = 0;
+        do {
+          uVar5 = CFDictionaryGetTypeID();
+          uVar5 = CFArrayGetTypedValueAtIndex(iVar3,iVar13,uVar5,local_50);
+          iVar6 = CFDictionaryGetInt64(uVar5,iVar1 + 0x5c858,local_50);
+          MLOGD(iVar14,iVar10,iVar6);
+          if (iVar6 == 0x6e) {
+            uVar5 = CFDictionaryGetInt64(uVar5,iVar1 + 0x5c99c,local_50);
+            MLOGD(iVar14,DAT_0005cc00 + 0x5c9d4,uVar5,0x6e,local_50[0]);
+            if (local_50[0] != 0) goto LAB_0005cba0;
+            local_50[2] = local_50[0];
+            local_50[1] = 1;
+            pthread_mutex_lock(__mutex);
+            iVar6 = HTTPClientGetPeerAddress
+                              (**(undefined4 **)(iVar12 + DAT_0005cc04),local_44,0x1c,local_50 + 2);
+            if (iVar6 == 0) {
+              iVar7 = socket((uint)local_44[0],1,6);
+              if (iVar7 < 0) {
+                iVar6 = -0x1a2c;
+                goto LAB_0005cb20;
+              }
+              local_50[1] = 1;
+              iVar6 = setsockopt(iVar7,0x29,0x1a,local_50 + 1,4);
+              if (iVar6 == 0) {
+LAB_0005ca78:
+                local_50[1] = 1;
+                iVar6 = SocketSetBufferSize(iVar7,7,0x2c000);
+                if (iVar6 != 0) {
+                  piVar9 = __errno_location();
+                  if (*piVar9 == 0) goto LAB_0005cb4c;
+                  piVar9 = __errno_location();
+                  iVar6 = *piVar9;
+                  if (iVar6 != 0) goto LAB_0005cb54;
+                }
+                SocketSetQoS(iVar7,0xc);
+                SockAddrSetPort(local_44,uVar5);
+                iVar6 = SocketConnect(iVar7,local_44,10);
+                if ((iVar6 == 0) &&
+                   (iVar6 = SetupProxyScreenSecurityInfo
+                                      (*(undefined4 *)(DAT_0005cc08 + 0x5cad8),
+                                       *(undefined4 *)(DAT_0005cc08 + 0x5cadc)), iVar6 == 0)) {
+                  iVar11 = DAT_0005cc10 + 0x5cb00;
+                  iVar8 = DAT_0005cc14 + 0x5cb04;
+                  *(int *)(DAT_0005cc0c + 0x5cafc) = iVar7;
+                  MLOGD(iVar8,iVar11,iVar7);
+                  (**(code **)(*(int *)(iVar12 + DAT_0005cc18) + 0x14))(0x464);
+                  goto LAB_0005cb20;
+                }
+              }
+              else {
+                piVar9 = __errno_location();
+                if (*piVar9 == 0) {
+LAB_0005cb4c:
+                  iVar6 = -0x1a2c;
+                }
+                else {
+                  piVar9 = __errno_location();
+                  iVar6 = *piVar9;
+                  if (iVar6 == 0) goto LAB_0005ca78;
+                }
+              }
+LAB_0005cb54:
+              pthread_mutex_unlock((pthread_mutex_t *)(DAT_0005cc20 + 0x5cdc0));
+              iVar7 = close(iVar7);
+              if ((iVar7 != 0) && (piVar9 = __errno_location(), *piVar9 != 0)) {
+                __errno_location();
+              }
+            }
+            else {
+LAB_0005cb20:
+              pthread_mutex_unlock((pthread_mutex_t *)(DAT_0005cc1c + 0x5cd8c));
+            }
+            local_50[0] = iVar6;
+            AirplayClientSendCmdFeedback();
+          }
+          iVar13 = iVar13 + 1;
+        } while (iVar4 != iVar13);
+      }
+    }
+    if (iVar2 != 0) goto LAB_0005c888;
+  }
+  else {
+LAB_0005cba0:
+    if (iVar2 == 0) goto LAB_0005c89c;
+LAB_0005c888:
+    CFRelease(iVar2);
+  }
+  if (local_50[0] == 0) {
+    return;
+  }
+LAB_0005c89c:
+  TearDownProxyScreen(0);
+  return;
+}
+
+
+
+===== names seen (sanity) =====
+handleVideoInit @ 0003fe34
+handleVideoInit @ 0003ff1c
+createCarLifeInfosJson @ 000426b0
+writeCarLifeVideoFrame @ 0004340c
+recvCarPlayVideoFrame @ 00043970
+SetupProxyScreenSecurityInfo @ 0005b7c4
+ProxyScreenIsSetup @ 0005bae0
+ProxyScreenUninit @ 0005bcf8
+SetupProxyScreenEx @ 0005c05c
+SetupProxyScreen @ 0005c0d0
+TearDownProxyScreen @ 0005c108
+SendProxyScreenVideoConfigFrame @ 0005c19c
+SendProxyScreenFrame @ 0005c400
+SendProxyScreenKeepAliveFrame @ 0005c6b0
