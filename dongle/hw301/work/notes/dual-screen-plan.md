@@ -60,6 +60,96 @@ c111.h264 dump needs a shell to retrieve, so the no-shell flow relies on the
 frames/idr counters instead. Next action = flash v1132, car-test, getlogs.
 Nothing flashed.
 
+## REVIEW (2026-10-18): all items below APPLIED
+
+Fixed in `work/src/cluster_dual.c` and rebuilt (clean -Wall -Wextra for steps
+1/2/3; per-image step gating re-verified; v1132 dry-run = 127 chunks). All
+three images (v1132/v1133/v1134) are now ready to flash in order. The items
+are kept below as the record of what each change addresses.
+
+1. **Split the generation counter** (blocks step 2).
+   `g_gen` serves two jobs: `AES_CTR_Init` (head-unit key capture) bumps it,
+   and `rx_thread`/`read_full` exit when it changes. A head-unit screen re-setup
+   (the logs show one ~190 s into a session) therefore kills the phone's 111
+   stream. Use two counters: `g_rx_gen`, bumped only by `start_receiver` and
+   the teardown hook, retires the receiver; `g_hu_gen`, bumped only by the key
+   capture, makes the relay close its head-unit socket and reconnect with the
+   new key. Nothing else may bump `g_rx_gen`.
+
+2. **Listener fd ownership** (blocks step 2).
+   `start_receiver` and the teardown hook close `g_listen_fd` while the old
+   thread is still polling it. If the new listener gets the same fd number, the
+   old thread's exit path (`if (g_listen_fd == listen_fd) close(...)`) closes
+   the *new* listener. Fix: only the thread closes its own listen fd (right
+   after `accept`, since one connection per SETUP is enough, and on exit);
+   `start_receiver` and teardown only bump `g_rx_gen`. Drop `g_listen_fd`,
+   `g_thread` and `g_thread_live`. While the old thread winds down (≤1 s), port
+   7100 is still bound and the new bind falls back to an ephemeral port; that
+   is fine because the response carries the actual port.
+
+3. **Add the decrypt check `nal_ok`** (step 2 validation).
+   Without a shell, a wrong key is only visible this way. For each decrypted
+   VIDEO_FRAME, walk the AVCC NAL lengths: each length is `nal_len` bytes
+   (from the avcC config, byte 4 `& 3` + 1, normally 4), each NAL's forbidden
+   bit must be 0, and the lengths must add up exactly to `bodySize`. Count bad
+   frames, log `nal_ok=1/0` on the first frame and `bad=` in the periodic line,
+   and count IDR as "any NAL type 5 in the AU", not only the first NAL.
+   Also log the width×height from the SPS in the VIDEO_CONFIG avcC: 1440×540
+   proves this is the cluster stream, not a second copy of the main 1024×480.
+   If the SPS parse is too much, log the avcC length and profile/level bytes
+   as a minimum.
+
+4. **Head-unit reconnect policy** (blocks step 3).
+   Once the head-unit socket is lost, the relay calls `hu_connect()` (up to 3 s
+   blocking) again on every frame, which stalls the phone read loop and can
+   make iOS drop 111. The head-unit hook accepts one connection per SETUP, so:
+   - before the first success, try at most once every 5 s for the current
+     `g_hu_gen`;
+   - after a connected socket fails, stop until `g_hu_gen` changes;
+   - when `g_hu_gen` changes while connected, close, re-init the head-unit
+     AES-CTR context with the new key, reconnect, resend config and request a
+     key frame.
+   Keep this state in a per-thread relay struct (fd, gen, last-try time, dead
+   flag, ctx, sent/err counters).
+
+5. **Session lifetime and SendCommand** (blocks step 3).
+   `rx_thread` uses the `session` pointer from the SETUP hook without a
+   retain; a session that ends first makes `ask_keyframe` a use-after-free in
+   `CPAAProxyEx`. Bind `CFRetain`, retain in `start_receiver`, release when the
+   thread exits. `AirPlayReceiverSessionSendCommand` dispatches onto the
+   session queue (0x14564); the head-unit hook always passes a completion, so
+   pass a no-op completion `(OSStatus, CFRef, void *)` instead of NULL.
+
+6. **VIDEO_CONFIG handling** (blocks step 3).
+   Only the first config is cached (`config_seen`) and later ones are never
+   forwarded; the cached one is resent with a zeroed header, which loses the
+   params (source size floats at params+8/+12, flags in smallParam). Fix:
+   cache the full header and body on every VIDEO_CONFIG (replace the previous
+   copy); if the head-unit socket is open, forward it right away, unchanged
+   (it is not encrypted); on (re)connect send the cached header and body as is.
+
+7. **Smaller items.**
+   - Relay only when the phone key is valid (`phone_valid`); otherwise frames
+     are still ciphertext and would reach the head unit as garbage.
+   - Re-encrypt for the head unit in place (the body is not needed after the
+     dump) instead of a second `malloc` per frame.
+   - Add `_Static_assert(sizeof(ScreenHeader) == 128)`.
+   - Periodic relay line: `hu sent=N err=N gen=N`, so step 3 shows progress in
+     `dmesg.log`.
+   - Rename the key-capture log to `head-unit screen key captured hu_gen=N`
+     (it fires in every step, also in v1132, which is a useful step-1 signal).
+
+Known limitation, not a bug: the head-unit socket belongs to one receiver
+thread, so a phone 111 reconnect within the same head-unit session cannot
+relay again (the head-unit hook has closed its listener). Fix later (step D)
+by keeping the relay struct global, or by forcing a head-unit re-SETUP.
+
+Verified while reviewing (no change needed): `TearDown(session, request,
+reason, outDone)` takes the request dict in r1 and NULL-checks it (0x145c4);
+the AES-CTR context in libAirPlay is ≤0x118 bytes (`screen+0xb8`..`+0x1d0`),
+so the 512-byte `AesCtx` is large enough; system `python3` 3.12 runs
+`flash_local.py` and `getlogs.py` (stdlib only; no `.venv` needed).
+
 ## 1. Ground rules
 
 - Head-unit guard stays **ON** (`sender_listed()` returns 1 for iPhone9,1/18D70). Never count:2 (F5).

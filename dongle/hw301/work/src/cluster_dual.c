@@ -78,6 +78,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
 #define UTF8 0x08000100
@@ -125,6 +126,8 @@ typedef struct {
 
 typedef union { uint64_t align; unsigned char bytes[512]; } AesCtx;
 
+_Static_assert(sizeof(ScreenHeader) == HDR_SIZE, "screen header must be 128 bytes");
+
 /* ---- real functions (resolved lazily) ---------------------------------- */
 static void (*r_ensure)(void **, const void *);
 static int64_t (*r_get_i64)(CFRef, CFRef, OSStatus *);
@@ -139,6 +142,7 @@ static OSStatus (*r_send_cmd)(void *, CFRef, void *, void *);
 static void (*r_derive)(const void *, size_t, uint64_t, uint8_t *, uint8_t *);
 
 static void (*cf_release)(CFRef);
+static CFRef (*cf_retain)(CFRef);
 static CFRef (*cf_string)(CFRef, const char *, uint32_t);
 static unsigned long (*cf_get_type)(CFRef);
 static unsigned long (*cf_dict_type)(void);
@@ -175,10 +179,12 @@ static uint8_t g_master[16];
 static int g_master_valid;
 static uint8_t g_hu_key[16], g_hu_iv[16];   /* head-unit 111 key (== stream 110) */
 static int g_hu_key_valid;
-static unsigned g_gen;                      /* bumps to retire the receiver thread */
-static int g_listen_fd = -1;
-static pthread_t g_thread;
-static int g_thread_live;
+/* Two independent generations. A phone-side 111 SETUP or teardown retires the
+ * receiver thread (g_rx_gen). A head-unit screen re-setup only re-keys the
+ * relay (g_hu_gen). They must not share a counter: a HU re-setup ~190s into a
+ * session would otherwise kill the live phone 111 stream. */
+static unsigned g_rx_gen;
+static unsigned g_hu_gen;
 
 /* ---- logging ----------------------------------------------------------- */
 static void dlog(const char *fmt, ...) {
@@ -226,6 +232,7 @@ static void bind_all(void) {
     NEED(r_send_cmd, "AirPlayReceiverSessionSendCommand");
     NEED(r_derive, "AirPlay_DeriveAESKeySHA512ForScreen");
     NEED(cf_release, "CFRelease");
+    NEED(cf_retain, "CFRetain");
     NEED(cf_string, "CFStringCreateWithCString");
     NEED(cf_get_type, "CFGetTypeID");
     NEED(cf_dict_type, "CFDictionaryGetTypeID");
@@ -485,6 +492,7 @@ OSStatus AirPlayReceiverSessionSetSecurityInfo(void *session, const uint8_t *key
  * The clone keeps 110's streamConnectionID, so 110's key == 111's key. */
 OSStatus AES_CTR_Init(void *ctx, const uint8_t *key, const uint8_t *iv) {
     OSStatus e;
+    unsigned gen;
     void *ra = __builtin_return_address(0);
     if (!ready()) return r_ctr_init ? r_ctr_init(ctx, key, iv) : -1;
     e = r_ctr_init(ctx, key, iv);
@@ -494,9 +502,9 @@ OSStatus AES_CTR_Init(void *ctx, const uint8_t *key, const uint8_t *iv) {
         memcpy(g_hu_key, key, 16);
         memcpy(g_hu_iv, iv, 16);
         g_hu_key_valid = 1;
-        g_gen++;                 /* new head-unit key -> drop any open relay socket */
+        gen = ++g_hu_gen;        /* new head-unit SETUP -> relay reconnects + re-keys */
         pthread_mutex_unlock(&g_lock);
-        dlog("head-unit 111 key captured gen=%u", g_gen);
+        dlog("head-unit screen key captured hu_gen=%u", gen);
     }
     return e;
 }
@@ -535,8 +543,9 @@ static int read_full(int fd, void *buf, size_t len, unsigned gen) {
         int pr = poll(&pf, 1, 1000);
         if (pr < 0) { if (errno == EINTR) continue; return -1; }
         if (pr == 0) {
+            int stale;
             pthread_mutex_lock(&g_lock);
-            int stale = (gen != g_gen);
+            stale = (gen != g_rx_gen);
             pthread_mutex_unlock(&g_lock);
             if (stale) return -1;
             continue;
@@ -620,20 +629,118 @@ static int hu_connect(void) {
     return fd;
 }
 
+/* SendCommand dispatches onto the session queue and the stock callers always
+ * pass a completion; give it a no-op one rather than NULL. */
+static void kf_done(OSStatus e, CFRef resp, void *ctx) {
+    (void)resp; (void)ctx;
+    if (e) dlog("forceKeyFrame completion rc=%d", e);
+}
+
 static void ask_keyframe(void *session) {
     CFRef req, params;
     if (!session || !r_send_cmd) return;
     req = cf_dict_new(0, 0, dict_key_cb, dict_val_cb);
     params = cf_dict_new(0, 0, dict_key_cb, dict_val_cb);
     if (req && params) {
+        OSStatus e;
         set_str(req, "type", "forceKeyFrame");
         set_str(params, "uuid", CLUSTER_UUID);
         set_value(req, "params", params);
-        r_send_cmd(session, req, 0, 0);
-        dlog("forceKeyFrame requested");
+        e = r_send_cmd(session, req, (void *)kf_done, 0);
+        dlog("forceKeyFrame requested rc=%d", e);
     }
     if (params) cf_release(params);
     if (req) cf_release(req);
+}
+
+/* ---- H.264 sanity checks (the step-2 decrypt test; no dongle shell needed) --
+ * A decrypted AVCC access unit tiles exactly into length-prefixed NALs; a wrong
+ * key fails this on the first frame. nal_len comes from the avcC (byte 4 & 3)+1. */
+static int au_ok(const uint8_t *p, uint32_t n, int nal_len, int *has_idr) {
+    uint32_t off = 0;
+    int nals = 0;
+    *has_idr = 0;
+    if (nal_len < 1 || nal_len > 4) nal_len = 4;
+    while (off + (uint32_t)nal_len <= n) {
+        uint32_t len = 0;
+        int k;
+        for (k = 0; k < nal_len; k++) len = (len << 8) | p[off + (uint32_t)k];
+        off += (uint32_t)nal_len;
+        if (len == 0 || len > n - off) return 0;
+        if (p[off] & 0x80) return 0;                 /* forbidden_zero_bit must be 0 */
+        if ((p[off] & 0x1f) == 5) *has_idr = 1;      /* IDR slice anywhere in the AU */
+        off += len;
+        nals++;
+    }
+    return off == n && nals > 0;
+}
+
+/* minimal MSB-first bit reader over an RBSP */
+struct br { const uint8_t *p; uint32_t n, pos, bad; };
+static unsigned br_bit(struct br *b) {
+    unsigned v;
+    if (b->pos >= b->n * 8) { b->bad = 1; return 0; }
+    v = (b->p[b->pos >> 3] >> (7 - (b->pos & 7))) & 1u;
+    b->pos++;
+    return v;
+}
+static unsigned br_bits(struct br *b, int k) {
+    unsigned v = 0;
+    while (k-- > 0) v = (v << 1) | br_bit(b);
+    return v;
+}
+static unsigned br_ue(struct br *b) {
+    int z = 0;
+    while (!b->bad && br_bit(b) == 0) if (++z > 31) { b->bad = 1; return 0; }
+    return ((1u << z) - 1u) + br_bits(b, z);
+}
+
+/* NAL-length field width + coded WxH from the first SPS in an avcC record.
+ * Returns the nal_len (1..4); sets w/h to 0 if the SPS is not parsed. */
+static int avcc_parse(const uint8_t *c, uint32_t n, int *w, int *h) {
+    uint8_t rb[192];
+    uint32_t sps_len, i, rn = 0;
+    unsigned profile, cw, ch, fmo = 1, cl = 0, cr = 0, ct = 0, cb = 0, poc;
+    int nal_len = 4;
+    struct br b;
+    *w = *h = 0;
+    if (n >= 5 && c[0] == 1) nal_len = (c[4] & 3) + 1;
+    if (n < 9 || c[0] != 1 || (c[5] & 0x1f) < 1) return nal_len;
+    sps_len = ((uint32_t)c[6] << 8) | c[7];
+    if (sps_len < 4 || 8 + sps_len > n) return nal_len;
+    for (i = 1; i < sps_len && rn < sizeof rb; i++) {       /* strip header + emulation */
+        if (i >= 3 && c[8 + i] == 3 && c[8 + i - 1] == 0 && c[8 + i - 2] == 0) continue;
+        rb[rn++] = c[8 + i];
+    }
+    b.p = rb; b.n = rn; b.pos = 0; b.bad = 0;
+    profile = br_bits(&b, 8);
+    br_bits(&b, 16);                                        /* constraints + level */
+    br_ue(&b);                                              /* sps id */
+    if (profile == 100 || profile == 110 || profile == 122 || profile == 244 ||
+        profile == 44 || profile == 83 || profile == 86 || profile == 118 || profile == 128) {
+        if (br_ue(&b) == 3) br_bit(&b);                     /* chroma_format_idc */
+        br_ue(&b); br_ue(&b); br_bit(&b);                   /* bit depths, qpprime */
+        if (br_bit(&b)) return nal_len;                     /* scaling lists: give up */
+    }
+    br_ue(&b);                                              /* log2_max_frame_num */
+    poc = br_ue(&b);
+    if (poc == 0) { br_ue(&b); }
+    else if (poc == 1) {
+        unsigned nref, j;
+        br_bit(&b); br_ue(&b); br_ue(&b); nref = br_ue(&b);
+        if (nref > 128) return nal_len;
+        for (j = 0; j < nref; j++) br_ue(&b);
+    }
+    br_ue(&b); br_bit(&b);                                  /* max_num_ref_frames, gaps */
+    cw = br_ue(&b); ch = br_ue(&b);
+    if (br_bit(&b)) fmo = 1; else { fmo = 0; br_bit(&b); }  /* frame_mbs_only, field flag */
+    br_bit(&b);                                             /* direct_8x8_inference */
+    if (br_bit(&b)) { cl = br_ue(&b); cr = br_ue(&b); ct = br_ue(&b); cb = br_ue(&b); }
+    if (b.bad) return nal_len;
+    *w = (int)((cw + 1) * 16 - 2 * (cl + cr));
+    *h = (int)((2 - fmo) * (ch + 1) * 16 - 2 * (2 - fmo) * (ct + cb));
+    if (*w <= 0 || *h <= 0) { *w = *h = 0; }
+    return nal_len;
 }
 
 /* ============ PHONE 111 RECEIVER + RELAY ============ */
@@ -654,10 +761,19 @@ static void *rx_thread(void *varg) {
     int listen_fd = a.listen_fd, c = -1, hu = -1, dfd = -1;
     size_t dn = 0;
     AesCtx phone_ctx, hu_ctx;
-    int phone_valid = 0, hu_valid = 0, config_seen = 0;
-    unsigned long frames = 0, idr = 0, send_err = 0;
+    int phone_valid = 0, hu_valid = 0;
+    int nal_len = 4, cfg_w = 0, cfg_h = 0;
+    unsigned long frames = 0, idr = 0, bad = 0, relayed = 0, send_err = 0;
     uint8_t key[16], iv[16];
-    uint8_t *cfg = 0; uint32_t cfg_len = 0;
+    /* full cached VIDEO_CONFIG (header + body), replaced on every config */
+    ScreenHeader cfg_hdr; uint8_t *cfg = 0; uint32_t cfg_len = 0;
+    /* relay socket lifecycle: tracks the head-unit key generation it was keyed
+     * for; after a failure it stays dead until g_hu_gen advances (the HU hook
+     * accepts one connection per SETUP). next_try throttles pre-connect tries. */
+    unsigned hu_for_gen = 0;
+    int hu_dead = 0;
+    time_t next_try = 0;
+    memset(&cfg_hdr, 0, sizeof cfg_hdr);
 
     /* derive the phone-side per-stream key */
     pthread_mutex_lock(&g_lock);
@@ -669,12 +785,13 @@ static void *rx_thread(void *varg) {
     memset(key, 0, sizeof key); memset(iv, 0, sizeof iv);
     if (!phone_valid) dlog("no phone key; decrypt disabled (U2: ChaCha?)");
 
-    /* accept the iPhone 111 connection */
+    /* accept the iPhone 111 connection, then this thread owns and closes its
+     * own listen fd (one connection per SETUP is enough). */
     for (;;) {
         struct pollfd pf = { listen_fd, POLLIN, 0 };
-        int pr = poll(&pf, 1, 1000);
+        int pr = poll(&pf, 1, 1000), stale;
         pthread_mutex_lock(&g_lock);
-        int stale = (a.gen != g_gen);
+        stale = (a.gen != g_rx_gen);
         pthread_mutex_unlock(&g_lock);
         if (stale) goto done;
         if (pr < 0) { if (errno == EINTR) continue; goto done; }
@@ -683,6 +800,7 @@ static void *rx_thread(void *varg) {
         if (c < 0) { if (errno == EINTR) continue; goto done; }
         break;
     }
+    close(listen_fd); listen_fd = -1;
     dlog("111 connected from iPhone cid=%llu", (unsigned long long)a.cid);
 
     for (;;) {
@@ -698,71 +816,84 @@ static void *rx_thread(void *varg) {
         }
 
         if (h.opcode == OP_VIDEO_CONFIG) {
-            if (body && h.bodySize && !config_seen) {
-                config_seen = 1;
-                free(cfg);
-                cfg = malloc(h.bodySize);
-                if (cfg) { memcpy(cfg, body, h.bodySize); cfg_len = h.bodySize; }
-                dlog("111 video config body=%u", h.bodySize);
+            if (body && h.bodySize) {
+                uint8_t *nc = malloc(h.bodySize);   /* cache every config, not just the first */
+                if (nc) {
+                    memcpy(nc, body, h.bodySize);
+                    free(cfg); cfg = nc; cfg_len = h.bodySize; cfg_hdr = h;
+                    nal_len = avcc_parse(cfg, cfg_len, &cfg_w, &cfg_h);
+                    dlog("111 video config body=%u sps=%dx%d nal_len=%d", h.bodySize, cfg_w, cfg_h, nal_len);
+                }
+                /* forward a config update to an already-open head-unit socket (plain) */
+                if (hu >= 0 && (send_full(hu, &h, sizeof h) != 0 || send_full(hu, body, h.bodySize) != 0)) {
+                    send_err++; close(hu); hu = -1; hu_dead = 1;
+                    if (hu_valid) { r_ctr_final(&hu_ctx); hu_valid = 0; }
+                    dlog("head-unit config forward failed; relay stops until next HU SETUP");
+                }
             }
         } else if (h.opcode == OP_VIDEO_FRAME) {
             if (body && h.bodySize) {
+                int has_idr = 0, ok;
                 if (phone_valid && r_ctr_update(&phone_ctx, body, h.bodySize, body) != 0) {
                     dlog("phone AES-CTR decrypt failed"); free(body); break;
                 }
                 frames++;
-                /* length-prefixed NAL sanity + IDR count (nal type 5) */
-                if (h.bodySize >= 5) {
-                    uint8_t nt = body[4] & 0x1f;
-                    if (nt == 5) idr++;
-                }
+                ok = au_ok(body, h.bodySize, nal_len, &has_idr);  /* decrypt / framing test */
+                if (!ok) bad++;
+                if (has_idr) idr++;
                 dump_au(&dfd, &dn, body, h.bodySize);
                 if (frames == 1 || frames % 300 == 0)
-                    dlog("111 frames=%lu idr=%lu bytes=%u", frames, idr, h.bodySize);
+                    dlog("111 frames=%lu idr=%lu bad=%lu nal_ok=%d relayed=%lu send_err=%lu",
+                         frames, idr, bad, ok, relayed, send_err);
 
-                if (STEP_RELAY && !disabled() && !flag(NORELAY_FILE)) {
-                    /* lazy head-unit connect on the first frame */
-                    if (hu < 0) {
-                        pthread_mutex_lock(&g_lock);
-                        int have = g_hu_key_valid;
-                        if (have) { memcpy(key, g_hu_key, 16); memcpy(iv, g_hu_iv, 16); }
-                        pthread_mutex_unlock(&g_lock);
-                        if (!have) {
-                            if (frames == 1) dlog("waiting for head-unit 111 key");
-                        } else {
+                /* relay only makes sense once we have real H.264 (phone key valid) */
+                if (STEP_RELAY && phone_valid && !disabled() && !flag(NORELAY_FILE)) {
+                    unsigned cur_gen;
+                    int have;
+                    pthread_mutex_lock(&g_lock);
+                    cur_gen = g_hu_gen;
+                    have = g_hu_key_valid;
+                    if (have) { memcpy(key, g_hu_key, 16); memcpy(iv, g_hu_iv, 16); }
+                    pthread_mutex_unlock(&g_lock);
+
+                    /* a new head-unit SETUP (key gen advanced) revives the relay */
+                    if (hu_dead && cur_gen != hu_for_gen) hu_dead = 0;
+                    /* key gen advanced while connected: reconnect with the new key */
+                    if (hu >= 0 && cur_gen != hu_for_gen) {
+                        close(hu); hu = -1;
+                        if (hu_valid) { r_ctr_final(&hu_ctx); hu_valid = 0; }
+                        dlog("head-unit key changed (gen %u->%u); reconnecting", hu_for_gen, cur_gen);
+                    }
+
+                    if (hu < 0 && have && !hu_dead) {
+                        time_t now = time(0);
+                        if (now >= next_try) {
+                            next_try = now + 5;            /* throttle pre-connect attempts */
                             hu = hu_connect();
+                            hu_for_gen = cur_gen;
                             if (hu >= 0) {
                                 hu_valid = 0;
                                 if (!flag(PLAINHU_FILE) && r_ctr_init(&hu_ctx, key, iv) == 0) hu_valid = 1;
-                                memset(key, 0, sizeof key); memset(iv, 0, sizeof iv);
-                                /* send cached config, then ask for a keyframe */
-                                if (cfg && cfg_len) {
-                                    ScreenHeader ch; memset(&ch, 0, sizeof ch);
-                                    ch.bodySize = cfg_len; ch.opcode = OP_VIDEO_CONFIG;
-                                    if (send_full(hu, &ch, sizeof ch) == 0) send_full(hu, cfg, cfg_len);
-                                }
-                                ask_keyframe(a.session);
+                                if (cfg && cfg_len)       /* replay the real config header + body */
+                                    if (send_full(hu, &cfg_hdr, sizeof cfg_hdr) != 0 ||
+                                        send_full(hu, cfg, cfg_len) != 0) {
+                                        close(hu); hu = -1; hu_dead = 1;
+                                        if (hu_valid) { r_ctr_final(&hu_ctx); hu_valid = 0; }
+                                    }
+                                if (hu >= 0) ask_keyframe(a.session);
+                            } else {
+                                hu_dead = 1;              /* one accept per HU SETUP; wait for next gen */
                             }
                         }
                     }
                     if (hu >= 0) {
-                        ScreenHeader oh = h;
-                        uint8_t *out = body;
-                        if (hu_valid) {
-                            out = malloc(h.bodySize);
-                            if (out && r_ctr_update(&hu_ctx, body, h.bodySize, out) != 0) {
-                                free(out); out = 0;
-                            }
-                        }
-                        if (out) {
-                            if (send_full(hu, &oh, sizeof oh) != 0 ||
-                                send_full(hu, out, oh.bodySize) != 0) {
-                                send_err++;
-                                close(hu); hu = -1;
-                                if (hu_valid) { r_ctr_final(&hu_ctx); hu_valid = 0; }
-                                dlog("head-unit send failed; dropping relay (send_err=%lu)", send_err);
-                            }
-                            if (out != body) free(out);
+                        if (hu_valid) r_ctr_update(&hu_ctx, body, h.bodySize, body);  /* re-encrypt in place */
+                        if (send_full(hu, &h, sizeof h) != 0 || send_full(hu, body, h.bodySize) != 0) {
+                            send_err++; close(hu); hu = -1; hu_dead = 1;
+                            if (hu_valid) { r_ctr_final(&hu_ctx); hu_valid = 0; }
+                            dlog("head-unit send failed; relay stops until next HU SETUP (send_err=%lu)", send_err);
+                        } else {
+                            relayed++;
                         }
                     }
                 }
@@ -773,18 +904,17 @@ static void *rx_thread(void *varg) {
     }
 
 done:
-    dlog("111 receiver exit frames=%lu idr=%lu send_err=%lu", frames, idr, send_err);
+    dlog("111 receiver exit frames=%lu idr=%lu bad=%lu relayed=%lu send_err=%lu",
+         frames, idr, bad, relayed, send_err);
+    memset(key, 0, sizeof key); memset(iv, 0, sizeof iv);
+    if (listen_fd >= 0) close(listen_fd);   /* only set if we exited before accept */
     if (c >= 0) close(c);
     if (hu >= 0) close(hu);
     if (dfd >= 0) close(dfd);
     free(cfg);
     if (phone_valid) r_ctr_final(&phone_ctx);
     if (hu_valid) r_ctr_final(&hu_ctx);
-    pthread_mutex_lock(&g_lock);
-    if (g_listen_fd == listen_fd) { close(g_listen_fd); g_listen_fd = -1; }
-    else close(listen_fd);
-    if (a.gen == g_gen) g_thread_live = 0;
-    pthread_mutex_unlock(&g_lock);
+    if (a.session && cf_release) cf_release(a.session);   /* retained in start_receiver */
     return 0;
 }
 
@@ -830,34 +960,31 @@ static void append_response_111(CFRef response, CFRef requested_111, int port) {
 static void start_receiver(uint64_t cid, void *session, CFRef response, CFRef req111) {
     int port = 0, lfd;
     struct rx_arg *arg;
+    unsigned gen;
     pthread_t th;
-    /* retire any previous receiver */
+    /* retire any previous receiver (it polls g_rx_gen and exits within ~1s,
+     * closing its own listen fd; until then port 7100 may still be bound, so
+     * the new listener falls back to an ephemeral port - fine, the actual port
+     * is what we return in the response). */
     pthread_mutex_lock(&g_lock);
-    g_gen++;
-    if (g_listen_fd >= 0) { close(g_listen_fd); g_listen_fd = -1; }
+    gen = ++g_rx_gen;
     pthread_mutex_unlock(&g_lock);
 
     lfd = open_listener(&port);
     if (lfd < 0) { dlog("111 listener bind failed: %s", strerror(errno)); return; }
     arg = malloc(sizeof *arg);
     if (!arg) { close(lfd); return; }
-    pthread_mutex_lock(&g_lock);
-    g_listen_fd = lfd;
     arg->listen_fd = lfd;
-    arg->gen = g_gen;
+    arg->gen = gen;
     arg->cid = cid;
-    arg->session = session;
+    arg->session = (session && cf_retain) ? cf_retain(session) : session;
     if (pthread_create(&th, 0, rx_thread, arg) != 0) {
-        g_listen_fd = -1;
-        pthread_mutex_unlock(&g_lock);
+        if (arg->session && cf_release) cf_release(arg->session);
         close(lfd); free(arg);
         dlog("111 receiver thread create failed");
         return;
     }
     pthread_detach(th);
-    g_thread = th;
-    g_thread_live = 1;
-    pthread_mutex_unlock(&g_lock);
     append_response_111(response, req111, port);
     dlog("111 receiver ready cid=%llu port=%d", (unsigned long long)cid, port);
 }
@@ -890,11 +1017,10 @@ OSStatus AirPlayReceiverSessionSetup(void *session, CFRef request, CFRef *respon
 
 void AirPlayReceiverSessionTearDown(void *session, CFRef request, OSStatus reason, void *done) {
     if (!ready()) { if (r_teardown) r_teardown(session, request, reason, done); return; }
-    /* a NULL request or one that names 111 retires the receiver */
+    /* a NULL request (whole session) or one that names 111 retires the receiver */
     if (!disabled() && (request == 0 || find_stream(request, TYPE_CLUSTER))) {
         pthread_mutex_lock(&g_lock);
-        g_gen++;
-        if (g_listen_fd >= 0) { close(g_listen_fd); g_listen_fd = -1; }
+        g_rx_gen++;
         pthread_mutex_unlock(&g_lock);
         dlog("teardown retires 111 receiver");
     }
