@@ -224,6 +224,72 @@ Phone side (app.log clock is ~1.75 s behind dmesg):
 `altScreen`) or the added display (type 111, cloned keys, extra `displayUUID`).
 The dongle is unusable for normal CarPlay with this image: flash stock back.
 
+## PLAN FROM HERE (2026-10-19, after step 1 passed)
+
+Standing test protocol for every image (no exceptions):
+- Bench flash; keep `work/rollback/restore-app-v129-at-0x7e0000.bin` + a full
+  dump (FEL recovery is proven, ~5 min).
+- In the car: iPhone cabled to the Mac with `idevicesyslog > iphone-<ver>.log`
+  running; reproduce; pull dongle logs with getlogs.py BEFORE unplugging the
+  dongle (dmesg is lost on reboot).
+- Read the iPhone log first: `grep -E "carEndpoint|FeatureKey|AltScreen|
+  screen stream|kNotFoundErr|Deactivating|Endpoint_Failed"`.
+- Daily driving between tests: stock v129 or v1141.
+
+### Phase A - step 2a "transport" (next build, v1146)
+Goal: iOS opens stream 111 to the dongle and keeps CarPlay up. No decryption.
+- Rebuild step 2 with every step-1 fix (viewAreas, real false, features in the
+  SETUP response). On the 111 SETUP: open the listener, append the 111 entry
+  (clone of the request + dataPort + streamID=111) to the stock response.
+- Receiver counts frames/bytes per opcode only (phone key not used: the
+  stream is ChaCha, see Phase B). Never reject a frame on size alone during
+  this phase; just count and log the first header fields.
+- Also log the keys of the stock 110 entry in the SETUP response, so the 111
+  entry can be made to match it if iOS wants more than dataPort/streamID.
+Pass: iPhone log shows the 111 screen stream resumed with no `kNotFoundErr`,
+no `Endpoint_Failed`; dongle log shows `111 connected` and frames climbing;
+MMI CarPlay stays up for 10 min.
+If it fails: the iPhone log names the missing response key or the connect
+error; adjust the 111 response entry and repeat.
+
+### Phase B - step 2b decrypt the cluster stream (ChaCha)
+Goal: plaintext H.264 of the cluster on the dongle (`nal_ok=1`,
+`sps=1440x540`).
+- Research first, offline (Ghidra on libAirPlay v129, no car trips): how stock
+  sets up a ChaCha screen stream - which key it derives for a stream ID and
+  how `_AirPlayReceiverSessionScreen_ProcessFrame` decrypts a frame (nonce
+  source, what is authenticated, where the tag sits, header handling).
+- Implement the same for stream 111 inside the shim; validate with the
+  existing nal_ok / SPS checks (log-only, no relay).
+- This is the piece whose implementation was interrupted in this session; do
+  it in small, separately reviewed changes.
+Pass: `111 video config ... sps=1440x540`, `nal_ok=1 bad=0`, idr climbing.
+
+### Phase C - step 3 relay to the head unit (v1134 path, rebuilt)
+Goal: map on the Virtual Cockpit, CarPlay on the MMI.
+- Already implemented and reviewed (inject 111 into the dongle->HU SETUP,
+  capture the HU screen AES key, shared relay socket, re-encrypt, forward,
+  key-frame request). Rebuild on top of Phases A+B; feed it the plaintext
+  frames from Phase B.
+- Head unit side: no change; the sender guard stays ON.
+Pass: `/tmp/altscreen111.log` on the head unit shows `stream 111 connected`
+-> `valid transactional video config` -> `first complete Screen VIDEO_FRAME
+accepted`; map visible on the VC; both screens stable 10+ min.
+
+### Phase D - hardening
+- Phone 111 reconnects, head-unit re-SETUP mid-session, Wi-Fi drops,
+  ignition cycles; every failure must fall back to "main screen only".
+- Forward the head-unit's cluster commands (showUI/updateViewArea/zoom) to the
+  iPhone if layout switching is needed.
+- Remove diagnostic dumps from the default build; update README/release notes
+  only after Phase C passes.
+
+### Decision points
+- Phase A fails repeatedly with iOS insisting on something the receiver cannot
+  provide -> stop and reassess before Phase B.
+- Phase B research shows the per-stream key cannot be reproduced for 111 ->
+  fall back to the shipped mirror (v1129) for the VC.
+
 STEP 1 PASSED (2026-10-19, v1145, iPhone log): iOS accepts the cluster.
 - `Activated endpoint 'CarPlay'`; display `CarPlay (ScreenAlt)` 1440x540,
   290x108 mm, UUID b7e6c5a0-...; two screen streams created;
