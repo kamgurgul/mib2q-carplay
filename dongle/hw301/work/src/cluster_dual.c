@@ -45,7 +45,7 @@
  *   cluster_dual.off       everything stock (pure pass-through)
  *   cluster_dual.noinject  force off: no 111 in the SETUP to the head unit
  *   cluster_dual.norelay   force off: receive+decrypt but never touch the HU
- *   cluster_viewareas.on   advertise viewAreas feature + areas
+ *   (viewAreas are always advertised now - required by iOS, see v1142 result)
  *   cluster_dual.plainhu   send plain (unencrypted) frames to the head unit
  *   cluster_dump.on        dump decrypted 111 AUs to /mnt/UDISK/c111.h264 (~2MB)
  * Port override: cluster_hu.port
@@ -106,7 +106,6 @@
 #define OFF_FILE "/mnt/UDISK/cluster_dual.off"
 #define NOINJECT_FILE "/mnt/UDISK/cluster_dual.noinject"
 #define NORELAY_FILE "/mnt/UDISK/cluster_dual.norelay"
-#define VIEWAREAS_FILE "/mnt/UDISK/cluster_viewareas.on"
 #define PLAINHU_FILE "/mnt/UDISK/cluster_dual.plainhu"
 #define DUMP_FILE "/mnt/UDISK/cluster_dump.on"
 #define DUMP_PATH "/mnt/UDISK/c111.h264"
@@ -406,7 +405,10 @@ static int caller_is_cpaa(void *ra) {
 static void merge_features(CFRef info) {
     CFRef existing = cf_dict_get(info, k_features), copy, alt = 0, va = 0;
     long i, n = 0;
-    int have_alt = 0, have_va = 0, want_va = flag(VIEWAREAS_FILE);
+    /* viewAreas always: every head-unit session where iOS accepted the cluster
+     * advertised it (root feature + per-display viewAreas); v1142 without it
+     * was torn down by the phone ~100 ms after /info. */
+    int have_alt = 0, have_va = 0, want_va = 1;
     if (is_type(existing, cf_array_type)) {
         copy = cf_array_copy(0, 0, existing);
         if (copy) n = cf_array_count(copy);
@@ -425,6 +427,39 @@ static void merge_features(CFRef info) {
     if (va) cf_release(va);
     if (alt) cf_release(alt);
     cf_release(copy);
+}
+
+/* One view area: full 1440x540 canvas with a safe area, policy booleans false.
+ * Identical to the head-unit hook's add_reference_viewarea (carplay_logs/021). */
+static void add_view(CFRef areas, int sx, int sy, int sw, int sh) {
+    CFRef view = cf_dict_new(0, 0, dict_key_cb, dict_val_cb);
+    CFRef safe = cf_dict_new(0, 0, dict_key_cb, dict_val_cb);
+    if (view && safe) {
+        set_i64(view, "widthPixels", CLUSTER_W);
+        set_i64(view, "heightPixels", CLUSTER_H);
+        set_i64(view, "originXPixels", 0);
+        set_i64(view, "originYPixels", 0);
+        set_i64(safe, "widthPixels", sw);
+        set_i64(safe, "heightPixels", sh);
+        set_i64(safe, "originXPixels", sx);
+        set_i64(safe, "originYPixels", sy);
+        set_value(view, "drawUIOutsideSafeArea", (CFRef)bool_false);
+        set_value(view, "viewAreaTransitionControl", (CFRef)bool_false);
+        set_value(view, "safeArea", safe);
+        cf_array_append(areas, view);
+    }
+    if (safe) cf_release(safe);
+    if (view) cf_release(view);
+}
+
+static void add_views(CFRef alt) {
+    CFRef areas = cf_array_new(0, 0, array_cb);
+    if (!areas) return;
+    add_view(areas, 360, 87, 720, 297);   /* [0] wide: small dials */
+    add_view(areas, 520, 87, 400, 297);   /* [1] classic: between the dials */
+    set_value(alt, "viewAreas", areas);
+    set_i64(alt, "initialViewArea", 0);
+    cf_release(areas);
 }
 
 static void add_urls(CFRef alt) {
@@ -548,9 +583,10 @@ static CFRef augment_info(CFRef base) {
     set_i64(alt, "widthPhysical", CLUSTER_WMM);
     set_i64(alt, "heightPhysical", CLUSTER_HMM);
     set_str(alt, "uuid", CLUSTER_UUID);
-    set_str(alt, "displayUUID", CLUSTER_UUID);
+    /* no "displayUUID": the stock display and the head-unit hook's both use only "uuid" */
     set_str(alt, "initialURL", URL_CLUSTER);
     add_urls(alt);
+    add_views(alt);
     cf_array_append(displays, alt);
     cf_dict_set(info, k_displays, displays);
     dlog("/info cluster display added displays=%ld", cf_array_count(displays));

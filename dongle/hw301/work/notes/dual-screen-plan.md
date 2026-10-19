@@ -224,6 +224,26 @@ Phone side (app.log clock is ~1.75 s behind dmesg):
 `altScreen`) or the added display (type 111, cloned keys, extra `displayUUID`).
 The dongle is unusable for normal CarPlay with this image: flash stock back.
 
+DIAGNOSTIC RESULTS (2026-10-19):
+- v1140 (stock /info): session stays up -> the shim itself is harmless.
+- v1141 (enabledFeatures += altScreen only): session stays up.
+- v1142 (cluster display only): phone sends a whole-session TEARDOWN
+  (`streams=<none> reason=0`) ~100 ms after /info -> the display is rejected.
+- Phone screen 110 is ChaCha20-Poly1305 (`keylen=32`), NOT AES-CTR: step 2's
+  receiver must decrypt 111 with ChaCha (open item 1 below is now confirmed).
+- Stock /info: no root `enabledFeatures`; features=0x6104040280 (bits 7,9,18,
+  26,32,37,38); displays[0] has only widthPixels=1024 heightPixels=480
+  widthPhysical=188 heightPhysical=88 uuid maxFPS=30 features=2 (no `type`,
+  no primaryInputDevice).
+- Reference (carplay_logs/011-021, head unit + real iPhone17,1, iOS 24A446):
+  iOS accepts the cluster and opens 111 in <100 ms, ALWAYS with viewAreas:
+  root enabledFeatures = altScreen+viewAreas; display has viewAreas[2]
+  (wide safe 720x297@360,87; classic safe 400x297@520,87; full 1440x540
+  areas; drawUIOutsideSafeArea/viewAreaTransitionControl=false;
+  initialViewArea=0) and no `displayUUID`.
+- Fix (v1143, `build_dual.sh hu1`): display now identical to the head-unit
+  hook's: viewAreas always (root + display), `displayUUID` removed.
+
 DIAGNOSTIC BUILD READY (2026-10-19): `build_dual.sh advert` -> three images,
 all import-checked, `/info` edits dead-code-gated per variant (verified):
   v1140 (ADVERT=0) stock /info, logged only  -> CONTROL, must keep CarPlay up

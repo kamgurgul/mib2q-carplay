@@ -36,6 +36,9 @@ case "${1:-all}" in
   advert0) build_step 1 1140 0 ;;
   advert1) build_step 1 1141 1 ;;
   advert2) build_step 1 1142 2 ;;
+  # v1143: both edits, display now identical to the head-unit hook's proven one
+  # (viewAreas always, no displayUUID) after v1142 showed the display is rejected.
+  hu1) build_step 1 1143 3 ;;
   advert)
     build_step 1 1140 0
     build_step 1 1141 1
@@ -48,5 +51,5 @@ case "${1:-all}" in
     build_step 3 1134
     echo "######## all three images in work/out/ ########"
     ;;
-  *) echo "usage: $0 [1|2|3|all|advert|advert0|advert1|advert2]"; exit 1 ;;
+  *) echo "usage: $0 [1|2|3|all|advert|advert0|advert1|advert2|hu1]"; exit 1 ;;
 esac
