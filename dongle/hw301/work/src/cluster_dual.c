@@ -282,6 +282,12 @@ static void bind_all(void) {
     NEED(dict_key_cb, "kCFLDictionaryKeyCallBacksCFLTypes");
     NEED(dict_val_cb, "kCFLDictionaryValueCallBacksCFLTypes");
     NEED(bool_false, "kCFLBooleanFalse");
+    /* kCFLBooleanFalse is a 4-byte pointer VARIABLE (libCoreUtils .data, size 4),
+     * not the boolean object: dlsym gives the variable's address. The callback
+     * tables above are real structs (20/24 bytes), so they are used by address.
+     * v1143 put the variable's address into viewAreas -> malformed /info. */
+    bool_false = *(const void *const *)bool_false;
+    if (!bool_false) { dlog("kCFLBooleanFalse is NULL"); return; }
 #undef NEED
     *(void **)&cf_cstr_ptr = next_sym("CFStringGetCStringPtr");
     *(void **)&cf_cstr_get = next_sym("CFStringGetCString");

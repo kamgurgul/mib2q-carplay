@@ -38,7 +38,7 @@ case "${1:-all}" in
   advert2) build_step 1 1142 2 ;;
   # v1143: both edits, display now identical to the head-unit hook's proven one
   # (viewAreas always, no displayUUID) after v1142 showed the display is rejected.
-  hu1) build_step 1 1143 3 ;;
+  hu1) build_step 1 1144 3 ;;   # v1144: + real kCFLBooleanFalse (v1143 used its address)
   advert)
     build_step 1 1140 0
     build_step 1 1141 1
