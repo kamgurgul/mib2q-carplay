@@ -48,6 +48,11 @@ case "${1:-all}" in
   # (Output key). nal_ok stays 0 -> rebuild with step2b-input (Input key).
   step2b) build_step 2 1148 3 "-DSTEP_DECRYPT=1" ;;
   step2b-input) build_step 2 1149 3 "-DSTEP_DECRYPT=1 -DCLUSTER_KEY_INPUT=1" ;;
+  # v1150: Phase C. Step 3 (inject 111 to the head unit + relay) WITH decrypt.
+  # The plain "3" target (v1134) has STEP_DECRYPT=0 and therefore never relays.
+  # Use step3-input only if Phase B needed the Input key (v1149).
+  step3) build_step 3 1150 3 "-DSTEP_DECRYPT=1" ;;
+  step3-input) build_step 3 1151 3 "-DSTEP_DECRYPT=1 -DCLUSTER_KEY_INPUT=1" ;;
   advert)
     build_step 1 1140 0
     build_step 1 1141 1
@@ -60,5 +65,5 @@ case "${1:-all}" in
     build_step 3 1134
     echo "######## all three images in work/out/ ########"
     ;;
-  *) echo "usage: $0 [1|2|3|all|advert|advert0|advert1|advert2|hu1|step2a|step2b|step2b-input]"; exit 1 ;;
+  *) echo "usage: $0 [1|2|3|all|advert|advert0|advert1|advert2|hu1|step2a|step2b|step2b-input|step3|step3-input]"; exit 1 ;;
 esac
