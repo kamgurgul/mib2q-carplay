@@ -209,6 +209,47 @@ the AES-CTR context in libAirPlay is ≤0x118 bytes (`screen+0xb8`..`+0x1d0`),
 so the 512-byte `AesCtx` is large enough; system `python3` 3.12 runs
 `flash_local.py` and `getlogs.py` (stdlib only; no `.venv` needed).
 
+## STEP 1 RESULT (2026-10-19, v1132-20261019093451): iOS ends the session after /info
+
+The fixed shim loads and runs: `bind ok=1 step=1 spssi=0x5b7c4 cpaa_base=0x10000`,
+`head-unit screen key captured hu_gen=1`, dongle<->head unit SETUP 110 normal.
+Phone side (app.log clock is ~1.75 s behind dmesg):
+- 21.727 `EVENT_CARPLAY_SESSION_CREATED`
+- dmesg 23.45 first SETUP (`streams=<none>`, rc=0), dmesg 23.56 our `/info`
+  (`cluster display added displays=2`)
+- 21.815 `Recv CarPlay session ended event` - ~10 ms after our /info.
+  No screen SETUP, no screen key, no 111. Then BT/iAP2 disconnect.
+=> iOS rejects the modified /info. Not yet known which change: the root
+`enabledFeatures` (if stock had none, the shim creates a list with only
+`altScreen`) or the added display (type 111, cloned keys, extra `displayUUID`).
+The dongle is unusable for normal CarPlay with this image: flash stock back.
+
+DIAGNOSTIC BUILD READY (2026-10-19): `build_dual.sh advert` -> three images,
+all import-checked, `/info` edits dead-code-gated per variant (verified):
+  v1140 (ADVERT=0) stock /info, logged only  -> CONTROL, must keep CarPlay up
+  v1141 (ADVERT=1) merge enabledFeatures only
+  v1142 (ADVERT=2) append the cluster display only
+Each logs the stock /info (root + each display's keys/values) on the first two
+/info calls, plus the teardown reason and stream types. Flash one per car trip,
+IN THIS ORDER (v1140 first); grep dmesg for `stock /info`, `teardown reason`.
+Recover with stock v129 between trips if a variant drops the session.
+
+Implemented in cluster_dual.c:
+1. Log the stock /info before editing it: root keys with type and scalar value,
+   each `displays[]` entry's keys/values, the `enabledFeatures` strings. Use
+   `CFDictionaryApplyFunction`, `CFGetInt64`, `CFNumberGetTypeID`,
+   `CFBooleanGetTypeID`, `CFDataGetTypeID` (all exported by libCoreUtils;
+   resolve with `next_sym`, optional, so `check_imports.sh` is unaffected).
+   First two /info calls only; kmsg lines < 250 chars.
+2. Build-time `CLUSTER_ADVERT` bitmask, default 3: bit 0 = merge
+   `enabledFeatures`, bit 1 = add the cluster display; 0 = stock /info (log only).
+3. TearDown hook: always log `reason` and the request stream types.
+4. `build_dual.sh`: pass extra CFLAGS (e.g. `EXTRA_CFLAGS=-DCLUSTER_ADVERT=0`)
+   and use distinct codes per variant (e.g. 1140 + ADVERT) so the marker shows it.
+Test order (one car trip each): ADVERT=0 (control; must keep CarPlay up and
+gives the stock /info dump) -> compare with the head-unit hook's /info, which
+works with a real iPhone -> ADVERT=1 -> ADVERT=2 -> fix the failing part.
+
 ## INCIDENT + RECOVERY (2026-10-19): v1132 soft-brick, restored over FEL
 
 What happened: the first v1132 (marker `v1132-20261019084355`) imported

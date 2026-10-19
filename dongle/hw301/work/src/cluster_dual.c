@@ -63,6 +63,15 @@
 #endif
 #define STEP_RECEIVE (CLUSTER_STEP >= 2)   /* listen, append dataPort, decrypt */
 #define STEP_RELAY   (CLUSTER_STEP >= 3)   /* inject 111 to the HU and forward */
+
+/* Which /info edits to apply (step 1 found iOS ends the session right after our
+ * modified /info; this isolates the cause). bit0 = merge enabledFeatures,
+ * bit1 = append the cluster display. 0 = stock /info, logged only. */
+#ifndef CLUSTER_ADVERT
+#define CLUSTER_ADVERT 3
+#endif
+#define ADVERT_FEATURES (CLUSTER_ADVERT & 1)
+#define ADVERT_DISPLAY  (CLUSTER_ADVERT & 2)
 #define _GNU_SOURCE
 #include <arpa/inet.h>
 #include <dlfcn.h>
@@ -167,6 +176,13 @@ static const char *(*cf_cstr_ptr)(CFRef, uint32_t);
 static int (*cf_cstr_get)(CFRef, char *, long, uint32_t);
 static const void *array_cb, *dict_key_cb, *dict_val_cb, *bool_false;
 
+/* introspection (optional; resolved best-effort, not required by the hooks) */
+static void (*cf_dict_apply)(CFRef, void (*)(CFRef, CFRef, void *), void *);
+static int64_t (*cf_get_i64)(CFRef);
+static unsigned long (*cf_number_type)(void);
+static unsigned long (*cf_boolean_type)(void);
+static unsigned long (*cf_data_type)(void);
+
 static CFRef k_type, k_conn, k_streams, k_displays, k_features;
 
 /* address range of CPAAProxyEx's SetupProxyScreenSecurityInfo, for caller test */
@@ -270,6 +286,11 @@ static void bind_all(void) {
 #undef NEED
     *(void **)&cf_cstr_ptr = next_sym("CFStringGetCStringPtr");
     *(void **)&cf_cstr_get = next_sym("CFStringGetCString");
+    *(void **)&cf_dict_apply = next_sym("CFDictionaryApplyFunction");
+    *(void **)&cf_get_i64 = next_sym("CFGetInt64");
+    *(void **)&cf_number_type = next_sym("CFNumberGetTypeID");
+    *(void **)&cf_boolean_type = next_sym("CFBooleanGetTypeID");
+    *(void **)&cf_data_type = next_sym("CFDataGetTypeID");
 
     /* SetupProxyScreenSecurityInfo is a CPAAProxyEx (executable) export */
     spssi = dlsym_plain(RTLD_DEFAULT, "SetupProxyScreenSecurityInfo");
@@ -430,16 +451,71 @@ static int already_cluster(CFRef displays) {
     return 0;
 }
 
+/* ---- stock /info introspection (diagnostic; see STEP 1 RESULT) ---------- */
+static void describe(CFRef v, char *out, size_t cap) {
+    if (!v) { snprintf(out, cap, "<null>"); return; }
+    if (is_type(v, cf_string_type)) {
+        char b[96];
+        const char *p = cf_cstr_ptr ? cf_cstr_ptr(v, UTF8) : 0;
+        if (!p && cf_cstr_get && cf_cstr_get(v, b, (long)sizeof b, UTF8)) p = b;
+        snprintf(out, cap, "\"%s\"", p ? p : "?");
+    } else if (cf_number_type && is_type(v, cf_number_type)) {
+        snprintf(out, cap, "%lld", (long long)(cf_get_i64 ? cf_get_i64(v) : 0));
+    } else if (cf_boolean_type && is_type(v, cf_boolean_type)) {
+        snprintf(out, cap, "%s", (v == bool_false) ? "false" : "true");
+    } else if (is_type(v, cf_array_type)) {
+        snprintf(out, cap, "[array n=%ld]", cf_array_count(v));
+    } else if (is_type(v, cf_dict_type)) {
+        snprintf(out, cap, "{dict}");
+    } else if (cf_data_type && is_type(v, cf_data_type)) {
+        snprintf(out, cap, "<data>");
+    } else {
+        snprintf(out, cap, "<type %lu>", cf_get_type ? cf_get_type(v) : 0);
+    }
+}
+
+static void log_kv(CFRef key, CFRef val, void *ctx) {
+    char k[64], v[128];
+    describe(key, k, sizeof k);
+    describe(val, v, sizeof v);
+    dlog("  %s %s = %s", (const char *)ctx, k, v);
+}
+
+static void log_info_dict(CFRef base) {
+    CFRef displays;
+    long i, n;
+    if (!cf_dict_apply || !is_type(base, cf_dict_type)) {
+        dlog("stock /info: introspection unavailable");
+        return;
+    }
+    dlog("stock /info root:");
+    cf_dict_apply(base, log_kv, (void *)"root");
+    displays = cf_dict_get(base, k_displays);
+    if (!is_type(displays, cf_array_type)) return;
+    n = cf_array_count(displays);
+    for (i = 0; i < n && i < 4; i++) {
+        CFRef d = cf_array_get(displays, i);
+        char tag[16];
+        snprintf(tag, sizeof tag, "disp[%ld]", i);
+        if (is_type(d, cf_dict_type)) cf_dict_apply(d, log_kv, tag);
+    }
+}
+
 /* Return a new info dict, or 0 to keep base. Caller releases base on success. */
 static CFRef augment_info(CFRef base) {
     CFRef info, old, displays, stock, alt;
+    if (!ADVERT_FEATURES && !ADVERT_DISPLAY) return 0;   /* stock /info (log only) */
     if (!is_type(base, cf_dict_type)) return 0;
     old = cf_dict_get(base, k_displays);
     if (!is_type(old, cf_array_type) || cf_array_count(old) < 1) return 0;
     if (already_cluster(old)) return 0;
     info = cf_dict_copy(0, 0, base);
     if (!info) return 0;
-    merge_features(info);
+    if (ADVERT_FEATURES) merge_features(info);
+    if (!ADVERT_DISPLAY) {
+        dlog("/info enabledFeatures merged, display not added (ADVERT=%d)", CLUSTER_ADVERT);
+        return info;
+    }
     displays = cf_array_copy(0, 0, old);
     stock = cf_array_get(old, 0);
     alt = is_type(stock, cf_dict_type) ? cf_dict_copy(0, 0, stock) : 0;
@@ -484,6 +560,10 @@ CFRef AirPlayCopyServerInfo(void *session, void *properties, void *mac, OSStatus
     base = r_info(session, properties, mac, err);
     t_busy = 0;
     if (!base || disabled()) return base;
+    {
+        static int dumped;
+        if (dumped < 2) { dumped++; log_info_dict(base); }
+    }
     edited = augment_info(base);
     if (!edited) return base;
     cf_release(base);
@@ -1159,6 +1239,10 @@ OSStatus AirPlayReceiverSessionSetup(void *session, CFRef request, CFRef *respon
 
 void AirPlayReceiverSessionTearDown(void *session, CFRef request, OSStatus reason, void *done) {
     if (!ready()) { if (r_teardown) r_teardown(session, request, reason, done); return; }
+    if (!disabled()) {
+        if (request) log_stream_types("teardown request", request);
+        dlog("teardown reason=%d request=%s", reason, request ? "dict" : "NULL");
+    }
     /* a NULL request (whole session) or one that names 111 retires the receiver */
     if (!disabled() && (request == 0 || find_stream(request, TYPE_CLUSTER))) {
         pthread_mutex_lock(&g_lock);
@@ -1170,5 +1254,5 @@ void AirPlayReceiverSessionTearDown(void *session, CFRef request, OSStatus reaso
 }
 
 __attribute__((constructor)) static void init(void) {
-    dlog("LOADED pid=%d", (int)getpid());
+    dlog("LOADED pid=%d step=%d advert=%d", (int)getpid(), CLUSTER_STEP, CLUSTER_ADVERT);
 }

@@ -15,24 +15,38 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 build_step() {
-  local step="$1" code="$2"
-  echo "######## building dual-screen STEP $step -> v$code ########"
+  local step="$1" code="$2" advert="${3:-3}"
+  echo "######## building dual-screen STEP $step ADVERT=$advert -> v$code ########"
   WRAP_LIB=libCoreUtils.so \
   CHECK_SYM=AirPlayReceiverSessionSetup \
   CLUSTER_SRC=cluster_dual.c \
-  CLUSTER_CFLAGS="-DCLUSTER_STEP=$step" \
+  CLUSTER_CFLAGS="-DCLUSTER_STEP=$step -DCLUSTER_ADVERT=$advert" \
     ./work/tools/build.sh 129 "$code"
 }
 
+# Diagnostic step-1 variants (2026-10-19): iOS ends the session right after our
+# modified /info. CLUSTER_ADVERT isolates the cause. Flash one per car trip.
+#   advert0 (v1140) stock /info, logged only  -> MUST keep CarPlay up (control)
+#   advert1 (v1141) merge enabledFeatures only
+#   advert2 (v1142) append the cluster display only
 case "${1:-all}" in
   1) build_step 1 1132 ;;
   2) build_step 2 1133 ;;
   3) build_step 3 1134 ;;
+  advert0) build_step 1 1140 0 ;;
+  advert1) build_step 1 1141 1 ;;
+  advert2) build_step 1 1142 2 ;;
+  advert)
+    build_step 1 1140 0
+    build_step 1 1141 1
+    build_step 1 1142 2
+    echo "######## advert diagnostics v1140/v1141/v1142 in work/out/ ########"
+    ;;
   all)
     build_step 1 1132
     build_step 2 1133
     build_step 3 1134
     echo "######## all three images in work/out/ ########"
     ;;
-  *) echo "usage: $0 [1|2|3|all]"; exit 1 ;;
+  *) echo "usage: $0 [1|2|3|all|advert|advert0|advert1|advert2]"; exit 1 ;;
 esac
