@@ -79,6 +79,14 @@
 #define CLUSTER_KEY_INPUT 0
 #endif
 
+/* Diagnostics used while bringing the feature up: stock /info dump, the stock
+ * 110 response-entry dump, per-SETUP/TEARDOWN stream-type lines and the
+ * c111.h264 AU dump. 1 for test builds (unchanged), 0 for the release build
+ * (build_dual.sh release). Status, error and 10 s frame-rate lines stay. */
+#ifndef CLUSTER_DIAG
+#define CLUSTER_DIAG 1
+#endif
+
 /* Which /info edits to apply (step 1 found iOS ends the session right after our
  * modified /info; this isolates the cause). bit0 = merge enabledFeatures,
  * bit1 = append the cluster display. 0 = stock /info, logged only. */
@@ -655,7 +663,7 @@ CFRef AirPlayCopyServerInfo(void *session, void *properties, void *mac, OSStatus
     if (!base || disabled()) return base;
     {
         static int dumped;
-        if (dumped < 2) { dumped++; log_info_dict(base); }
+        if (CLUSTER_DIAG && dumped < 2) { dumped++; log_info_dict(base); }
     }
     edited = augment_info(base);
     if (!edited) return base;
@@ -1285,7 +1293,7 @@ static void *rx_thread(void *varg) {
 #endif
                 /* STEP_DECRYPT=0 leaves ok at 0: that is the "still encrypted" signal. */
                 frames++;
-                if (opened || !STEP_DECRYPT) dump_au(&dfd, &dn, body, h.bodySize);
+                if (CLUSTER_DIAG && (opened || !STEP_DECRYPT)) dump_au(&dfd, &dn, body, h.bodySize);
                 {   /* also every 10 s, so a slow (static-map) cluster stream still shows a rate */
                     static __thread long last_log;
                     long now = time_plain(0);
@@ -1359,7 +1367,7 @@ static void append_response_111(CFRef response, CFRef requested_111, int port) {
         set_i64(sd, "streamID", TYPE_CLUSTER);
         /* log the stock 110 entry's keys in this response: if iOS wants the 111
          * entry to carry more than dataPort/streamID, this shows what to add. */
-        if (cf_dict_apply && is_type(old, cf_array_type)) {   /* 111 SETUP has no stock streams */
+        if (CLUSTER_DIAG && cf_dict_apply && is_type(old, cf_array_type)) {   /* 111 SETUP has no stock streams */
             long i, n = cf_array_count(old);
             for (i = 0; old && i < n; i++) {
                 CFRef e = cf_array_get(old, i);
@@ -1416,10 +1424,10 @@ OSStatus AirPlayReceiverSessionSetup(void *session, CFRef request, CFRef *respon
     if (!ready()) return r_setup ? r_setup(session, request, response) : -1;
     if (t_busy) return r_setup(session, request, response);
     t_busy = 1;
-    if (!disabled()) log_stream_types("setup request", request);
+    if (CLUSTER_DIAG && !disabled()) log_stream_types("setup request", request);
     e = r_setup(session, request, response);
     if (disabled()) { t_busy = 0; return e; }
-    dlog("setup rc=%d response=%s", e, (response && *response) ? "yes" : "no");
+    if (CLUSTER_DIAG || e != 0) dlog("setup rc=%d response=%s", e, (response && *response) ? "yes" : "no");
     if (e == 0 && response && *response) {
         /* iOS negotiates features: it proposes a FeatureKey list and validates
          * the cluster display against the features the RECEIVER accepts in the
@@ -1430,9 +1438,9 @@ OSStatus AirPlayReceiverSessionSetup(void *session, CFRef request, CFRef *respon
          * CFDictionaryCreateMutable dict from AirPlayReceiverSessionSetup. */
         if (ADVERT_FEATURES && ADVERT_DISPLAY) {
             merge_features(*response);
-            dlog("setup response enabledFeatures += altScreen, viewAreas");
+            if (CLUSTER_DIAG) dlog("setup response enabledFeatures += altScreen, viewAreas");
         }
-        log_stream_types("setup response", *response);
+        if (CLUSTER_DIAG) log_stream_types("setup response", *response);
         req111 = find_stream(request, TYPE_CLUSTER);
         if (req111) {
             uint64_t cid = dict_cid(req111);
@@ -1449,7 +1457,7 @@ OSStatus AirPlayReceiverSessionSetup(void *session, CFRef request, CFRef *respon
 void AirPlayReceiverSessionTearDown(void *session, CFRef request, OSStatus reason, void *done) {
     if (!ready()) { if (r_teardown) r_teardown(session, request, reason, done); return; }
     if (!disabled()) {
-        if (request) log_stream_types("teardown request", request);
+        if (CLUSTER_DIAG && request) log_stream_types("teardown request", request);
         dlog("teardown reason=%d request=%s", reason, request ? "dict" : "NULL");
     }
     /* a NULL request (whole session) or one that names 111 retires the receiver */
@@ -1458,6 +1466,22 @@ void AirPlayReceiverSessionTearDown(void *session, CFRef request, OSStatus reaso
         g_rx_gen++;
         pthread_mutex_unlock(&g_lock);
         dlog("teardown retires 111 receiver");
+    }
+    /* Whole phone session over: close the head-unit relay socket too instead of
+     * leaving it to fail on the next send. CPAAProxyEx tears the head-unit
+     * screen down when the phone leaves, and the next phone session makes the
+     * head unit re-SETUP the screen (requestUI -> SetupScreen with the injected
+     * 111), which advances g_hu_gen and lets relay_frame connect again. dead=1
+     * so nothing retries against the old head-unit listener in between. */
+    if (STEP_RELAY && !disabled() && request == 0) {
+        unsigned long sent, err;
+        int had;
+        pthread_mutex_lock(&g_relay_lock);
+        had = g_relay.fd >= 0;
+        sent = g_relay.relayed; err = g_relay.err;
+        relay_drop_locked(1);
+        pthread_mutex_unlock(&g_relay_lock);
+        if (had) dlog("session end: head-unit relay closed (relayed=%lu err=%lu)", sent, err);
     }
     r_teardown(session, request, reason, done);
 }

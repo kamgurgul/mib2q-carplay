@@ -53,6 +53,11 @@ case "${1:-all}" in
   # Use step3-input only if Phase B needed the Input key (v1149).
   step3) build_step 3 1150 3 "-DSTEP_DECRYPT=1" ;;
   step3-input) build_step 3 1151 3 "-DSTEP_DECRYPT=1 -DCLUSTER_KEY_INPUT=1" ;;
+  # v1160: release = step3 with the bring-up diagnostics compiled out
+  # (CLUSTER_DIAG=0: no /info dump, no per-SETUP lines, no c111.h264 dump).
+  # Build it only after v1150 (or v1151) has shown the map on the cluster.
+  release) build_step 3 1160 3 "-DSTEP_DECRYPT=1 -DCLUSTER_DIAG=0" ;;
+  release-input) build_step 3 1161 3 "-DSTEP_DECRYPT=1 -DCLUSTER_KEY_INPUT=1 -DCLUSTER_DIAG=0" ;;
   advert)
     build_step 1 1140 0
     build_step 1 1141 1
@@ -65,5 +70,5 @@ case "${1:-all}" in
     build_step 3 1134
     echo "######## all three images in work/out/ ########"
     ;;
-  *) echo "usage: $0 [1|2|3|all|advert|advert0|advert1|advert2|hu1|step2a|step2b|step2b-input|step3|step3-input]"; exit 1 ;;
+  *) echo "usage: $0 [1|2|3|all|advert|advert0|advert1|advert2|hu1|step2a|step2b|step2b-input|step3|step3-input|release|release-input]"; exit 1 ;;
 esac
