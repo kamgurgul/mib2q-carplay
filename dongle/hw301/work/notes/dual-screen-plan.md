@@ -270,6 +270,66 @@ MMI CarPlay stays up for 10 min.
 If it fails: the iPhone log names the missing response key or the connect
 error; adjust the 111 response entry and repeat.
 
+### Phase B RESEARCH (2026-10-19) - how stock decrypts a screen stream
+Traced the screen case of `AirPlayReceiverSessionSetup` (libAirPlay v129) and
+the key-derivation helper it calls. The whole scheme is reusable from the shim
+because every primitive is exported by libCoreUtils.
+
+Stock per-stream screen path (0x16560..0x16620), in order:
+  1. CFDictionaryCreateMutable                     -> response stream dict
+  2. AirPlayReceiverSessionScreen_Setup(screenSrv=session[+0x7e0 off sl],
+       streamDesc, session+0xd0)                   -> screen object
+  3. CFDictionaryGetInt64(streamDesc, <connID key>) -> streamConnectionID
+  4. FUN_0x12dcc(session, streamDesc, connID, outKeyBuf@sp+0x1d4)  <- KEY DERIVE
+  5. AirPlayReceiverSessionScreen_SetChaChaSecurityInfo(screenSrv,
+       keyBuf, 32)                                  -> 32-byte ChaCha key set
+  6. ServerSocketOpen(...)                          -> listening dataPort
+  7. CFDictionarySetInt64 x2                        -> dataPort + type in response
+Then Screen_StartSession / Screen_ProcessFrames reads that socket, ChaCha
+decrypts, and delivers plaintext H.264 to the screen delegate (on the dongle
+that delegate is CPAAProxyEx -> recvCarPlayVideoFrame for stream 110).
+
+KEY DERIVATION (FUN_0x12dcc): asprintf a salt from "DataStream-Salt" + the
+connID, then PairingSessionDeriveKey TWICE:
+  - info "DataStream-Output-Encryption-Key" -> sender(phone) output key
+  - info "DataStream-Input-Encryption-Key"  -> receiver(dongle) ... 
+  The dongle DECRYPTS the inbound 111 stream with the key the phone ENCRYPTS
+  with, i.e. the phone's output key = "DataStream-Output-Encryption-Key"
+  (confirm on device by trying both; nal_ok tells which is right).
+  PairingSessionDeriveKey(pairingSession, salt, saltLen, info, infoLen,
+  outLen=32, outKey) = HKDF-SHA512 (libCoreUtils 0x5ec38, EXPORTED).
+
+PAIRING SESSION handle PINNED: `*(void**)((char*)session + 0x3ec)` (FUN_0x12dcc
+`ldr r0,[r7,#1004]` at 0x12e20; same offset as `ldr r5,[fp,#1004]` at 0x165b8).
+The shim gets `session` as the first arg of the SETUP hook.
+
+SALT + INFO PINNED (strings in libAirPlay .rodata, used by FUN_0x12dcc):
+  salt   = sprintf("%s%llu", "DataStream-Salt", connID)   e.g. "DataStream-Salt14478086969214323842"
+  info#1 = "DataStream-Output-Encryption-Key"   (phone's TX key = dongle decrypts inbound with this)
+  info#2 = "DataStream-Input-Encryption-Key"    (phone's RX key = dongle would encrypt with this)
+  both: PairingSessionDeriveKey(pair, salt, strlen(salt), info, strlen(info), 32, out32).
+Try Output first for decrypting the inbound 111 stream; nal_ok confirms.
+
+DECRYPT PRIMITIVES (all EXPORTED by libCoreUtils, shim-callable):
+  chacha20_poly1305_init_64x64, _decrypt, _verify, _final (0x3b4f0.. etc).
+  Per-frame nonce/AAD/tag layout: read from ScreenStreamProcessData /
+  _AirPlayReceiverSessionScreen_ProcessFrame (next RE step). AirPlay screen
+  frames are typically: 128-byte header (plaintext) then ChaCha ciphertext +
+  16-byte Poly1305 tag; nonce = little-endian frame counter (per stream),
+  AAD = (none or the header). Verify against the first IDR: with the right
+  key+nonce, chacha20_poly1305_verify passes and au_ok -> nal_ok=1.
+
+ScreenStream* are NOT defined in libAirPlay (imported), so decrypt in the shim
+with the libCoreUtils chacha primitives + PairingSessionDeriveKey, keyed per the
+111 connID. No cipher is reimplemented - only stock primitives are called.
+
+IMPLEMENTATION STATUS: design complete; the per-frame decrypt loop is not yet
+written. Remaining concrete unknowns, both from ProcessFrame: (a) pairing-session
+offset in the session struct; (b) exact nonce + AAD + tag position per frame.
+Pin both from a Ghidra decomp of _AirPlayReceiverSessionScreen_ProcessFrame and
+ScreenStreamProcessData, then the loop is: derive key once (PairingSessionDeriveKey),
+per frame chacha20_poly1305_init_64x64(nonce,key) + _decrypt(body) + _verify(tag).
+
 ### Phase B - step 2b decrypt the cluster stream (ChaCha)
 Goal: plaintext H.264 of the cluster on the dongle (`nal_ok=1`,
 `sps=1440x540`).
