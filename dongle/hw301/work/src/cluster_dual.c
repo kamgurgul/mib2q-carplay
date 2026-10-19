@@ -1272,6 +1272,17 @@ OSStatus AirPlayReceiverSessionSetup(void *session, CFRef request, CFRef *respon
     if (disabled()) { t_busy = 0; return e; }
     dlog("setup rc=%d response=%s", e, (response && *response) ? "yes" : "no");
     if (e == 0 && response && *response) {
+        /* iOS negotiates features: it proposes a FeatureKey list and validates
+         * the cluster display against the features the RECEIVER accepts in the
+         * SETUP response. Without altScreen there, iOS logs "altScreen not
+         * defined but display structures found" and deactivates the endpoint
+         * (iPhone log, v1144). The head-unit hook merges into every SETUP
+         * response too (set_reference_enabled_features). Response is the
+         * CFDictionaryCreateMutable dict from AirPlayReceiverSessionSetup. */
+        if (ADVERT_FEATURES && ADVERT_DISPLAY) {
+            merge_features(*response);
+            dlog("setup response enabledFeatures += altScreen, viewAreas");
+        }
         log_stream_types("setup response", *response);
         req111 = find_stream(request, TYPE_CLUSTER);
         if (req111) {

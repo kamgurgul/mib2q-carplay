@@ -224,6 +224,21 @@ Phone side (app.log clock is ~1.75 s behind dmesg):
 `altScreen`) or the added display (type 111, cloned keys, extra `displayUUID`).
 The dongle is unusable for normal CarPlay with this image: flash stock back.
 
+ROOT CAUSE FROM THE iPHONE LOG (2026-10-19, v1144, `idevicesyslog`, iPhone17,1
+iOS 27.0.1 24A446 - same phone/build the head unit accepts the cluster from):
+  airplayd: carEndpoint_checkCarPlayFeatureAcceptance failed: altScreen not
+            defined but display structures found.
+  carEndpoint_validateEnabledFeaturesWithAccessory: -16720 InvalidParameter
+  Deactivating endpoint 'CarPlay' with reason 'Activation Failed'
+iOS proposes a FeatureKey list (uiContext, viewAreas, cornerMasks, focusTransfer,
+h.264Level5.1, mainBuffered, altScreen, enhancedSiri, hevc, vehicleStateProtocol,
+sessionManagement, videoPlayback, logTransfer, iAPChannel) and validates the
+displays against the features the receiver ACCEPTS in its SETUP response. /info
+alone is not enough; the head-unit hook also merges into every SETUP response.
+Fix: v1145 merges altScreen+viewAreas into every SETUP response.
+Capture recipe: `brew install libimobiledevice`; iPhone cabled to the Mac;
+`idevicesyslog > iphone.log`; reproduce; grep carEndpoint|FeatureKey|altScreen.
+
 DIAGNOSTIC RESULTS (2026-10-19):
 - v1140 (stock /info): session stays up -> the shim itself is harmless.
 - v1141 (enabledFeatures += altScreen only): session stays up.

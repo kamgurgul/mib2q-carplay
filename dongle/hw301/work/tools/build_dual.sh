@@ -38,7 +38,9 @@ case "${1:-all}" in
   advert2) build_step 1 1142 2 ;;
   # v1143: both edits, display now identical to the head-unit hook's proven one
   # (viewAreas always, no displayUUID) after v1142 showed the display is rejected.
-  hu1) build_step 1 1144 3 ;;   # v1144: + real kCFLBooleanFalse (v1143 used its address)
+  # v1145: + altScreen/viewAreas in every SETUP response (iOS validates the
+  # display against the receiver-accepted features; iPhone log, v1144)
+  hu1) build_step 1 1145 3 ;;
   advert)
     build_step 1 1140 0
     build_step 1 1141 1
