@@ -236,6 +236,20 @@ Standing test protocol for every image (no exceptions):
   screen stream|kNotFoundErr|Deactivating|Endpoint_Failed"`.
 - Daily driving between tests: stock v129 or v1141.
 
+### PHASE A PASSED (2026-10-19, v1146, car + iPhone log)
+- Dongle: `setup request has 111 cid=14478086969214323842` -> `111 receiver
+  ready port=7100` -> `111 connected from iPhone` -> `111 video config body=40
+  sps=1440x540 nal_len=4` (config is plaintext: it IS the 1440x540 cluster
+  stream) -> `111 frames=1 bytes=199`; then 110 and 101 set up normally.
+- iPhone: `Registering streamType AltScreen, ID 111, connectionID <same>` ->
+  `remote screen port: 7100` -> `Created transport data stream` -> `resumed`
+  -> `Started MediaPlaying Transaction`; `Activated endpoint 'CarPlay'`; no
+  kNotFoundErr / resume failed / deactivation. MMI CarPlay stays up.
+- Only frame 1 was logged (counter logs at 1 and every 300) -> v1147 adds a
+  10 s stats line, and guards a NULL `streams` array in the 110-key dump
+  (CFArrayGetCount(NULL) on the 111 SETUP response; did not crash, but unsafe).
+- Next: Phase B (ChaCha decryption of the 111 frames).
+
 ### Phase A - step 2a "transport" (v1146 BUILT 2026-10-19, `build_dual.sh step2a`)
 Implemented: STEP_DECRYPT compile gate (default 0); the receiver counts frames
 (bytes/opcode, nal_ok left 0 = "still encrypted") and never AES-decrypts; the

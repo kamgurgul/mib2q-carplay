@@ -1096,6 +1096,7 @@ static void *rx_thread(void *varg) {
     int phone_valid = 0, attached = 0;      /* attached: this thread fed the shared relay */
     int nal_len = 4, cfg_w = 0, cfg_h = 0;
     unsigned long frames = 0, idr = 0, bad = 0, relayed = 0, send_err = 0;
+    int log_now = 0;
     uint8_t key[16], iv[16];
     /* full cached VIDEO_CONFIG (header + body), replaced on every config */
     ScreenHeader cfg_hdr; uint8_t *cfg = 0; uint32_t cfg_len = 0;
@@ -1172,7 +1173,13 @@ static void *rx_thread(void *varg) {
                  * expected to be 0 - that is the "still encrypted" signal. */
                 if (STEP_DECRYPT) { ok = au_ok(body, h.bodySize, nal_len, &has_idr); if (!ok) bad++; if (has_idr) idr++; }
                 dump_au(&dfd, &dn, body, h.bodySize);
-                if (frames == 1 || frames % 300 == 0) {
+                {   /* also every 10 s, so a slow (static-map) cluster stream still shows a rate */
+                    static __thread long last_log;
+                    long now = time_plain(0);
+                    if (frames == 1 || frames % 300 == 0 || now - last_log >= 10) { last_log = now; log_now = 1; }
+                }
+                if (log_now) {
+                    log_now = 0;
                     relay_stats(&relayed, &send_err);
                     dlog("111 frames=%lu bytes=%u nal_ok=%d idr=%lu bad=%lu relayed=%lu send_err=%lu",
                          frames, h.bodySize, ok, idr, bad, relayed, send_err);
@@ -1236,7 +1243,7 @@ static void append_response_111(CFRef response, CFRef requested_111, int port) {
         set_i64(sd, "streamID", TYPE_CLUSTER);
         /* log the stock 110 entry's keys in this response: if iOS wants the 111
          * entry to carry more than dataPort/streamID, this shows what to add. */
-        if (cf_dict_apply) {
+        if (cf_dict_apply && is_type(old, cf_array_type)) {   /* 111 SETUP has no stock streams */
             long i, n = cf_array_count(old);
             for (i = 0; old && i < n; i++) {
                 CFRef e = cf_array_get(old, i);

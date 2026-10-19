@@ -43,7 +43,7 @@ case "${1:-all}" in
   hu1) build_step 1 1145 3 ;;
   # v1146: step 2a transport - open the 111 listener, return its dataPort, count
   # frames (no decrypt: the wireless screen is ChaCha; STEP_DECRYPT stays 0).
-  step2a) build_step 2 1146 3 ;;
+  step2a) build_step 2 1147 3 ;;   # v1147 = v1146 + NULL guard + 10 s frame stats
   advert)
     build_step 1 1140 0
     build_step 1 1141 1
