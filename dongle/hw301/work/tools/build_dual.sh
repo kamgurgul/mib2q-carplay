@@ -41,6 +41,9 @@ case "${1:-all}" in
   # v1145: + altScreen/viewAreas in every SETUP response (iOS validates the
   # display against the receiver-accepted features; iPhone log, v1144)
   hu1) build_step 1 1145 3 ;;
+  # v1146: step 2a transport - open the 111 listener, return its dataPort, count
+  # frames (no decrypt: the wireless screen is ChaCha; STEP_DECRYPT stays 0).
+  step2a) build_step 2 1146 3 ;;
   advert)
     build_step 1 1140 0
     build_step 1 1141 1
@@ -53,5 +56,5 @@ case "${1:-all}" in
     build_step 3 1134
     echo "######## all three images in work/out/ ########"
     ;;
-  *) echo "usage: $0 [1|2|3|all|advert|advert0|advert1|advert2|hu1]"; exit 1 ;;
+  *) echo "usage: $0 [1|2|3|all|advert|advert0|advert1|advert2|hu1|step2a]"; exit 1 ;;
 esac

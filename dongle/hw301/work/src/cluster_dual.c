@@ -61,8 +61,15 @@
 #ifndef CLUSTER_STEP
 #define CLUSTER_STEP 3
 #endif
-#define STEP_RECEIVE (CLUSTER_STEP >= 2)   /* listen, append dataPort, decrypt */
+#define STEP_RECEIVE (CLUSTER_STEP >= 2)   /* listen, append dataPort, count frames */
 #define STEP_RELAY   (CLUSTER_STEP >= 3)   /* inject 111 to the HU and forward */
+
+/* Phase A (step 2a) is transport only: the wireless screen is ChaCha20-Poly1305,
+ * so the AES per-stream key does not apply and frames are counted, not decrypted.
+ * Phase B sets STEP_DECRYPT=1 once the ChaCha screen-stream key path is in. */
+#ifndef STEP_DECRYPT
+#define STEP_DECRYPT 0
+#endif
 
 /* Which /info edits to apply (step 1 found iOS ends the session right after our
  * modified /info; this isolates the cause). bit0 = merge enabledFeatures,
@@ -1094,15 +1101,20 @@ static void *rx_thread(void *varg) {
     ScreenHeader cfg_hdr; uint8_t *cfg = 0; uint32_t cfg_len = 0;
     memset(&cfg_hdr, 0, sizeof cfg_hdr);
 
-    /* derive the phone-side per-stream key */
-    pthread_mutex_lock(&g_lock);
-    if (g_master_valid) {
-        r_derive(g_master, 16, a.cid, key, iv);
-        if (r_ctr_init(&phone_ctx, key, iv) == 0) phone_valid = 1;
+    /* derive the phone-side per-stream key (AES). Phase A keeps this OFF: the
+     * wireless screen is ChaCha, so an AES key would corrupt frames. */
+    if (STEP_DECRYPT) {
+        pthread_mutex_lock(&g_lock);
+        if (g_master_valid) {
+            r_derive(g_master, 16, a.cid, key, iv);
+            if (r_ctr_init(&phone_ctx, key, iv) == 0) phone_valid = 1;
+        }
+        pthread_mutex_unlock(&g_lock);
+        memset(key, 0, sizeof key); memset(iv, 0, sizeof iv);
+        if (!phone_valid) dlog("no phone key; decrypt disabled (U2: ChaCha?)");
+    } else {
+        dlog("transport phase: counting 111 frames, not decrypting (ChaCha)");
     }
-    pthread_mutex_unlock(&g_lock);
-    memset(key, 0, sizeof key); memset(iv, 0, sizeof iv);
-    if (!phone_valid) dlog("no phone key; decrypt disabled (U2: ChaCha?)");
 
     /* accept the iPhone 111 connection, then this thread owns and closes its
      * own listen fd (one connection per SETUP is enough). */
@@ -1150,19 +1162,20 @@ static void *rx_thread(void *varg) {
             }
         } else if (h.opcode == OP_VIDEO_FRAME) {
             if (body && h.bodySize) {
-                int has_idr = 0, ok;
-                if (phone_valid && r_ctr_update(&phone_ctx, body, h.bodySize, body) != 0) {
-                    dlog("phone AES-CTR decrypt failed"); free(body); break;
+                int has_idr = 0, ok = 0;
+                if (STEP_DECRYPT && phone_valid &&
+                    r_ctr_update(&phone_ctx, body, h.bodySize, body) != 0) {
+                    dlog("phone decrypt failed"); free(body); break;
                 }
                 frames++;
-                ok = au_ok(body, h.bodySize, nal_len, &has_idr);  /* decrypt / framing test */
-                if (!ok) bad++;
-                if (has_idr) idr++;
+                /* au_ok is the decrypt check; on raw (undecrypted) frames it is
+                 * expected to be 0 - that is the "still encrypted" signal. */
+                if (STEP_DECRYPT) { ok = au_ok(body, h.bodySize, nal_len, &has_idr); if (!ok) bad++; if (has_idr) idr++; }
                 dump_au(&dfd, &dn, body, h.bodySize);
                 if (frames == 1 || frames % 300 == 0) {
                     relay_stats(&relayed, &send_err);
-                    dlog("111 frames=%lu idr=%lu bad=%lu nal_ok=%d relayed=%lu send_err=%lu",
-                         frames, idr, bad, ok, relayed, send_err);
+                    dlog("111 frames=%lu bytes=%u nal_ok=%d idr=%lu bad=%lu relayed=%lu send_err=%lu",
+                         frames, h.bodySize, ok, idr, bad, relayed, send_err);
                 }
 
                 /* relay only makes sense once we have real H.264 (phone key valid) */
@@ -1221,6 +1234,19 @@ static void append_response_111(CFRef response, CFRef requested_111, int port) {
     if (arr && sd) {
         set_i64(sd, "dataPort", port);
         set_i64(sd, "streamID", TYPE_CLUSTER);
+        /* log the stock 110 entry's keys in this response: if iOS wants the 111
+         * entry to carry more than dataPort/streamID, this shows what to add. */
+        if (cf_dict_apply) {
+            long i, n = cf_array_count(old);
+            for (i = 0; old && i < n; i++) {
+                CFRef e = cf_array_get(old, i);
+                if (is_type(e, cf_dict_type) && dict_type(e) == TYPE_MAIN) {
+                    dlog("setup response stock 110 entry keys:");
+                    cf_dict_apply(e, log_kv, (void *)"110resp");
+                    break;
+                }
+            }
+        }
         cf_array_append(arr, sd);
         cf_dict_set(response, k_streams, arr);
     }

@@ -236,7 +236,11 @@ Standing test protocol for every image (no exceptions):
   screen stream|kNotFoundErr|Deactivating|Endpoint_Failed"`.
 - Daily driving between tests: stock v129 or v1141.
 
-### Phase A - step 2a "transport" (next build, v1146)
+### Phase A - step 2a "transport" (v1146 BUILT 2026-10-19, `build_dual.sh step2a`)
+Implemented: STEP_DECRYPT compile gate (default 0); the receiver counts frames
+(bytes/opcode, nal_ok left 0 = "still encrypted") and never AES-decrypts; the
+111 listener + dataPort/streamID response entry are unchanged; append_response_111
+also logs the stock 110 response entry's keys. All step-1 fixes carry over.
 Goal: iOS opens stream 111 to the dongle and keeps CarPlay up. No decryption.
 - Rebuild step 2 with every step-1 fix (viewAreas, real false, features in the
   SETUP response). On the 111 SETUP: open the listener, append the 111 entry
