@@ -224,6 +224,21 @@ Phone side (app.log clock is ~1.75 s behind dmesg):
 `altScreen`) or the added display (type 111, cloned keys, extra `displayUUID`).
 The dongle is unusable for normal CarPlay with this image: flash stock back.
 
+STEP 1 PASSED (2026-10-19, v1145, iPhone log): iOS accepts the cluster.
+- `Activated endpoint 'CarPlay'`; display `CarPlay (ScreenAlt)` 1440x540,
+  290x108 mm, UUID b7e6c5a0-...; two screen streams created;
+  `AltScreen Raise requested` -> `resuming screen stream` -> iOS sends the
+  stream-111 SETUP.
+- Expected step-1 failure after that: our SETUP response has no 111 entry
+  (no listener in step 1) -> `apsession_setupStreamsCreatingResponse -6727
+  kNotFoundErr` -> `resume failed` -> endpoint deactivated.
+- Next = step 2 (listener + dataPort in the response). Open item: the phone
+  screen is ChaCha20-Poly1305, so step 2's AES derivation does not apply; the
+  111 receiver needs the stock ChaCha key path for its stream ID before frames
+  can be decrypted. A first step-2 build can still prove the transport (iOS
+  connects to the port and streams; frames counted, not decrypted).
+- Not yet implemented in this session.
+
 ROOT CAUSE FROM THE iPHONE LOG (2026-10-19, v1144, `idevicesyslog`, iPhone17,1
 iOS 27.0.1 24A446 - same phone/build the head unit accepts the cluster from):
   airplayd: carEndpoint_checkCarPlayFeatureAcceptance failed: altScreen not
