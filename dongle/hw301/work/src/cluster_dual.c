@@ -16,8 +16,11 @@
  *   - AirPlayReceiverSessionSetup: stock skips type 111 (switch type-100 0..10);
  *     after stock succeeds, open our own listener and append dataPort+streamID
  *     to the stock response (as libaltscreen111_gen2.c does on the head unit).
- *   - key: master captured at AirPlayReceiverSessionSetSecurityInfo; per-stream
- *     key = AirPlay_DeriveAESKeySHA512ForScreen(master, 16, cid).
+ *   - key: the wireless screen is ChaCha20-Poly1305, not the AES master.
+ *     STEP_DECRYPT derives the 32-byte stream key with PairingSessionDeriveKey
+ *     (session+0x3ec, salt "DataStream-Salt"<cid>) and opens each VIDEO_FRAME
+ *     with libCoreUtils chacha20_poly1305_*. Layout is pinned in
+ *     work/notes/dual-screen-plan.md ("Phase B PINNED").
  *
  * Head-unit side (dongle = CarPlay client; NO CPAAProxyEx patch):
  *   - CFArrayEnsureCreatedAndAppend: clone the SetupScreen stream 110 dict as
@@ -30,9 +33,10 @@
  *     /mnt/UDISK/cluster_hu.port. The head-unit address is the peer of the
  *     dongle's stream-110 data socket (peer port 6030).
  *
- * Relay: phone 111 VIDEO_FRAME bodies are AES-CTR decrypted with the phone key
- * and re-encrypted with the head-unit key; VIDEO_CONFIG and other opcodes pass
- * through. One head-unit connection is kept across phone reconnects.
+ * Relay (step 3, and only once STEP_DECRYPT has produced plaintext): phone 111
+ * VIDEO_FRAME bodies are ChaCha-opened, then re-encrypted with the head-unit
+ * AES-CTR key. VIDEO_CONFIG is plaintext and passes through. One head-unit
+ * connection is kept across phone reconnects.
  *
  * Step is chosen at BUILD time (no dongle shell needed): -DCLUSTER_STEP=N
  *   1  advertise the cluster display to the iPhone + log SETUP/keys only
@@ -64,11 +68,15 @@
 #define STEP_RECEIVE (CLUSTER_STEP >= 2)   /* listen, append dataPort, count frames */
 #define STEP_RELAY   (CLUSTER_STEP >= 3)   /* inject 111 to the HU and forward */
 
-/* Phase A (step 2a) is transport only: the wireless screen is ChaCha20-Poly1305,
- * so the AES per-stream key does not apply and frames are counted, not decrypted.
- * Phase B sets STEP_DECRYPT=1 once the ChaCha screen-stream key path is in. */
+/* Phase A (step 2a) is transport only: frames are counted, not decrypted.
+ * Phase B (step 2b, v1148) sets STEP_DECRYPT=1 and opens VIDEO_FRAME with the
+ * stock ChaCha20-Poly1305 primitives. CLUSTER_KEY_INPUT=1 swaps to the Input
+ * info string when a car trip shows nal_ok stuck at 0. */
 #ifndef STEP_DECRYPT
 #define STEP_DECRYPT 0
+#endif
+#ifndef CLUSTER_KEY_INPUT
+#define CLUSTER_KEY_INPUT 0
 #endif
 
 /* Which /info edits to apply (step 1 found iOS ends the session right after our
@@ -160,6 +168,16 @@ static void (*r_teardown)(void *, CFRef, OSStatus, void *);
 static OSStatus (*r_send_cmd)(void *, CFRef, void *, void *);
 static void (*r_derive)(const void *, size_t, uint64_t, uint8_t *, uint8_t *);
 
+#if STEP_DECRYPT
+/* ChaCha state in libCoreUtils v129 writes through offset 0xe8 (233 bytes). */
+typedef union { uint64_t align; unsigned char b[256]; } ChaChaCtx;
+static OSStatus (*r_pair_derive)(void *, const void *, size_t, const void *, size_t, size_t, uint8_t *);
+static void (*r_cc_init)(void *, const uint8_t *, const uint8_t *);
+static void (*r_cc_aad)(void *, const void *, size_t);
+static size_t (*r_cc_dec)(void *, const void *, size_t, void *);
+static size_t (*r_cc_verify)(void *, void *, const uint8_t *, OSStatus *);
+#endif
+
 static void (*cf_release)(CFRef);
 static CFRef (*cf_retain)(CFRef);
 static CFRef (*cf_string)(CFRef, const char *, uint32_t);
@@ -249,6 +267,22 @@ static void *next_sym(const char *name) {
     return p ? p : dlsym_plain(RTLD_DEFAULT, name);
 }
 
+#if STEP_DECRYPT
+/* Optional symbols: a missing one disables decrypt and leaves the shim up.
+ * next_sym only, so check_imports.sh does not grow a hard NEEDED entry. */
+static int chacha_resolve(void) {
+    if (!r_pair_derive) *(void **)&r_pair_derive = next_sym("PairingSessionDeriveKey");
+    if (!r_cc_init) *(void **)&r_cc_init = next_sym("chacha20_poly1305_init_64x64");
+    if (!r_cc_aad) *(void **)&r_cc_aad = next_sym("chacha20_poly1305_add_aad");
+    if (!r_cc_dec) *(void **)&r_cc_dec = next_sym("chacha20_poly1305_decrypt");
+    if (!r_cc_verify) *(void **)&r_cc_verify = next_sym("chacha20_poly1305_verify");
+    if (r_pair_derive && r_cc_init && r_cc_aad && r_cc_dec && r_cc_verify) return 1;
+    dlog("chacha missing derive=%d init=%d aad=%d dec=%d verify=%d",
+         r_pair_derive != 0, r_cc_init != 0, r_cc_aad != 0, r_cc_dec != 0, r_cc_verify != 0);
+    return 0;
+}
+#endif
+
 static CFRef s_cf(const char *text) { return cf_string ? cf_string(0, text, UTF8) : 0; }
 
 /* ---- bind ------------------------------------------------------------- */
@@ -312,6 +346,9 @@ static void bind_all(void) {
         g_cpaa_base = di.dli_fbase;
     }
 
+#if STEP_DECRYPT
+    chacha_resolve();   /* best-effort; decrypt bails later if any pointer is NULL */
+#endif
     k_type = s_cf("type");
     k_conn = s_cf("streamConnectionID");
     k_streams = s_cf("streams");
@@ -933,6 +970,68 @@ static int avcc_parse(const uint8_t *c, uint32_t n, int *w, int *h) {
 }
 
 /* ============ PHONE 111 RECEIVER + RELAY ============ */
+#if STEP_DECRYPT
+/* session+0x3ec is the PairingSession (FUN_0x12dcc, ldr [r0,#0x3ec]).
+ * Salt and info match that function: Output info is 32 bytes, Input is 31.
+ * The key is the phone's TX key, which is what the dongle decrypts with. */
+static int chacha_derive(void *session, uint64_t cid, uint8_t key[32]) {
+    void *pair;
+    char salt[48];
+    const char *info = CLUSTER_KEY_INPUT
+        ? "DataStream-Input-Encryption-Key"
+        : "DataStream-Output-Encryption-Key";
+    int n;
+    OSStatus e;
+    if (!session || !chacha_resolve()) return 0;
+    pair = *(void **)((char *)session + 0x3ec);
+    if (!pair) { dlog("pairing session at +0x3ec is NULL"); return 0; }
+    n = snprintf(salt, sizeof salt, "DataStream-Salt%llu", (unsigned long long)cid);
+    if (n <= 0 || (size_t)n >= sizeof salt) return 0;
+    e = r_pair_derive(pair, salt, (size_t)n, info, strlen(info), 32, key);
+    if (e != 0) {
+        memset(key, 0, 32);
+        dlog("PairingSessionDeriveKey rc=%d info=%s", e, info);
+        return 0;
+    }
+    dlog("111 chacha key derived info=%s saltLen=%d", info, n);
+    return 1;
+}
+
+/* Open one VIDEO_FRAME in place. On success *plain_len is the AU length
+ * (tag removed) and the 8-byte little-endian nonce advances by 1.
+ * ProcessFrames 0x1bab4: AAD is the 128-byte header, tag is the last 16
+ * body bytes, and the nonce advances only after verify succeeds. */
+static int chacha_open(const uint8_t key[32], uint8_t nonce[8],
+                       const ScreenHeader *hdr, uint8_t *body, uint32_t body_len,
+                       uint32_t *plain_len) {
+    ChaChaCtx ctx;
+    OSStatus verr = -1;
+    size_t ct, n1, n2 = 0;
+    int i;
+    /* stock decrypts when bodySize > 15 (0x1b80c): a tag-only frame (16 bytes,
+     * empty AU) still verifies and advances the nonce; rejecting it would
+     * desync every frame after it. */
+    if (body_len < 16) return 0;
+    ct = (size_t)body_len - 16;
+    r_cc_init(&ctx, key, nonce);
+    r_cc_aad(&ctx, hdr, HDR_SIZE);
+    n1 = r_cc_dec(&ctx, body, ct, body);
+    if (n1 <= ct) n2 = r_cc_verify(&ctx, body + n1, body + ct, &verr);
+    if (verr != 0 || n1 > ct || n2 != ct - n1) {
+        static __thread int logged;
+        if (!logged) {
+            logged = 1;
+            dlog("111 chacha verify fail err=%d n=%u+%u ct=%u",
+                 verr, (unsigned)n1, (unsigned)n2, (unsigned)ct);
+        }
+        return 0;
+    }
+    for (i = 0; i < 8; i++) if (++nonce[i]) break;
+    *plain_len = (uint32_t)ct;
+    return 1;
+}
+#endif
+
 struct rx_arg { int listen_fd; unsigned gen; uint64_t cid; void *session; };
 
 static void dump_au(int *dfd, size_t *dn, const uint8_t *p, size_t n) {
@@ -1092,30 +1191,28 @@ static void *rx_thread(void *varg) {
     free(varg);
     int listen_fd = a.listen_fd, c = -1, dfd = -1;
     size_t dn = 0;
-    AesCtx phone_ctx;
-    int phone_valid = 0, attached = 0;      /* attached: this thread fed the shared relay */
+    int dec_ok = 0, attached = 0;           /* attached: this thread fed the shared relay */
     int nal_len = 4, cfg_w = 0, cfg_h = 0;
     unsigned long frames = 0, idr = 0, bad = 0, relayed = 0, send_err = 0;
     int log_now = 0;
-    uint8_t key[16], iv[16];
+#if STEP_DECRYPT
+    uint8_t cc_key[32], cc_nonce[8];
+#endif
     /* full cached VIDEO_CONFIG (header + body), replaced on every config */
     ScreenHeader cfg_hdr; uint8_t *cfg = 0; uint32_t cfg_len = 0;
     memset(&cfg_hdr, 0, sizeof cfg_hdr);
 
-    /* derive the phone-side per-stream key (AES). Phase A keeps this OFF: the
-     * wireless screen is ChaCha, so an AES key would corrupt frames. */
-    if (STEP_DECRYPT) {
-        pthread_mutex_lock(&g_lock);
-        if (g_master_valid) {
-            r_derive(g_master, 16, a.cid, key, iv);
-            if (r_ctr_init(&phone_ctx, key, iv) == 0) phone_valid = 1;
-        }
-        pthread_mutex_unlock(&g_lock);
-        memset(key, 0, sizeof key); memset(iv, 0, sizeof iv);
-        if (!phone_valid) dlog("no phone key; decrypt disabled (U2: ChaCha?)");
-    } else {
-        dlog("transport phase: counting 111 frames, not decrypting (ChaCha)");
-    }
+#if STEP_DECRYPT
+    /* One key for this stream. The nonce starts at 0 and belongs to this
+     * connection (a new SETUP starts a new thread and a new counter). */
+    memset(cc_key, 0, sizeof cc_key);
+    memset(cc_nonce, 0, sizeof cc_nonce);
+    dec_ok = chacha_derive(a.session, a.cid, cc_key);
+    if (!dec_ok) dlog("111 decrypt disabled");
+#else
+    dlog("transport phase: counting 111 frames, not decrypting (ChaCha)");
+    (void)au_ok;   /* decrypt check; live only in the STEP_DECRYPT build */
+#endif
 
     /* accept the iPhone 111 connection, then this thread owns and closes its
      * own listen fd (one connection per SETUP is enough). */
@@ -1157,22 +1254,38 @@ static void *rx_thread(void *varg) {
                     dlog("111 video config body=%u sps=%dx%d nal_len=%d", h.bodySize, cfg_w, cfg_h, nal_len);
                 }
                 /* forward a config update to an already-open head-unit socket (plain) */
-                if (STEP_RELAY && phone_valid && !disabled() && !flag(NORELAY_FILE) &&
+                if (STEP_RELAY && dec_ok && !disabled() && !flag(NORELAY_FILE) &&
                     relay_config(a.gen, &attached, &h, body))
                     ask_keyframe(a.session);
             }
         } else if (h.opcode == OP_VIDEO_FRAME) {
             if (body && h.bodySize) {
-                int has_idr = 0, ok = 0;
-                if (STEP_DECRYPT && phone_valid &&
-                    r_ctr_update(&phone_ctx, body, h.bodySize, body) != 0) {
-                    dlog("phone decrypt failed"); free(body); break;
+                int ok = 0, opened = 0;
+#if STEP_DECRYPT
+                if (dec_ok) {
+                    uint32_t plain = 0;
+                    int has_idr = 0;
+                    if (!chacha_open(cc_key, cc_nonce, &h, body, h.bodySize, &plain)) {
+                        bad++;
+                    } else {
+                        opened = 1;
+                        h.bodySize = plain;   /* tag stripped; AU is body[0..plain) */
+                        ok = au_ok(body, h.bodySize, nal_len, &has_idr);
+                        if (!ok) {
+                            static __thread int au_logged;
+                            bad++;
+                            if (!au_logged) {
+                                au_logged = 1;
+                                dlog("111 chacha mac ok but au_ok=0 plain=%u nal_len=%d", plain, nal_len);
+                            }
+                        }
+                        if (has_idr) idr++;
+                    }
                 }
+#endif
+                /* STEP_DECRYPT=0 leaves ok at 0: that is the "still encrypted" signal. */
                 frames++;
-                /* au_ok is the decrypt check; on raw (undecrypted) frames it is
-                 * expected to be 0 - that is the "still encrypted" signal. */
-                if (STEP_DECRYPT) { ok = au_ok(body, h.bodySize, nal_len, &has_idr); if (!ok) bad++; if (has_idr) idr++; }
-                dump_au(&dfd, &dn, body, h.bodySize);
+                if (opened || !STEP_DECRYPT) dump_au(&dfd, &dn, body, h.bodySize);
                 {   /* also every 10 s, so a slow (static-map) cluster stream still shows a rate */
                     static __thread long last_log;
                     long now = time_plain(0);
@@ -1185,8 +1298,8 @@ static void *rx_thread(void *varg) {
                          frames, h.bodySize, ok, idr, bad, relayed, send_err);
                 }
 
-                /* relay only makes sense once we have real H.264 (phone key valid) */
-                if (STEP_RELAY && phone_valid && !disabled() && !flag(NORELAY_FILE) &&
+                /* relay the authenticated AU; relay_frame re-encrypts with the HU AES key. */
+                if (STEP_RELAY && dec_ok && opened && !disabled() && !flag(NORELAY_FILE) &&
                     relay_frame(a.gen, &attached, &h, body, &cfg_hdr, cfg, cfg_len))
                     ask_keyframe(a.session);           /* outside g_relay_lock */
             }
@@ -1203,7 +1316,10 @@ done:
     if (c >= 0) close(c);
     if (dfd >= 0) close(dfd);
     free(cfg);
-    if (phone_valid) r_ctr_final(&phone_ctx);
+#if STEP_DECRYPT
+    memset(cc_key, 0, sizeof cc_key);
+    memset(cc_nonce, 0, sizeof cc_nonce);
+#endif
     /* the head-unit relay socket is shared and intentionally left open */
     if (a.session && cf_release) cf_release(a.session);   /* retained in start_receiver */
     return 0;

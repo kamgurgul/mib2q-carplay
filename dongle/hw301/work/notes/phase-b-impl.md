@@ -1,5 +1,11 @@
 # Phase B implementation spec - decrypt the stream-111 cluster video
 
+Status: B0 pinned 2026-10-19 in dual-screen-plan.md ("Phase B PINNED").
+B1-B3 are in `cluster_dual.c`. `build_dual.sh step2b` is v1148. B4 is the
+car trip. The verify/init prototypes in B1 below were the expected shape;
+the binary's real ones are in the plan (nonce is an 8-byte pointer, verify
+is `(ctx, outTail, tag, &err)`).
+
 Status going in: Phase A (v1146/v1147) proved iOS streams the 1440x540 cluster
 to the dongle's own listener on :7100; frames arrive but are ChaCha20-Poly1305
 ciphertext. This spec turns them into plaintext H.264 inside the shim, using

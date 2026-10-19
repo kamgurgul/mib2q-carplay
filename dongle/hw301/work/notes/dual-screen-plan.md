@@ -173,19 +173,12 @@ Re-read of the first-pass fixes against the plan found these; all applied:
 
 ### Still open: needs evidence first (step-gated), then code
 
-1. **ChaCha on the phone screen (U2).** If step 1 logs
-   `phone screen security: ChaCha20-Poly1305` for 110, step 2's AES-CTR
-   decrypt of 111 is wrong (`nal_ok=0`). Then:
-   - RE the ChaCha branch of `AirPlayReceiverSessionSetup`'s screen case
-     (around 0x165b8: `session+0x3ec` test, call 0x12dcc) to get the 32-byte
-     key derivation (expected: pairing-session HKDF with a
-     `DataStream-Salt<cid>` salt and an output-key info string) and the
-     per-frame nonce/AAD layout used by `_AirPlayReceiverSessionScreen_ProcessFrame`.
-   - Capture the pairing session the same way (hook the derive call through
-     the PLT), derive for the 111 cid, decrypt with `chacha20_poly1305_*`
-     (exported by libCoreUtils).
-   - The head-unit side stays AES-CTR (the dongle↔HU log says
-     `use aes ctr security`), so only the phone side changes.
+1. **ChaCha on the phone screen (U2).** Done in v1148. Step 1 logged
+   `phone screen security: ChaCha20-Poly1305` for 110, so an AES-CTR decrypt
+   of 111 cannot work. The key comes from `session+0x3ec` via
+   `PairingSessionDeriveKey` (salt `DataStream-Salt<cid>`, Output info), and
+   the per-frame layout is in "Phase B PINNED". The head-unit side stays
+   AES-CTR (`use aes ctr security`); only the phone side changed.
 2. **No 111 SETUP in step 1.** iOS does not treat the dongle as
    cluster-capable. Try, one build each: root `features` bit 26 forced on (the
    head-unit hook's A/B), `viewAreas` opt-in, and the URL variants the
@@ -310,37 +303,90 @@ SALT + INFO PINNED (strings in libAirPlay .rodata, used by FUN_0x12dcc):
   both: PairingSessionDeriveKey(pair, salt, strlen(salt), info, strlen(info), 32, out32).
 Try Output first for decrypting the inbound 111 stream; nal_ok confirms.
 
-DECRYPT PRIMITIVES (all EXPORTED by libCoreUtils, shim-callable):
-  chacha20_poly1305_init_64x64, _decrypt, _verify, _final (0x3b4f0.. etc).
-  Per-frame nonce/AAD/tag layout: read from ScreenStreamProcessData /
-  _AirPlayReceiverSessionScreen_ProcessFrame (next RE step). AirPlay screen
-  frames are typically: 128-byte header (plaintext) then ChaCha ciphertext +
-  16-byte Poly1305 tag; nonce = little-endian frame counter (per stream),
-  AAD = (none or the header). Verify against the first IDR: with the right
-  key+nonce, chacha20_poly1305_verify passes and au_ok -> nal_ok=1.
+DECRYPT PRIMITIVES (all EXPORTED by libCoreUtils, shim-callable). Prototypes
+below are from the v129 bodies, not from the names:
+  void chacha20_poly1305_init_64x64(ctx, const uint8_t key[32], const uint8_t nonce[8])
+      0x3b4f0. Third arg is a POINTER to 8 nonce bytes. The body forwards it to
+      chacha20_init_64x64, which ldr's 8 bytes from that pointer (NULL means a
+      zero nonce) and takes the block counter as a stack uint64. The poly
+      wrapper passes counter 0. It is not a uint64 nonce in r2:r3.
+  void chacha20_poly1305_add_aad(ctx, const void *aad, size_t len)   0x3b918
+  size_t chacha20_poly1305_decrypt(ctx, const void *in, size_t n, void *out)
+      0x3b9d4. Returns bytes written by chacha20_update (the tail may be held).
+  size_t chacha20_poly1305_verify(ctx, void *outTail, const uint8_t *tag, OSStatus *err)
+      0x3bbb0. Flushes the ChaCha tail into outTail, compares the 16-byte tag,
+      stores 0 into *err on match and 0xFFFFE59E on mismatch, and returns the
+      flushed byte count. This is not verify(ctx, tag[16]).
+  chacha20_poly1305_final is the encrypt-side tag writer (SendProxyScreenFrame).
+  The receiver does not call it; verify flushes the tail itself.
+  PairingSessionDeriveKey(session, salt, saltLen, info, infoLen, outLen, outKey)
+      0x5ec38, returns 0 or 0xFFFFE5CB. HKDF-SHA512, IKM length fixed at 32.
+
+### Phase B PINNED (2026-10-19, libAirPlay v129 disassembly, no car trip)
+`_AirPlayReceiverSessionScreen_ProcessFrame` is inside
+`AirPlayReceiverSessionScreen_ProcessFrames` (0x1b440). The ChaCha call is
+0x1bab4..0x1bb78. ScreenStreamProcessData is only the plaintext delivery
+after this (0x1baa0); it does not decrypt.
+
+(a) NONCE. 8-byte little-endian counter, starts at 0.
+    `SetChaChaSecurityInfo` (0x1b318) zeroes screen bytes [0x1d4, 0x2ec)
+    before copying the 32-byte key to screen+0x2c4. The nonce the decrypt
+    call passes is screen+0x2e4 (8 bytes). Incremented only after verify
+    succeeds, low byte first, carry stops at 8 bytes (0x1bb44..0x1bb78).
+(b) AAD. The 128-byte screen header, in the clear.
+    `add_aad(ctx, header, 128)` at 0x1bad8. Header pointer is the 128 bytes
+    just read (stock keeps them at screen+0x38; the shim's `ScreenHeader`).
+(c) TAG. The last 16 bytes of the body. Ciphertext length is bodySize-16.
+    Entered only when bodySize > 15 (0x1b80c).
+    `decrypt(ctx, body, ct_len, body)` in place (0x1baf0), then
+    `verify(ctx, body+n_decrypt, body+ct_len, &err)` (0x1bb14).
+    Success is `*err==0` AND `n_decrypt + n_verify == bodySize-16`
+    (else stock stores 0xFFFFE596). On success the header bodySize is
+    replaced with the plaintext length (tag dropped) before the AU is parsed.
+(d) HEADER is clear. Opcode is the byte at header+4. Only opcode 0
+    (VIDEO_FRAME) takes the ChaCha path (0x1b764). Opcode 1 (VIDEO_CONFIG)
+    is handed to ScreenStreamSetAVCC with no decrypt (0x1b918), which matches
+    Phase A: the 1440x540 avcC is plaintext. Pairing-session offset 0x3ec
+    reconfirmed at 0x12dcc (`ldr r12,[r0,#0x3ec]`). That function's first
+    DeriveKey uses info "DataStream-Output-Encryption-Key" (strlen 32) and
+    the second "DataStream-Input-Encryption-Key" (strlen 31). Salt is
+    `asprintf("%s%llu","DataStream-Salt",connID)` (strings at 0x242c0/0x242d0).
 
 ScreenStream* are NOT defined in libAirPlay (imported), so decrypt in the shim
 with the libCoreUtils chacha primitives + PairingSessionDeriveKey, keyed per the
 111 connID. No cipher is reimplemented - only stock primitives are called.
 
-IMPLEMENTATION STATUS: design complete; the per-frame decrypt loop is not yet
-written. Remaining concrete unknowns, both from ProcessFrame: (a) pairing-session
-offset in the session struct; (b) exact nonce + AAD + tag position per frame.
-Pin both from a Ghidra decomp of _AirPlayReceiverSessionScreen_ProcessFrame and
-ScreenStreamProcessData, then the loop is: derive key once (PairingSessionDeriveKey),
-per frame chacha20_poly1305_init_64x64(nonce,key) + _decrypt(body) + _verify(tag).
+IMPLEMENTATION STATUS: per-frame loop is in `cluster_dual.c` behind
+`STEP_DECRYPT`. `build_dual.sh step2b` produces v1148 (step 2, decrypt, no
+relay). Output key first; `-DCLUSTER_KEY_INPUT=1` is the one-line swap to the
+Input key. Car trip still required (`nal_ok=1 bad=0`).
+
+### Phase B VERIFIED against the binary (2026-10-19, before the car trip)
+- Key: FUN_0x12dcc call site 0x165c4 passes NULL for the Input-key buffer and
+  sp+0x1d4 for the Output-key buffer -> stock derives ONLY the Output key
+  (info len 32) and gives it to SetChaChaSecurityInfo. Default is right;
+  v1149 (Input) is the fallback only.
+- Salt: asprintf(r1="%s%llu" @0x242d0, r2="DataStream-Salt" @0x242c0, connID
+  as %llu on the stack); saltLen = asprintf return = strlen. Matches.
+- Session: AirPlayReceiverSessionSetup does `mov fp,r0` (0x162f8), so the hook's
+  `session` is the struct stock reads +0x3ec from.
+- Per frame (0x1bab4..0x1bb7c): init(ctx, key, nonce*), add_aad(header,128),
+  decrypt in place bodySize-16, verify(ctx, body+n1, body+ct, &err), success
+  = err==0 && n1+n2==ct, nonce +1 LE with carry over 8 bytes, bodySize :=
+  plaintext length. Context fits in 236 bytes (shim: 256, 8-aligned).
+- Fixed: shim rejected bodySize==16; stock accepts >15 (tag-only frame still
+  verifies and advances the nonce). Now `< 16`.
+- v1148 (Output) / v1149 (Input): 0 hard imports of chacha/Pairing (next_sym
+  only), import check 36/36, dry-run OK.
 
 ### Phase B - step 2b decrypt the cluster stream (ChaCha)
 Goal: plaintext H.264 of the cluster on the dongle (`nal_ok=1`,
 `sps=1440x540`).
-- Research first, offline (Ghidra on libAirPlay v129, no car trips): how stock
-  sets up a ChaCha screen stream - which key it derives for a stream ID and
-  how `_AirPlayReceiverSessionScreen_ProcessFrame` decrypts a frame (nonce
-  source, what is authenticated, where the tag sits, header handling).
-- Implement the same for stream 111 inside the shim; validate with the
-  existing nal_ok / SPS checks (log-only, no relay).
-- This is the piece whose implementation was interrupted in this session; do
-  it in small, separately reviewed changes.
+- Layout pinned 2026-10-19 from libAirPlay v129 (see "Phase B PINNED" above).
+- Implemented in `cluster_dual.c` (`STEP_DECRYPT`). `build_dual.sh step2b`
+  -> v1148. Log-only: step 2 does not relay. Derive uses the Output key;
+  rebuild with `-DCLUSTER_KEY_INPUT=1` if `nal_ok` stays 0.
+- Car trip not done yet. Pass is still the log line below.
 Pass: `111 video config ... sps=1440x540`, `nal_ok=1 bad=0`, idr climbing.
 
 ### Phase C - step 3 relay to the head unit (v1134 path, rebuilt)

@@ -15,12 +15,12 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 build_step() {
-  local step="$1" code="$2" advert="${3:-3}"
-  echo "######## building dual-screen STEP $step ADVERT=$advert -> v$code ########"
+  local step="$1" code="$2" advert="${3:-3}" extra="${4:-}"
+  echo "######## building dual-screen STEP $step ADVERT=$advert ${extra:-} -> v$code ########"
   WRAP_LIB=libCoreUtils.so \
   CHECK_SYM=AirPlayReceiverSessionSetup \
   CLUSTER_SRC=cluster_dual.c \
-  CLUSTER_CFLAGS="-DCLUSTER_STEP=$step -DCLUSTER_ADVERT=$advert" \
+  CLUSTER_CFLAGS="-DCLUSTER_STEP=$step -DCLUSTER_ADVERT=$advert ${extra}" \
     ./work/tools/build.sh 129 "$code"
 }
 
@@ -44,6 +44,10 @@ case "${1:-all}" in
   # v1146: step 2a transport - open the 111 listener, return its dataPort, count
   # frames (no decrypt: the wireless screen is ChaCha; STEP_DECRYPT stays 0).
   step2a) build_step 2 1147 3 ;;   # v1147 = v1146 + NULL guard + 10 s frame stats
+  # v1148: Phase B. Same listener as step 2a, plus ChaCha open of VIDEO_FRAME
+  # (Output key). nal_ok stays 0 -> rebuild with step2b-input (Input key).
+  step2b) build_step 2 1148 3 "-DSTEP_DECRYPT=1" ;;
+  step2b-input) build_step 2 1149 3 "-DSTEP_DECRYPT=1 -DCLUSTER_KEY_INPUT=1" ;;
   advert)
     build_step 1 1140 0
     build_step 1 1141 1
@@ -56,5 +60,5 @@ case "${1:-all}" in
     build_step 3 1134
     echo "######## all three images in work/out/ ########"
     ;;
-  *) echo "usage: $0 [1|2|3|all|advert|advert0|advert1|advert2|hu1|step2a]"; exit 1 ;;
+  *) echo "usage: $0 [1|2|3|all|advert|advert0|advert1|advert2|hu1|step2a|step2b|step2b-input]"; exit 1 ;;
 esac
