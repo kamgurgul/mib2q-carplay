@@ -453,24 +453,31 @@ static int already_cluster(CFRef displays) {
 
 /* ---- stock /info introspection (diagnostic; see STEP 1 RESULT) ---------- */
 static void describe(CFRef v, char *out, size_t cap) {
+    unsigned long tid;
     if (!v) { snprintf(out, cap, "<null>"); return; }
-    if (is_type(v, cf_string_type)) {
+    tid = cf_get_type ? cf_get_type(v) : 0;
+    if (cf_string_type && tid == cf_string_type()) {
+        /* Copy into our own buffer. CFStringGetCStringPtr returns an internal
+         * (sometimes shared/stale) pointer, which garbled this dump before. */
         char b[96];
-        const char *p = cf_cstr_ptr ? cf_cstr_ptr(v, UTF8) : 0;
-        if (!p && cf_cstr_get && cf_cstr_get(v, b, (long)sizeof b, UTF8)) p = b;
-        snprintf(out, cap, "\"%s\"", p ? p : "?");
-    } else if (cf_number_type && is_type(v, cf_number_type)) {
+        b[0] = 0;
+        if (!(cf_cstr_get && cf_cstr_get(v, b, (long)sizeof b, UTF8)) && cf_cstr_ptr) {
+            const char *p = cf_cstr_ptr(v, UTF8);
+            if (p) { strncpy(b, p, sizeof b - 1); b[sizeof b - 1] = 0; }
+        }
+        snprintf(out, cap, "\"%s\"", b);
+    } else if (cf_number_type && tid == cf_number_type()) {
         snprintf(out, cap, "%lld", (long long)(cf_get_i64 ? cf_get_i64(v) : 0));
-    } else if (cf_boolean_type && is_type(v, cf_boolean_type)) {
+    } else if (cf_boolean_type && tid == cf_boolean_type()) {
         snprintf(out, cap, "%s", (v == bool_false) ? "false" : "true");
-    } else if (is_type(v, cf_array_type)) {
+    } else if (cf_array_type && tid == cf_array_type()) {
         snprintf(out, cap, "[array n=%ld]", cf_array_count(v));
-    } else if (is_type(v, cf_dict_type)) {
+    } else if (cf_dict_type && tid == cf_dict_type()) {
         snprintf(out, cap, "{dict}");
-    } else if (cf_data_type && is_type(v, cf_data_type)) {
+    } else if (cf_data_type && tid == cf_data_type()) {
         snprintf(out, cap, "<data>");
     } else {
-        snprintf(out, cap, "<type %lu>", cf_get_type ? cf_get_type(v) : 0);
+        snprintf(out, cap, "<tid=%lu>", tid);   /* unknown type -> show its id */
     }
 }
 
