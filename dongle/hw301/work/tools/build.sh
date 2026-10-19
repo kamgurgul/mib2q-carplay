@@ -83,6 +83,9 @@ docker run --rm -v "$here":/src -w /src "$ALPINE" sh -c "
   echo '   $REAL (real):';   readelf -d '$BUILD/lib/$REAL' | awk '/SONAME/{print \"      \"\$0}'
   echo '   shim exports $MAINSYM:'; readelf -W --dyn-syms '$BUILD/lib/$WRAP' | awk '/$MAINSYM/ && /FUNC/ && !/UND/{print \"      \"\$0}'"
 
+echo ">> 5b. every symbol the shim imports must resolve on the dongle (else CPAAProxyEx won't start)"
+docker run --rm -v "$here":/src -w /src "$ALPINE" sh work/tools/check_imports.sh "$BUILD" "$WRAP"
+
 echo ">> 6. repack -> OTA tar"
 ./work/tools/repack.sh "$BUILD" "$CODE"
 

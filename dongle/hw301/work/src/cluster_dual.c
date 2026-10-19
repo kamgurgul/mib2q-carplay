@@ -212,9 +212,19 @@ static int disabled(void) {
     return flag(OFF_FILE);
 }
 
+/* The dongle's musl predates the time64 ABI: no stock binary imports any
+ * *time64 symbol. The toolchain's newer musl headers rename dlsym() and time()
+ * to __dlsym_time64 / __time64 once <bits/alltypes.h> has been included (here
+ * via <arpa/inet.h> before <dlfcn.h>). musl refuses to load a library with an
+ * unresolved symbol, so CPAAProxyEx would exit at startup: no hostapd (AP),
+ * no USB gadget, no Wi-Fi flashing. Bind the original names explicitly;
+ * build.sh also rejects any shim that imports a *time64 symbol. */
+void *dlsym_plain(void *__restrict, const char *__restrict) __asm__("dlsym");
+long time_plain(long *) __asm__("time");
+
 static void *next_sym(const char *name) {
-    void *p = dlsym(RTLD_NEXT, name);
-    return p ? p : dlsym(RTLD_DEFAULT, name);
+    void *p = dlsym_plain(RTLD_NEXT, name);
+    return p ? p : dlsym_plain(RTLD_DEFAULT, name);
 }
 
 static CFRef s_cf(const char *text) { return cf_string ? cf_string(0, text, UTF8) : 0; }
@@ -262,7 +272,7 @@ static void bind_all(void) {
     *(void **)&cf_cstr_get = next_sym("CFStringGetCString");
 
     /* SetupProxyScreenSecurityInfo is a CPAAProxyEx (executable) export */
-    spssi = dlsym(RTLD_DEFAULT, "SetupProxyScreenSecurityInfo");
+    spssi = dlsym_plain(RTLD_DEFAULT, "SetupProxyScreenSecurityInfo");
     if (spssi && dladdr(spssi, &di)) {
         g_spssi_lo = (uintptr_t)spssi;
         g_spssi_hi = (uintptr_t)spssi + SPSSI_SIZE;
@@ -813,7 +823,7 @@ static struct {
     unsigned for_gen;    /* g_hu_gen the socket / tries belong to */
     int dead;            /* gave up for for_gen; revived by the next g_hu_gen */
     int tries;           /* connect attempts for for_gen */
-    time_t next_try;
+    long next_try;       /* seconds, from time_plain() (32-bit time on the dongle) */
     int nokey_logged;
     unsigned long relayed, err;
 } g_relay = { .fd = -1 };
@@ -881,7 +891,7 @@ static int relay_frame(unsigned rx_gen, int *thread_attached, ScreenHeader *h, u
         dlog("relay: no head-unit screen key captured yet (111 not injected, or SPSSI caller check missed)");
     }
     if (g_relay.fd < 0 && have && !g_relay.dead) {
-        time_t now = time(0);
+        long now = time_plain(0);
         if (now >= g_relay.next_try) {
             g_relay.next_try = now + HU_RETRY_S;
             g_relay.tries++;
