@@ -17,12 +17,22 @@
 #
 # This script only PRODUCES the image. It never contacts the device.
 set -euo pipefail
+# name the failing command instead of exiting silently under set -e
+trap 'rc=$?; echo "!! build.sh failed (exit $rc) at line $LINENO: $BASH_COMMAND" >&2' ERR
 here="$(cd "$(dirname "$0")/../.." && pwd)"            # dongle/
 cd "$here"
 STOCK="${1:-129}"                                       # stock firmware to modify
 CODE="${2:-1${STOCK}}"                                  # OTA version code to advertise
 STOCK_IMG="fw/v${STOCK}/app.img"
-test -f "$STOCK_IMG" || { echo "no stock image $STOCK_IMG"; exit 1; }
+
+# ---- preflight: every host dependency, with the fix in the message ----------
+need() { command -v "$1" >/dev/null 2>&1 || { echo "!! missing '$1' - $2" >&2; exit 1; }; }
+need unsquashfs "install with: brew install squashfs"
+need mksquashfs "install with: brew install squashfs"
+need docker     "install Docker Desktop"
+need python3    "needed by flash_local.py / getlogs.py"
+docker info >/dev/null 2>&1 || { echo "!! Docker is not running - start Docker Desktop and retry" >&2; exit 1; }
+test -f "$STOCK_IMG" || { echo "!! no stock image $STOCK_IMG (git checkout restores it; it is tracked)" >&2; exit 1; }
 BUILD="work/build-v${CODE}"
 OUT="work/out"
 ALPINE="alpine:3.20"
@@ -61,7 +71,7 @@ docker run --rm -v "$here":/src -w /src "$ALPINE" sh -c "
 
 if [ -n "${PATCH_CPAA:-}" ]; then
   echo ">> 3b. binary-patch CPAAProxyEx: $PATCH_CPAA"
-  ./work/.venv/bin/python work/tools/patch_bytes.py "$BUILD/bin/CPAAProxyEx" $PATCH_CPAA
+  python3 work/tools/patch_bytes.py "$BUILD/bin/CPAAProxyEx" $PATCH_CPAA
 fi
 echo ">> 4. install shim as $WRAP"
 cp "$OUT/cluster_shim.so" "$BUILD/lib/$WRAP"
@@ -82,5 +92,5 @@ test -f "work/_verify/lib/$WRAP" || { echo "verify: missing shim $WRAP"; exit 1;
 test -f "work/_verify/lib/$REAL" || { echo "verify: missing renamed real $REAL"; exit 1; }
 rm -rf work/_verify
 echo ">> DONE. Flash with:"
-echo "     ./work/.venv/bin/python work/tools/flash_local.py $OUT/hw301_v${CODE}.tar --version $CODE --dry-run"
+echo "     python3 work/tools/flash_local.py $OUT/hw301_v${CODE}.tar --version $CODE --dry-run"
 echo "   (drop --dry-run to actually flash; read work/notes/virtual-cockpit.md FLASHING RULE first)"
