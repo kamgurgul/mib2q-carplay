@@ -209,6 +209,46 @@ the AES-CTR context in libAirPlay is ≤0x118 bytes (`screen+0xb8`..`+0x1d0`),
 so the 512-byte `AesCtx` is large enough; system `python3` 3.12 runs
 `flash_local.py` and `getlogs.py` (stdlib only; no `.venv` needed).
 
+## INCIDENT + RECOVERY (2026-10-19): v1132 soft-brick, restored over FEL
+
+What happened: the first v1132 (marker `v1132-20261019084355`) imported
+`__dlsym_time64` (newer musl headers; see the comment above `dlsym_plain` in
+cluster_dual.c). The dongle's musl has no time64 symbols, so CPAAProxyEx could
+not load the shim and exited at startup. CPAAProxyEx also runs hostapd (the
+smartBox AP), the USB gadget and the RGB LED, so the symptom was: no LED, no
+Wi-Fi, no USB device. Only the `app` partition was affected. Fixed in ae405d8;
+`check_imports.sh` (build.sh step 5b) now refuses such images.
+
+Hardware: board RSY03 V1.0, Allwinner V851S, 16 MiB SPI-NOR (8-pin chip above
+the SoC), Realtek RTL8733BS Wi-Fi/BT. GPT on the flash:
+
+| partition | range | size |
+|---|---|---|
+| boot | 0x0060000-0x02a0000 | 2304 KiB |
+| rootfs | 0x02a0000-0x0730000 | 4672 KiB |
+| rootfs_data | 0x0730000-0x07b0000 | 512 KiB |
+| env | 0x07b0000-0x07d0000 | 128 KiB |
+| private | 0x07d0000-0x07e0000 | 64 KiB |
+| app | 0x07e0000-0x0ea0000 | 6912 KiB (the OTA app.img lands here) |
+| UDISK | 0x0ea0000-0x1000000 | 1408 KiB |
+
+Recovery that worked (no programmer, no soldering):
+1. FEL: dongle unplugged; short flash pin 2 (DO; pin 1 = dot, top-left; pin 2 =
+   second leg from the top on the left) to GND (USB plug metal shell); plug into
+   the Mac; release after ~2 s. `xfel version` -> `ID=0x00188600(V851/V853)`.
+2. Backup (read-only, two reads compared): `work/tools/fel_backup.sh`
+   (xfel v1.4.0 from github.com/xboot/xfel, built into the git-ignored
+   `work/third_party/xfel/`; ~520 KB/s, ~32 s per 16 MiB read).
+3. Restore file = stock `fw/v129/app.img` + 4 KiB of the dump's own bytes, so
+   the write is exactly 0x3f0000 (64 KiB aligned; xfel erases whole blocks):
+   `xfel spinor write 0x7e0000 work/rollback/restore-app-v129-at-0x7e0000.bin`
+4. Verify: read back 0x7e0000+0x3f0000 and `cmp`; MD5 of the first 4124672
+   bytes = appmd5sum.txt; neighbouring blocks 0x7d0000 and 0xbd0000 unchanged.
+5. Unplug, power from a USB charger: LED + smartBox AP back on stock v129.
+
+Rule from now on: keep `work/rollback/restore-app-v129-at-0x7e0000.bin` (and a
+full dump); a dongle that shows no LED after a flash is recovered in ~5 min.
+
 ## 1. Ground rules
 
 - Head-unit guard stays **ON** (`sender_listed()` returns 1 for iPhone9,1/18D70). Never count:2 (F5).
