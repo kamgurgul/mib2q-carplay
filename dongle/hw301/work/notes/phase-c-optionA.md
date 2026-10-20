@@ -1,4 +1,4 @@
-# Phase C, option A - deliver the cluster to the head unit without the 2-screen crash
+# Phase C, direct path - deliver the cluster without the 2-screen crash
 
 Why v1150 crashed: injecting 111 into the dongle->head-unit SetupScreen makes
 stock CPAAProxyEx present two screens to the head unit; it is a single-screen
@@ -6,66 +6,55 @@ bridge and the session dies in ~0.6 s (`arrray size = 2` ... `SendProxyScreenFra
 failed err:-1`). So the dongle must NOT make CPAAProxyEx request 111.
 
 Design: the dongle's own relay opens a direct TCP connection to the head unit
-and sends the decrypted cluster as PLAINTEXT H.264; the head unit opens its
-listener for the dongle by itself and reads plaintext (no key coordination, no
-injection, CPAAProxyEx stays single-screen = stable). Two small changes, one per
-side. The dongle->HU framing is the existing 128-byte ScreenHeader
-(opcode 1 = config/avcC, 0 = frame) with a PLAINTEXT body (no AES, no tag).
+and seals each decrypted AU with the same AES-CTR screen key other dongles
+install in `SetupProxyScreenSecurityInfo` (this firmware logs `use aes ctr
+security`). The head unit opens its stream-111 listener for the dongle sender
+and decrypts with that key. CPAAProxyEx stays single-screen. Framing is the
+existing 128-byte ScreenHeader (opcode 1 = config/avcC, plaintext; opcode 0 =
+frame, AES-CTR of the whole AVCC body, no tag). v1152 sent plaintext; do not
+flash it.
 
 ## Head-unit side (altscreen_hook/libaltscreen111_gen2.c)
 Goal: for the dongle sender (model iPhone9,1 build 18D70), open the stream-111
-listener at session setup and accept plaintext frames, WITHOUT a 111 SETUP from
-CPAAProxyEx and WITHOUT AES.
+listener at session setup and AES-decrypt frames, WITHOUT a 111 SETUP from
+CPAAProxyEx. The key is stream 110's `streamConnectionID` via the existing
+`AirPlay_DeriveAESKeySHA512ForScreen` path inside `start_alt_receiver`. That is
+the id `SetupProxyScreenSecurityInfo` hashes into the key the dongle captures,
+so both sides start CTR at the same IV. VIDEO_CONFIG stays plaintext. The frame
+loop is unchanged (it already AES-CTR-decrypts `bodySize` bytes and submits
+the AVCC AU).
 
-1. Add a flag `static int g_alt_plain;` next to `g_sender_noadvertise`.
-   In `note_sender()`, set `g_alt_plain = (model==iPhone9,1 && build==18D70)`
-   (reuse the exact test in `sender_listed`). Log it.
+Trigger: in `mibr_session_setup`, when the sender is listed (dongle) and the
+request has type 110 but no 111, call `start_alt_receiver(cid_110)`. Do not
+edit the SETUP response and do not change `advertise_enabled()` (guard stays
+ON). A later 110 teardown stops this listener so the next SETUP re-inits CTR.
+Real iPhones still take the normal 111 SETUP path.
 
-2. New `start_alt_receiver_plain(void)` (copy of `start_alt_receiver` minus the
-   key): skip the `g_master_valid` check and the `g_derive_screen`/
-   `g_aes_ctr_init` block; set `g_alt_aes_valid = 0`; bind the listener the same
-   way (`bind_listener_stream111`, port 7100 then the PF fallbacks); spawn
-   `alt_receiver_thread`. Set a new `static int g_alt_plain_mode = 1;` for this
-   receiver so the frame loop knows to skip decryption.
-
-3. In `alt_receiver_thread`, the `K_SCREEN_VIDEO_FRAME` case: when
-   `g_alt_plain_mode`, do NOT call `g_aes_ctr_update`; submit `body` directly:
-   ```
-   if (g_alt_plain_mode) { /* body already plaintext */ }
-   else if (!g_alt_aes_valid || g_aes_ctr_update(...)!=K_NO_ERR) { ...fail... }
-   ```
-   VIDEO_CONFIG is already plaintext and unchanged.
-
-4. Trigger in `mibr_session_setup`: after the stock 110 setup succeeds, when
-   `g_alt_plain` and no 111 receiver is running
-   (`g_alt_thread_started==0`), call `start_alt_receiver_plain()`.
-   Do NOT change `advertise_enabled()`/the /info path (guard stays ON: the
-   dongle still gets stock /info; only the listener is opened for it).
-   Keep the normal (keyed) path for all other senders unchanged.
-
-5. Build with the existing MHI2Q target (scripts/build_altscreen_hook.sh);
-   install the new libaltscreen111_mhi2q.so. This is the vehicle-proven file:
-   change only the dongle-sender branch, keep Run143/other senders byte-for-byte.
-
-## Dongle side (dongle/hw301/work/src/cluster_dual.c) - IMPLEMENTED below
-New compile switch `HU_DIRECT` (option-A build). When set:
+## Dongle side (dongle/hw301/work/src/cluster_dual.c)
+`HU_DIRECT` (direct build). When set:
 - the `CFArrayEnsureCreatedAndAppend` injection is OFF (no 111 to CPAAProxyEx);
-- the relay sends PLAINTEXT (never AES-re-encrypts; `g_relay.enc` forced 0);
-- the relay still connects to the head unit :7100 on the first decrypted frame
-  and sends the cached config then frames, and still re-requests a key frame.
-`g_hu_gen` still advances from the MAIN screen's SetupProxyScreenSecurityInfo
-(AES_CTR_Init capture), which is the relay's "head-unit session up" trigger, so
-the relay connects without the injection.
-Build: `build_dual.sh optA` -> v1152 (step3, decrypt, HU_DIRECT, Output key).
+- the relay AES-CTR-seals each authenticated AU with the key captured from the
+  main screen's `SetupProxyScreenSecurityInfo` (`head-unit relay aes on`);
+- `cluster_dual.plainhu` is the only plaintext escape;
+- the relay still connects to the head unit :7100 on the first decrypted frame,
+  sends the cached config in the clear, then the sealed frames, and still
+  re-requests a key frame.
+`g_hu_gen` still advances from that AES_CTR_Init, which is the relay's
+"head-unit session up" trigger.
+Build: `build_dual.sh optA` -> v1154 (step3, decrypt, HU_DIRECT, Output key).
 
 ## Bring-up order
 1. Flash the new head-unit hook; keep the dongle on v1148 (Phase B). Confirm
    the head unit opens :7100 for the dongle (head-unit log:
+   `dongle sender: stream111 listener cid=... aes=1` and
    `waiting for iPhone AltScreen connection on 0.0.0.0:7100`) with CarPlay up.
-2. Flash the dongle v1152. Expect: dongle `head-unit 111 connected :7100`,
+2. Flash the dongle v1154. Expect: dongle `head-unit screen key captured`,
+   `head-unit relay aes on`, `head-unit 111 connected :7100`,
    `relayed=` climbing, `send_err=0`, NO `arrray size = 2`, session stable;
    head unit `AltScreen stream 111 connected` -> `valid ... video config` ->
    `first complete Screen VIDEO_FRAME accepted`; map on the Virtual Cockpit.
+   `AES-CTR decrypt failed` means the 110 connection id on the two sides
+   differed. Do not fall back to plaintext unless that log is the failure.
 3. If the head unit shows the map but stutters, that is Phase D item 3
    (off-thread writer). If the session still dies, re-check that the dongle log
    shows `arrray size = 1` (injection truly off).
@@ -73,3 +62,45 @@ Build: `build_dual.sh optA` -> v1152 (step3, decrypt, HU_DIRECT, Output key).
 ## Recovery
 Dongle: `flash_local.py fw/hw301_v129.tar --version 129` (FEL if no LED).
 Head unit: keep the previous libaltscreen111_mhi2q.so to swap back.
+
+## VERIFICATION (2026-10-20, encrypted direct path, both sides build clean)
+Functional review: SHOULD decrypt and show the map.
+- Key match: dongle captures CPAAProxyEx's stream-110 AES-CTR key+iv at
+  SetupProxyScreenSecurityInfo; the head unit re-derives 110's key from
+  main_cid (AirPlay_DeriveAESKeySHA512ForScreen). Same pairing, same cid, same
+  derivation -> identical key+iv, which is why real 110 already works. The key
+  is never transmitted; both sides arrive at it independently.
+- Counter alignment: both init CTR once at that iv and advance by bodySize per
+  VIDEO_FRAME; VIDEO_CONFIG is plaintext on both and advances neither. TCP keeps
+  order, so the two CTR spans stay aligned. `AES-CTR decrypt failed` on the head
+  unit would mean the two cids diverged (re-SETUP race) - not a reason to use
+  plaintext.
+- IDR: the stream carries ~1 IDR; the relay requests forceKeyFrame on connect
+  and sends the cached avcC first, so the head unit gets config then a fresh IDR.
+- Teardown: dongle never matches has_alt (no 111 in its requests); the
+  110-teardown branch stops the listener and clears g_dongle_alt_cid so the next
+  110 SETUP re-keys. Branch order (has_alt / full_session / has_main-dongle) is
+  correct.
+
+SECURITY GAP vs real dongles (the one real deviation): other dongles get a
+distinct 111 connection id from a real 111 SETUP, so their 110 and 111 AES-CTR
+keys DIFFER. This build reuses 110's key+iv for 111, so 110 (main) and 111
+(cluster) share a keystream. A full capture of the dongle<->head-unit USB link
+(usb0, inside the device) could XOR the two and recover both. Over-the-air
+(phone<->dongle) is unaffected (ChaCha, intact). So this is "encrypted on the
+local hop" but NOT the distinct-key security real dongles have.
+Fix options, in order of preference:
+  1. Distinct 111 key from the shared 110 key via a KDF both sides apply, e.g.
+     key111/iv111 = SHA512(key110||"cluster111")[:16] computed identically on
+     the dongle (on the captured key) and the head unit (on the derived key).
+     No proxy rewrite, no key transport; libCoreUtils exports SHA512_* and the
+     head unit already links AirPlay_DeriveAESKeySHA512ForScreen. Removes the
+     reuse. (Needs a few lines of hashing on each side - not yet written.)
+  2. True mimic: issue a real 111 SETUP to the head unit (distinct cid) - the
+     proxy rewrite the notes judged out of scope; crashes stock CPAAProxyEx.
+Until (1) lands, treat v1154 as a working-but-keystream-reusing build: fine to
+prove the map on the cluster, not the final security posture.
+
+BUILD STATUS: head-unit hook built (build/libaltscreen111_mhi2q.so, encrypted
+path); dongle v1154 built (optA), import check 43/43, dry-run OK. Not committed,
+not flashed.

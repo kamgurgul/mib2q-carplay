@@ -1101,6 +1101,20 @@ static int contains_stream_type(CFDictionaryRef request, int wanted)
     return 0;
 }
 
+/* streamConnectionID of the first stream with this type, or 0. */
+static uint64_t stream_cid_of_type(CFDictionaryRef request, int wanted)
+{
+    CFArrayRef a = get_streams(request);
+    CFIndex i, n;
+    if (!a) return 0;
+    n = p_CFArrayGetCount(a);
+    for (i = 0; i < n; ++i) {
+        CFDictionaryRef sd = (CFDictionaryRef)p_CFArrayGetValueAtIndex(a, i);
+        if (stream_type(sd) == wanted) return stream_connection_id(sd);
+    }
+    return 0;
+}
+
 static int contains_stream111(CFDictionaryRef request, CFDictionaryRef *outDesc, int *outOtherCount)
 {
     CFArrayRef a = get_streams(request);
@@ -1200,6 +1214,8 @@ static int current_alt_port(void)
  */
 static const char *g_noadvertise_senders_path = "/mnt/app/root/mibr-carplay111-noadvertise.senders";
 static int g_sender_noadvertise;
+/* Dongle-only listener: keyed with stream 110's connection id (0 = not ours). */
+static uint64_t g_dongle_alt_cid;
 
 static int sender_listed(const char *model, const char *build)
 {
@@ -3995,6 +4011,26 @@ static OSStatus mibr_session_setup(AirPlayReceiverSessionRef s, CFDictionaryRef 
 
     hasAlt=g_enabled && contains_stream111(request,&altDesc,&other);
     if(!hasAlt){
+        /* The wireless dongle never asks for 111 (advertisement guard stays ON,
+         * so CPAAProxyEx stays a single-screen bridge). Other dongles seal the
+         * screen with the AES key SetupProxyScreenSecurityInfo derives for
+         * stream 110's connection id. Open the listener on that same id and
+         * leave the SETUP response stock: do not append a 111 entry. */
+        if(g_sender_noadvertise){
+            uint64_t main_cid = stream_cid_of_type(request, 110);
+            if(main_cid && !(g_alt_thread_started && g_dongle_alt_cid == main_cid)){
+                int dport = start_alt_receiver(main_cid);
+                if(dport > 0){
+                    g_dongle_alt_cid = main_cid;
+                    logf_u2("dongle sender: stream111 listener cid=%llu port=%d aes=1 (110 key, response unchanged)",
+                            (unsigned long long)main_cid, dport);
+                }else{
+                    g_dongle_alt_cid = 0;
+                    logf_u2("dongle sender: stream111 listener not started cid=%llu",
+                            (unsigned long long)main_cid);
+                }
+            }
+        }
         if(outResponse)*outResponse=stockResp;
         else if(stockResp)p_CFRelease(stockResp);
         return e;
@@ -4112,8 +4148,16 @@ static void mibr_session_teardown(AirPlayReceiverSessionRef s, CFDictionaryRef r
         gen2_control_release();
         gen2_set_command_ready(0);
         stop_alt_receiver();
+        g_dongle_alt_cid = 0;
         clear_video_observer();
         publish_state("idle");
+    } else if(has_main && g_sender_noadvertise && g_dongle_alt_cid) {
+        /* This listener's AES key is stream 110's. A new 110 SETUP derives a
+         * new key; drop the old CTR state so the next listener starts at the IV. */
+        logf_u2("dongle sender: stream110 teardown -> stop stream111 listener");
+        stop_alt_receiver();
+        g_dongle_alt_cid = 0;
+        clear_video_observer();
     } else if(has_main) {
         logf_u2("GEN2 TEARDOWN stock110-only -> preserving private111 transport/control state");
     }

@@ -34,9 +34,15 @@
  *     dongle's stream-110 data socket (peer port 6030).
  *
  * Relay (step 3, and only once STEP_DECRYPT has produced plaintext): phone 111
- * VIDEO_FRAME bodies are ChaCha-opened, then re-encrypted with the head-unit
- * AES-CTR key. VIDEO_CONFIG is plaintext and passes through. One head-unit
- * connection is kept across phone reconnects.
+ * VIDEO_FRAME bodies are ChaCha-opened, then sealed the way other dongles seal
+ * a screen toward the head unit. This firmware logs "use aes ctr security", so
+ * the seal is AES-CTR of the whole AVCC access unit (SendProxyScreenFrame's
+ * AES_CTR_Update of the sample; that function's 4-byte rewrite only replaces
+ * an Annex-B start code, and this buffer is already AVCC). No Poly1305 tag.
+ * VIDEO_CONFIG stays plaintext. One head-unit connection is kept across phone
+ * reconnects. The captured key is stream 110's: the direct path does not
+ * inject a second screen, and the head-unit hook derives 111 from that same
+ * connection id.
  *
  * Step is chosen at BUILD time (no dongle shell needed): -DCLUSTER_STEP=N
  *   1  advertise the cluster display to the iPhone + log SETUP/keys only
@@ -87,12 +93,13 @@
 #define CLUSTER_DIAG 1
 #endif
 
-/* Phase C option A (HU_DIRECT): do NOT inject 111 into the dongle->head-unit
+/* Phase C direct path (HU_DIRECT): do NOT inject 111 into the dongle->head-unit
  * SetupScreen (that makes stock CPAAProxyEx a 2-screen bridge and crashes the
- * session, v1150). Instead the relay connects to the head unit :7100 directly
- * and sends PLAINTEXT H.264; the head-unit hook opens its listener for the
- * dongle sender and reads plaintext (no key coordination). See
- * work/notes/phase-c-optionA.md. */
+ * session, v1150). The relay connects to the head unit :7100 itself and seals
+ * each AU with the AES-CTR key captured from SetupProxyScreenSecurityInfo —
+ * the same key other dongles install for the screen, and the same key the
+ * head-unit hook derives for stream 110's connection id. cluster_dual.plainhu
+ * is the only plaintext escape. See work/notes/phase-c-optionA.md. */
 #ifndef HU_DIRECT
 #define HU_DIRECT 0
 #endif
@@ -1150,9 +1157,17 @@ static int relay_frame(unsigned rx_gen, int *thread_attached, ScreenHeader *h, u
             g_relay.tries++;
             g_relay.fd = hu_connect();
             if (g_relay.fd >= 0) {
-                /* HU_DIRECT: head unit reads plaintext, so never re-encrypt. */
-                g_relay.enc = (!HU_DIRECT && !flag(PLAINHU_FILE) && r_ctr_init(&g_relay.ctx, key, iv) == 0);
-                if (cfg && cfg_len &&               /* replay the real config header + body */
+                /* Same AES-CTR context other dongles init in SetupProxyScreenSecurityInfo.
+                 * plainhu is the only way a frame leaves unencrypted. */
+                int plain = flag(PLAINHU_FILE);
+                /* Fresh context. A reused socket has already been AES_CTR_Final'd
+                 * in relay_drop_locked; init must start the counter at this IV. */
+                memset(&g_relay.ctx, 0, sizeof g_relay.ctx);
+                g_relay.enc = (!plain && r_ctr_init(&g_relay.ctx, key, iv) == 0);
+                if (!plain && !g_relay.enc) {
+                    relay_drop_locked(0);
+                    dlog("head-unit aes init failed");
+                } else if (cfg && cfg_len &&        /* replay the real config header + body */
                     (send_full(g_relay.fd, cfg_hdr, sizeof *cfg_hdr) != 0 ||
                      send_full(g_relay.fd, cfg, cfg_len) != 0)) {
                     g_relay.err++;
@@ -1161,6 +1176,7 @@ static int relay_frame(unsigned rx_gen, int *thread_attached, ScreenHeader *h, u
                 } else {
                     *thread_attached = 1;
                     want_kf = 1;
+                    if (g_relay.enc) dlog("head-unit relay aes on");
                 }
             } else if (g_relay.tries >= HU_MAX_TRIES) {
                 /* a failed connect does not consume the HU accept, so retry is
@@ -1185,7 +1201,10 @@ static int relay_frame(unsigned rx_gen, int *thread_attached, ScreenHeader *h, u
         }
     }
     if (g_relay.fd >= 0) {
-        if (g_relay.enc) r_ctr_update(&g_relay.ctx, body, h->bodySize, body);   /* re-encrypt in place */
+        /* One continuous CTR span over the AVCC AU, matching AES_CTR_Update in
+         * SendProxyScreenFrame and the head-unit hook's decrypt of bodySize bytes.
+         * Config frames are not fed in, so they do not advance this counter. */
+        if (g_relay.enc) r_ctr_update(&g_relay.ctx, body, h->bodySize, body);
         if (send_full(g_relay.fd, h, sizeof *h) != 0 || send_full(g_relay.fd, body, h->bodySize) != 0) {
             g_relay.err++;
             relay_drop_locked(1);

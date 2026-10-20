@@ -53,14 +53,15 @@ case "${1:-all}" in
   # Use step3-input only if Phase B needed the Input key (v1149).
   step3) build_step 3 1150 3 "-DSTEP_DECRYPT=1" ;;
   step3-input) build_step 3 1151 3 "-DSTEP_DECRYPT=1 -DCLUSTER_KEY_INPUT=1" ;;
+  # v1154: direct path. No 111 injection (v1150 crashed). Relay connects to
+  # the head unit :7100 and AES-CTR-seals frames with the captured screen key.
+  # Needs the head-unit hook that listens for the dongle on stream 110's key
+  # (phase-c-optionA.md). v1152/v1153 were the plaintext experiment; do not flash them.
+  optA) build_step 3 1154 3 "-DSTEP_DECRYPT=1 -DHU_DIRECT=1" ;;
+  optA-input) build_step 3 1155 3 "-DSTEP_DECRYPT=1 -DHU_DIRECT=1 -DCLUSTER_KEY_INPUT=1" ;;
   # v1160: release = step3 with the bring-up diagnostics compiled out
   # (CLUSTER_DIAG=0: no /info dump, no per-SETUP lines, no c111.h264 dump).
-  # Build it only after v1150 (or v1151) has shown the map on the cluster.
-  # v1152: Phase C option A. No 111 injection to CPAAProxyEx; the relay connects
-  # to the head unit :7100 directly and sends PLAINTEXT. Needs the matching
-  # head-unit hook change (phase-c-optionA.md). step3/v1150 crashed; use this.
-  optA) build_step 3 1152 3 "-DSTEP_DECRYPT=1 -DHU_DIRECT=1" ;;
-  optA-input) build_step 3 1153 3 "-DSTEP_DECRYPT=1 -DHU_DIRECT=1 -DCLUSTER_KEY_INPUT=1" ;;
+  # Build it only after a direct-path car pass (v1154) has shown the map on the cluster.
   release) build_step 3 1160 3 "-DSTEP_DECRYPT=1 -DCLUSTER_DIAG=0" ;;
   release-input) build_step 3 1161 3 "-DSTEP_DECRYPT=1 -DCLUSTER_KEY_INPUT=1 -DCLUSTER_DIAG=0" ;;
   advert)
