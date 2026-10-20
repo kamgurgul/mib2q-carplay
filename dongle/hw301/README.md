@@ -24,6 +24,9 @@ the integration lives in the repo root (`altscreen_hook/`, `scripts/`, `mods/`).
   tars `hw301_v126.tar` / `hw301_v129.tar`, each version's squashfs `app.img`
   (the build input) + `appmd5sum.txt`, and the vendor version metadata. The
   unpacked `fw/v*/root/` trees are *not* committed (derive with `unsquashfs app.img`).
+  Also `hw301_v1162.tar` (`v1162/app.img`, marker `v1162-20261020152434`): the
+  custom release image (`build_dual.sh release`, HU_DIRECT, diagnostics off).
+  It is not stock. Flash it with `--version 1162`. Roll back with `hw301_v129.tar`.
 - `dongle_dump.py`, `fw_download.py` — fetch stock firmware / dump flash.
 
 ## Not committed (regenerable / vendor / owner data — see `../.gitignore`)

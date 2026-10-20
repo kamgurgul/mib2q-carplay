@@ -43,9 +43,13 @@ hw301/work/exp/
 *.squashfs
 .DS_Store
 
-# …but DO keep the original stock firmware (flashable OTA + build input app.img).
-# Stock recovery: flash hw301_v129.tar. These override the *.img/*.tar rules above.
+# …but DO keep the original stock firmware (flashable OTA + build input app.img)
+# and the custom release image. Stock recovery: flash hw301_v129.tar.
+# Custom cockpit image: flash hw301_v1162.tar --version 1162.
+# These override the *.img/*.tar rules above.
 !hw301/fw/hw301_v126.tar
 !hw301/fw/hw301_v129.tar
+!hw301/fw/hw301_v1162.tar
 !hw301/fw/v126/app.img
 !hw301/fw/v129/app.img
+!hw301/fw/v1162/app.img
