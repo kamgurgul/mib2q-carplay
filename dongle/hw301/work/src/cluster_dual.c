@@ -165,6 +165,34 @@
 #define URL_MAP "maps:/car/instrumentcluster/map"
 #define URL_CARD "maps:/car/instrumentcluster/instructioncard"
 
+/* SafeArea per view, matching the head-unit hook's calibrated A5 values
+ * (ALT111_DEFAULT_SAFE_* wide, _SMALL_SAFE_* classic). Height is 270, not the
+ * canvas 540: the dials cover the rest. Overridable per cockpit at build time. */
+#ifndef CLUSTER_SAFE0_X
+#define CLUSTER_SAFE0_X 360
+#endif
+#ifndef CLUSTER_SAFE0_Y
+#define CLUSTER_SAFE0_Y 87
+#endif
+#ifndef CLUSTER_SAFE0_W
+#define CLUSTER_SAFE0_W 720
+#endif
+#ifndef CLUSTER_SAFE0_H
+#define CLUSTER_SAFE0_H 270
+#endif
+#ifndef CLUSTER_SAFE1_X
+#define CLUSTER_SAFE1_X 520
+#endif
+#ifndef CLUSTER_SAFE1_Y
+#define CLUSTER_SAFE1_Y 87
+#endif
+#ifndef CLUSTER_SAFE1_W
+#define CLUSTER_SAFE1_W 400
+#endif
+#ifndef CLUSTER_SAFE1_H
+#define CLUSTER_SAFE1_H 270
+#endif
+
 #define OFF_FILE "/mnt/UDISK/cluster_dual.off"
 #define NOINJECT_FILE "/mnt/UDISK/cluster_dual.noinject"
 #define NORELAY_FILE "/mnt/UDISK/cluster_dual.norelay"
@@ -554,8 +582,12 @@ static void add_view(CFRef areas, int sx, int sy, int sw, int sh) {
 static void add_views(CFRef alt) {
     CFRef areas = cf_array_new(0, 0, array_cb);
     if (!areas) return;
-    add_view(areas, 360, 87, 720, 297);   /* [0] wide: small dials */
-    add_view(areas, 520, 87, 400, 297);   /* [1] classic: between the dials */
+    /* SafeArea = where the phone keeps the puck/turn card so the dials do not
+     * cover them. These must match the head-unit hook's calibrated values for
+     * this cockpit (ALT111_DEFAULT_SAFE_* / _SMALL_SAFE_*); the dongle advertised
+     * height 297 vs the real 270, so content landed too low/wide (car photo). */
+    add_view(areas, CLUSTER_SAFE0_X, CLUSTER_SAFE0_Y, CLUSTER_SAFE0_W, CLUSTER_SAFE0_H); /* [0] wide */
+    add_view(areas, CLUSTER_SAFE1_X, CLUSTER_SAFE1_Y, CLUSTER_SAFE1_W, CLUSTER_SAFE1_H); /* [1] classic */
     set_value(alt, "viewAreas", areas);
     set_i64(alt, "initialViewArea", 0);
     cf_release(areas);

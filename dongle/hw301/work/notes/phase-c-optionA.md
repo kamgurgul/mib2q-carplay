@@ -146,3 +146,37 @@ Zoom forwarding is NOT needed (zoom works). Cockpit-layout (updateViewArea)
 switching the cluster view: unverified - check whether switching layouts moves
 the cluster SafeArea; if not, that is the one command that may still need
 forwarding.
+
+## SAFE AREA + COCKPIT SWITCHING (2026-10-20, from a car photo)
+- SAFE AREA FIXED (v1158): the dongle advertised safe-area height 297; the
+  head-unit hook's calibrated value for this A5 cockpit is 270
+  (ALT111_DEFAULT_SAFE_H). The phone laid the puck/turn-text into a box 27 px
+  too tall, so content sat wrong on the VC. add_views now uses 270 and the
+  head unit's origins (wide 360,87,720,270; classic 520,87,400,270), all
+  -D overridable (CLUSTER_SAFE0_*/SAFE1_*).
+- COCKPIT SWITCHING does not resize the map: switching wide<->classic should
+  send `updateViewArea` so the phone re-renders into the other SafeArea. Over
+  the dongle the head unit serves stock /info (guard on) and its gen2 control
+  worker is NOT armed in the dongle path (start_alt_receiver only, no
+  gen2_control_projection_on), so no updateViewArea is sent; and even if it
+  were, it would go to CPAAProxyEx (dropped), not the phone. So the cluster
+  stays on initialViewArea=0. Fixing it needs the head unit, on a cockpit
+  layout change, to tell the dongle, and the dongle to send updateViewArea to
+  the phone - the same command-forwarding gap. NOT implemented.
+
+## WHO ADVERTISES THE CLUSTER URL (answers the MIB-menu maneuver question)
+The MIB-menu maneuver toggle switches the head-unit-advertised URL between
+ALT_URL_RGI_ON (/map?maneuverLayout=no: head unit draws the arrow, phone
+suppresses its turn card) and ALT_URL_RGI_OFF (root ?maneuverLayout=rightAligned:
+phone draws its own). That selection is in active_alt_url_copy and is only used
+when advertise_enabled() is true.
+  - WIRED (or any non-guarded sender): the head unit advertises, so the MIB
+    toggle works - disabling head-unit maneuver rendering makes the phone draw
+    its own maneuver (app-dependent: Apple Maps/Waze draw a turn card; Google
+    Maps' cluster rendering is minimal).
+  - DONGLE: advertise_enabled() is FALSE (guard on, stock /info), so the head
+    unit does NOT advertise the URL - the DONGLE does (CLUSTER_URL_INITIAL,
+    compile-time). The MIB toggle has NO effect on the dongle path. To change
+    dongle behaviour, rebuild with -DCLUSTER_URL_INITIAL=... (ALT_URL_RGI_ON =
+    bare /map for head-unit-draws; the current default is the RGI_OFF phone-draws
+    URL).
