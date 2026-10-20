@@ -29,8 +29,10 @@
  *     streamConnectionID, so the head unit derives the same key for 111 as 110.
  *   - that key is captured where CPAAProxyEx derives it: AES_CTR_Init called
  *     from SetupProxyScreenSecurityInfo.
- *   - the head-unit 111 port defaults to 7100 (the hook's MHI2Q default), or
- *     /mnt/UDISK/cluster_hu.port. The head-unit address is the peer of the
+ *   - the head-unit 111 port defaults to 7100, or /mnt/UDISK/cluster_hu.port.
+ *     That number must match the head unit's /mnt/app/cluster_hu.port. The
+ *     hook binds only that port for the dongle; it does not try another.
+ *     The head-unit address is the peer of the
  *     dongle's stream-110 data socket (peer port 6030).
  *
  * Relay (step 3, and only once STEP_DECRYPT has produced plaintext): phone 111
@@ -199,6 +201,7 @@
 #define PLAINHU_FILE "/mnt/UDISK/cluster_dual.plainhu"
 #define DUMP_FILE "/mnt/UDISK/cluster_dump.on"
 #define DUMP_PATH "/mnt/UDISK/c111.h264"
+/* Same number as the head unit's /mnt/app/cluster_hu.port. Default 7100. */
 #define HU_PORT_FILE "/mnt/UDISK/cluster_hu.port"
 
 #define PHONE_PORT 7100          /* preferred phone-facing listener port */

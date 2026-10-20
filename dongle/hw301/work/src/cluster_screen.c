@@ -27,9 +27,11 @@
  * unit stays on. CLUSTER_SCREEN=0, or the file /mnt/UDISK/cluster_screen.off,
  * returns stock /info and stock setup.
  *
- * Build (produces an image, does not flash):
- *   WRAP_LIB=libAirPlay.so CHECK_SYM=AirPlayCopyServerInfo \
- *   CLUSTER_SRC=cluster_screen.c ./work/tools/build.sh 129 1131
+ * Not a flash target. The working cockpit image is cluster_dual.c
+ * (./work/tools/build_dual.sh optA). This is the earlier libAirPlay
+ * advertisement (v1131). /info still has to match cluster_dual.c: dereference
+ * kCFLBooleanFalse, safe-area height 270, and uuid only. Building this in
+ * its place reproduces the /info iOS rejected (v1143).
  */
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -139,6 +141,10 @@ static int cf_bind(void) {
     NEED(dict_val_cb, "kCFLDictionaryValueCallBacksCFLTypes");
     NEED(bool_false, "kCFLBooleanFalse");
 #undef NEED
+    /* The symbol is a pointer variable. dlsym returns that variable's address;
+     * v1143 stored the address in viewAreas and iOS rejected /info. */
+    bool_false = *(const void *const *)bool_false;
+    if (!bool_false) { slog("kCFLBooleanFalse is NULL"); return 0; }
     k_displays = s_cf("displays");
     k_features = s_cf("enabledFeatures");
     k_type = s_cf("type");
@@ -240,8 +246,8 @@ static void add_views(CFRef alt) {
     CFRef areas = cf_array_new(0, 0, array_cb);
     CFRef k;
     if (!areas) return;
-    add_view(areas, 360, 87, 720, 297);   /* wide, small dials */
-    add_view(areas, 520, 87, 400, 297);   /* classic, between the dials */
+    add_view(areas, 360, 87, 720, 270);   /* wide; 297 sits in the VC bar */
+    add_view(areas, 520, 87, 400, 270);   /* classic */
     k = s_cf("viewAreas");
     if (k) { cf_dict_set(alt, k, areas); cf_release(k); }
     cf_release(areas);
@@ -312,7 +318,6 @@ static CFRef augment(CFRef base) {
     set_i64(alt, "widthPhysical", CLUSTER_WMM);
     set_i64(alt, "heightPhysical", CLUSTER_HMM);
     set_str(alt, "uuid", CLUSTER_UUID);
-    set_str(alt, "displayUUID", CLUSTER_UUID);
     set_str(alt, "initialURL", URL_CLUSTER);
     add_urls(alt);
     add_views(alt);

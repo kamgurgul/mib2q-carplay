@@ -59,11 +59,13 @@ case "${1:-all}" in
   # (phase-c-optionA.md). v1152/v1153 were the plaintext experiment; do not flash them.
   optA) build_step 3 1160 3 "-DSTEP_DECRYPT=1 -DHU_DIRECT=1" ;;   # v1160: + cockpit-switch back-channel (updateViewArea)
   optA-input) build_step 3 1155 3 "-DSTEP_DECRYPT=1 -DHU_DIRECT=1 -DCLUSTER_KEY_INPUT=1" ;;
-  # v1160: release = step3 with the bring-up diagnostics compiled out
-  # (CLUSTER_DIAG=0: no /info dump, no per-SETUP lines, no c111.h264 dump).
-  # Build it only after a direct-path car pass (v1154) has shown the map on the cluster.
-  release) build_step 3 1160 3 "-DSTEP_DECRYPT=1 -DCLUSTER_DIAG=0" ;;
-  release-input) build_step 3 1161 3 "-DSTEP_DECRYPT=1 -DCLUSTER_KEY_INPUT=1 -DCLUSTER_DIAG=0" ;;
+  # release = optA with bring-up diagnostics compiled out (CLUSTER_DIAG=0:
+  # no /info dump, no per-SETUP lines, no c111.h264 dump). HU_DIRECT stays on.
+  # A step-3 image without HU_DIRECT injects stream 111 into CPAAProxyEx and
+  # kills the session in about 0.6s (v1150, "arrray size = 2"). Do not flash it.
+  # Version is not 1160: that tar is optA, and a second build would overwrite it.
+  release) build_step 3 1162 3 "-DSTEP_DECRYPT=1 -DHU_DIRECT=1 -DCLUSTER_DIAG=0" ;;
+  release-input) build_step 3 1163 3 "-DSTEP_DECRYPT=1 -DHU_DIRECT=1 -DCLUSTER_KEY_INPUT=1 -DCLUSTER_DIAG=0" ;;
   advert)
     build_step 1 1140 0
     build_step 1 1141 1
