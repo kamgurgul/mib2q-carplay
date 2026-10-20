@@ -48,6 +48,9 @@ public final class ScreenCombiBAPListener extends CombiBAPListener {
      * also covers internal supplementary visibility changes and initial Status replay,
      * which bypass the two-argument BAP request setter. */
     protected void updateMapVisibility() {
+        /* lvdsMapVisible is the VC navigation tab. It gates the roller when this unit
+         * has no IMMICombiScreenChangeManager. */
+        com.luka.carplay.core.ScreenModule.onVcMainMapVisibility(this.lvdsMapVisible);
         com.luka.carplay.cluster.ClusterLayerController.onVcVisibility(this.supplementaryMapViewVisible);
         super.updateMapVisibility();
     }
@@ -59,7 +62,7 @@ public final class ScreenCombiBAPListener extends CombiBAPListener {
      * zoom level back, so following the stock scale is the only honest value for that bar. */
     public void setMapScale(int steps) {
         boolean connected = com.luka.carplay.core.ScreenModule.isConnected();
-        boolean video = com.luka.carplay.core.ScreenModule.isAltScreenActive();
+        boolean video = com.luka.carplay.core.ScreenModule.isAltScreenShown();
         if (steps != 0 && connected && video
                 && com.luka.carplay.core.CarPlayApp.isAndroidAutoActive()) {
             /* Android Auto has no zoom command for its cluster map: stock map/scale bar only. */

@@ -312,7 +312,7 @@ public final class ClusterLayerController {
          * so without this it keeps its default opacity/position and the cluster
          * shows only the maneuver overlay. */
         boolean videoActive = carplayOwnsCluster
-            && com.luka.carplay.core.ScreenModule.isAltScreenActive();
+            && com.luka.carplay.core.ScreenModule.isAltScreenShown();
         boolean smallStage = com.luka.carplay.core.ScreenModule.isSmallScreenViewArea();
         int videoX = geometry.mapX + (smallStage ? geometry.smallStageDX : 0);
         int videoY = geometry.mapY + (smallStage ? geometry.smallStageDY : 0);

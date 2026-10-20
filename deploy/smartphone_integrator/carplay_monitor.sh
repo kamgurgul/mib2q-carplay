@@ -5,12 +5,13 @@
 H=${H:-/mnt/app/root/hooks}
 WLOG=${WLOG:-/tmp/carplay_wrapper.log}
 OWNER_FILE=${OWNER_FILE:-/tmp/carplay_supervisor.owner}
-# Power-on gate: native navigation misses its ~60 s service-manager start deadline when a phone
-# session starts in the same window, and is relaunched (carplay_logs 024/027).  The renderers
-# are useless before navigation exists, so the first start after power-on waits for Java's
-# NavReadyMarker, at most NAV_WAIT_MAX_S in total across generations.  /tmp is RAM.  With a
-# dongle at power-on navigation took 2-4 min (carplay_logs_fixed/_last); renderers started at
-# 90 s only added EGL/decoder start-up load to that window, so the cap is 300 s.
+# Power-on gate for maneuver_render only. Native navigation misses its ~60 s service-manager
+# start deadline when a phone session starts in the same window (carplay_logs 024/027). The
+# maneuver overlay needs Navigation, so the first start after power-on waits for Java's
+# NavReadyMarker, at most NAV_WAIT_MAX_S across generations. /tmp is RAM. With a dongle at
+# power-on that wait was 2-4 min (carplay_logs_fixed/_last). altscreen_render is not held:
+# it paints the phone map, and a consumer that attaches after that wait has missed the first
+# cluster IDR, so the cockpit stays on the native map until navigation is up.
 NAV_READY=${NAV_READY:-/tmp/carplay_nav_ready}
 NAV_GATE=${NAV_GATE:-/tmp/carplay_renderer_gate}
 NAV_WAIT_MAX_S=${NAV_WAIT_MAX_S:-300}
@@ -222,22 +223,19 @@ monitor_main()
 {
     trap 'exit 0' 1 2 15
 
-    # The renderer is a separate process and never gates dio (SI's 10 s budget ends
-    # at the phone's control SETUP, which waits on USB/NCM/mDNS, not CPU).  It only
-    # has to be ready before Java selects the cluster context, which needs native
-    # navigation: so after power-on it waits for navigation (monitor_nav_gate),
-    # otherwise it starts at once (GL programs load from the persistent binary cache).
+    # The renderers never gate dio (SI's 10 s budget ends at the phone's control SETUP).
+    # altscreen_render starts immediately so it is on the tee before the first cluster
+    # IDR. It runs below the boosted navigation threads. maneuver_render still waits
+    # for Navigation (monitor_nav_gate): it composites over the native map.
     monitor_current || exit 0
     echo "[monitor] generation=$DIO_PID active" >> "$WLOG"
 
     cp_seed_renderer_pid_files
     monitor_nav_boost
     monitor_boot_snapshot
+    [ -x "$H/altscreen_render" ] && start_renderer altscreen_render initial
     monitor_nav_gate || exit 0
     start_renderer maneuver_render initial
-    # AltScreen CarPlay-video renderer (optional): started only when installed.
-    # Same ownership/identity discipline as maneuver_render; runs LD_PRELOAD-clear.
-    [ -x "$H/altscreen_render" ] && start_renderer altscreen_render initial
 
     MON_TICKS=0
     while monitor_current; do
