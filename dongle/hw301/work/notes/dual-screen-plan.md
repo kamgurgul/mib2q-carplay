@@ -361,6 +361,36 @@ IMPLEMENTATION STATUS: per-frame loop is in `cluster_dual.c` behind
 relay). Output key first; `-DCLUSTER_KEY_INPUT=1` is the one-line swap to the
 Input key. Car trip still required (`nal_ok=1 bad=0`).
 
+### PHASE C FAILED (2026-10-20, v1150) - injection revives the 2-screen collapse
+v1150 adds, vs the working v1148, exactly one thing: CFArrayEnsureCreatedAndAppend
+injects 111 into the dongle->HEAD-UNIT SetupScreen. app.log shows the result:
+  _AirPlayClientSendSetupScreenCommandCompletion bodyLen=209, `arrray size = 2`,
+  type 110 (data_port 6030, socket 32) then type 111; SESSION_CREATED at 13.978,
+  `session ended` at 14.635 (~0.6s), then `SendProxyScreenFrame failed err:-1`.
+Phone side: 111 connects but sends 0 frames, torn down. This is the SAME
+2-streams-through-stock-CPAAProxyEx collapse documented 2026-10-11/12: stock is a
+single-screen bridge; asking it to carry 110+111 to the head unit kills the
+session. (v1148 had `arrray size = 1` and ran for minutes.)
+
+ROOT CAUSE / REDESIGN NEEDED: the relay must NOT make CPAAProxyEx request 111
+from the head unit. Our shim already opens its OWN socket to the head unit's
+:7100 and drives 111 itself; the injection is both redundant and fatal. But the
+head-unit hook opens :7100 only when it receives a 111 SETUP from its sender
+(CPAAProxyEx). Two candidate redesigns, both UNtried:
+  (A) Head-unit side: make the altscreen hook open its :7100 listener for the
+      dongle sender WITHOUT needing a 111 SETUP from CPAAProxyEx (e.g. when
+      model=iPhone9,1/18D70). Then the dongle never injects 111 to the head
+      unit (drop the CFArrayEnsureCreatedAndAppend hook / STEP_RELAY injection),
+      CPAAProxyEx stays single-screen (stable), and our relay connects directly.
+      Smallest dongle-side change; needs a head-unit hook change + rebuild.
+  (B) Dongle side only: our relay drives the head unit's CarPlay control channel
+      to issue the 111 SETUP itself (so the head unit opens :7100) WITHOUT going
+      through CPAAProxyEx's screen manager. Much larger; re-enters the proxy
+      protocol work the notes already judged a rewrite.
+Decision pending: (A) is the realistic path. Until then, the shipped options are
+the count:1 MIRROR (v1129) or Phase B (v1148, cluster decrypts on the dongle but
+is not forwarded). v1150/v1151 must NOT be used (they crash CarPlay).
+
 ### PHASE B PASSED (2026-10-20, v1148, car + iPhone log)
 - `111 chacha key derived info=DataStream-Output-Encryption-Key saltLen=35`
   (Output key confirmed; v1149/Input not needed -> Phase C uses step3/v1150).
