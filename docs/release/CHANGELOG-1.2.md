@@ -6,6 +6,12 @@ tests but have not been driven yet.
 
 ## New
 
+- **HW301 wireless dongle, custom app image v1162.** Stock HW301 firmware (v1.26 / v1.29)
+  only does CarPlay on the main screen. `dongle/hw301/fw/hw301_v1162.tar` (marker
+  `v1162-20261020152434`) adds the Virtual Cockpit map when the head unit already has
+  this release and Cluster video is on. Flash on a bench USB supply, never in the car;
+  roll back with `hw301_v129.tar --version 129`. Install steps are in the
+  [1.2 release notes](RELEASE_NOTES-1.2.md#hw301-wireless-dongle).
 - **CarPlay calls on the cluster phone tab.** The Virtual Cockpit telephone tab now works as
   with a Bluetooth phone: caller name and number, call state and timer, accept / hang up, hold,
   mute and dialling from the tab or the steering wheel, recents and favorites, missed calls,

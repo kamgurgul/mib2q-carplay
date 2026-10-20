@@ -101,10 +101,11 @@ Developed on an Audi A5 (F5) with MU1329 (`MHI2Q_ER_AUG22_P5152`); also reported
 | Car data to the phone | ✅ new | ❌ |
 | Steering-wheel roller zooms the cluster map | ✅ | ❌ Android Auto has no zoom command for its cluster map |
 | MMI touchpad as D-pad | ✅ (switchable) | stock Android Auto behaviour |
-| Wireless adapter | ✅ with tested adapters (see below) | not tested |
+| Wireless adapter | ✅ Baseus, Carlinkit 5.0 / 2Air, and an HW301 flashed with v1162 | not tested |
 
-**Wireless adapters** reported to work with the cluster map: Baseus Safe Journey (fast) and
-Carlinkit 5.0 / 2Air (slow to start). Generic `smartBox-xxxx` dongles do not work.
+**Wireless adapters** that show the cluster map: Baseus Safe Journey (fast), Carlinkit 5.0 /
+2Air (slow to start), and an HW301 dongle after the [v1162 bench flash](#hw301-wireless-dongle).
+An HW301 on stock v1.26 or v1.29, and other `smartBox` boards, stay on the main screen.
 
 ## Requirements
 
@@ -205,6 +206,68 @@ Settings marked *next connection* apply when the phone is reconnected; no reboot
 | `/mnt/app/root/mibr-carplay111-fps` | CarPlay cluster frame rate, 5 to 60 (default 30) |
 | `/mnt/app/root/mibr-carplay111-physical` | CarPlay cluster size in mm, `width height` (default `290 108`) |
 
+## HW301 wireless dongle
+
+An **HW301** is the wireless CarPlay dongle whose setup network is named like `smartBox`
+and whose page is `http://192.168.5.1`. On stock firmware (v1.26 or v1.29) it only does
+CarPlay on the MMI screen. The custom app image **v1162** adds the Virtual Cockpit map.
+
+The image is in the repository:
+
+| File | What it is |
+| --- | --- |
+| `dongle/hw301/fw/hw301_v1162.tar` | the file you flash (marker `v1162-20261020152434`) |
+| `dongle/hw301/fw/hw301_v129.tar` | stock v1.29, the rollback image |
+
+v1162 leaves the dongle's main-screen behaviour alone and sends the phone's cluster
+picture to the head unit on port 7100. Wide and classic cockpit layouts follow the
+phone map. It does not add Android Auto on the cluster.
+
+You also need the head-unit install from this release, with **Cluster video ON**.
+The dongle flash does not install anything on the head unit, and the SD-card installer
+does not flash the dongle.
+
+> [!WARNING]
+> Flash the dongle only on a bench, from a USB charger, with the dongle **unplugged
+> from the car**. The update overwrites the partition that also holds the Wi-Fi
+> flasher. A bad image can only be recovered with Allwinner FEL tools, not from the
+> car. Do not unplug the dongle while the flash percent is moving.
+
+### Flash v1162
+
+1. Install or update the head unit first ([Install](#install-first-time) or
+   [Update from 1.1](#update-from-11)). Leave **Cluster video ON**.
+2. Power the HW301 from a USB charger. Do not connect it to the car.
+3. Join its Wi-Fi and open `http://192.168.5.1`. If that page does not load, you are
+   not on the dongle's network.
+4. On a computer with Python 3, from a checkout of this repository, check the image
+   without writing anything:
+
+   ```bash
+   python3 dongle/hw301/work/tools/flash_local.py dongle/hw301/fw/hw301_v1162.tar --version 1162 --dry-run
+   ```
+
+   The dry-run prints the tar size and `127` chunks, and says it is not sending.
+5. Flash it:
+
+   ```bash
+   python3 dongle/hw301/work/tools/flash_local.py dongle/hw301/fw/hw301_v1162.tar --version 1162
+   ```
+
+   Wait until the upload bar and the flash percent both finish.
+6. Unplug the dongle, plug it back into the charger once, then install it in the car.
+7. Connect the phone through the dongle. The Virtual Cockpit shows the phone's map.
+   A long press of the left steering-wheel roller switches between that map and the
+   Audi map; a short press still toggles the route-info line.
+
+### Back to stock
+
+Same bench setup. This returns the dongle to vendor v1.29 (main screen only):
+
+```bash
+python3 dongle/hw301/work/tools/flash_local.py dongle/hw301/fw/hw301_v129.tar --version 129
+```
+
 ## Known limitations
 
 - **No zoom of the Android Auto cluster map.** Android Auto offers no zoom command for its
@@ -222,7 +285,7 @@ Settings marked *next connection* apply when the phone is reconnected; no reboot
 
 | Symptom | Try |
 | --- | --- |
-| No CarPlay map on the cluster | **Cluster video ON**; reconnect the phone; with a wireless adapter, check the tested list above. |
+| No CarPlay map on the cluster | **Cluster video ON**; reconnect the phone. HW301: flash [v1162](#hw301-wireless-dongle) on the bench; stock HW301 firmware never opens the cluster stream. Other adapters: the tested list above. |
 | Cluster map flickers between the Audi map and black | **HW decoder ON / OFF** (software decoding); **Save logs** and report ([#18](https://github.com/kamgurgul/mib2q-carplay/issues/18)). |
 | MMI freezes when CarPlay connects right after a start | **HW decoder 2-min delayed start ON**. |
 | Phone tab still shows "Apple CarPlay mode" | Run the 1.2 installer again (it registers the phone message IDs), reboot. |
