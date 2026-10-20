@@ -87,6 +87,16 @@
 #define CLUSTER_DIAG 1
 #endif
 
+/* Phase C option A (HU_DIRECT): do NOT inject 111 into the dongle->head-unit
+ * SetupScreen (that makes stock CPAAProxyEx a 2-screen bridge and crashes the
+ * session, v1150). Instead the relay connects to the head unit :7100 directly
+ * and sends PLAINTEXT H.264; the head-unit hook opens its listener for the
+ * dongle sender and reads plaintext (no key coordination). See
+ * work/notes/phase-c-optionA.md. */
+#ifndef HU_DIRECT
+#define HU_DIRECT 0
+#endif
+
 /* Which /info edits to apply (step 1 found iOS ends the session right after our
  * modified /info; this isolates the cause). bit0 = merge enabledFeatures,
  * bit1 = append the cluster display. 0 = stock /info, logged only. */
@@ -738,7 +748,7 @@ void CFArrayEnsureCreatedAndAppend(void **ioArray, const void *value) {
     CFRef clone;
     if (!r_ensure) { r_ensure = (void (*)(void **, const void *))next_sym("CFArrayEnsureCreatedAndAppend"); }
     r_ensure(ioArray, value);                 /* normal append (main stream) */
-    if (!STEP_RELAY) return;                   /* 111->HU injection is step 3 */
+    if (!STEP_RELAY || HU_DIRECT) return;      /* 111->HU injection is step 3; HU_DIRECT relays directly, no inject */
     if (!ready() || disabled() || flag(NOINJECT_FILE)) return;
     if (t_busy || !ioArray || !*ioArray || !value) return;
     if (!caller_is_cpaa(ra)) return;
@@ -1140,7 +1150,8 @@ static int relay_frame(unsigned rx_gen, int *thread_attached, ScreenHeader *h, u
             g_relay.tries++;
             g_relay.fd = hu_connect();
             if (g_relay.fd >= 0) {
-                g_relay.enc = (!flag(PLAINHU_FILE) && r_ctr_init(&g_relay.ctx, key, iv) == 0);
+                /* HU_DIRECT: head unit reads plaintext, so never re-encrypt. */
+                g_relay.enc = (!HU_DIRECT && !flag(PLAINHU_FILE) && r_ctr_init(&g_relay.ctx, key, iv) == 0);
                 if (cfg && cfg_len &&               /* replay the real config header + body */
                     (send_full(g_relay.fd, cfg_hdr, sizeof *cfg_hdr) != 0 ||
                      send_full(g_relay.fd, cfg, cfg_len) != 0)) {
