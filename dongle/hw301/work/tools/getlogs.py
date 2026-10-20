@@ -47,7 +47,7 @@ def main():
         names = t.getnames()
         t.extractall(a.out, filter="data")
     print("extracted:", ", ".join(n for n in names if n not in (".", "./")))
-    print(f"\nlook for shim output:\n  grep -a cluster_shim {a.out}/app.log")
+    print(f"\nlook for shim output:\n  grep -a cluster_dual {a.out}/dmesg.log")
 
 if __name__ == "__main__":
     main()

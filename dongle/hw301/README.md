@@ -1,47 +1,110 @@
 # HW301 CarPlay dongle
 
-Reverse-engineering + firmware-mod workspace for the **HW301** wireless CarPlay
-dongle (Allwinner SoC, Linux 4.9, musl, ARM EABI5; CarPlay stack in `CPAAProxyEx`
-+ `libAirPlay.so`). Goal: drive the Audi Virtual Cockpit cluster map through the
-dongle. The dongle is an AirPlay **receiver** to the phone (wireless) and a
-CarPlay **sender** to the MHI2Q head unit (USB) — a single-screen bridge that
-impersonates an iPhone (`iPhone9,1` / build `18D70`) over iAP2.
+Firmware-mod workspace for the **HW301** wireless CarPlay dongle (setup Wi-Fi
+`smartBox-xxxx`, page `http://192.168.5.1`; Allwinner V851S, Linux 4.9, musl).
+The custom image adds the Audi Virtual Cockpit cluster map. Normal CarPlay stays
+on the MMI, and a dedicated iOS cluster stream (111) goes to the head unit's altscreen hook.
 
-Everything about *this dongle* lives under `dongle/hw301/`. The head-unit side of
-the integration lives in the repo root (`altscreen_hook/`, `scripts/`, `mods/`).
+How it works, what was learned, and what failed: **[FINDINGS.md](FINDINGS.md)**.
+The head-unit side lives in the repo root (`altscreen_hook/`, `scripts/`, `mods/`).
 
-## Layout (tracked)
-- `work/notes/` — the investigation record. Start with **`relay-plan.md`**
-  (full pipeline map, pinned memory addresses, strategy) and `virtual-cockpit.md`.
-- `work/src/` — injected shim sources (`cluster_inject.c`, `cluster_diag.c`, …).
-- `work/tools/` — `build.sh` (wrapper-rename inject + CPAA binary patch),
-  `repack.sh` (OTA tar), `flash_local.py` (flash without the vendor server),
-  `getlogs.py` (pull device logs locally), `patch_bytes.py`.
-- `work/ghidra/` — headless Ghidra scripts (`*.java`) and saved decompilation
-  dumps (`*.txt`, e.g. `relay_decomp.txt`, `dispparse.txt`, `cb_full.txt`).
-- `work/cmp/` — small reference captures (vendor JSON).
-- `fw/` — **original stock firmware** (archived for recovery): the flashable OTA
-  tars `hw301_v126.tar` / `hw301_v129.tar`, each version's squashfs `app.img`
-  (the build input) + `appmd5sum.txt`, and the vendor version metadata. The
-  unpacked `fw/v*/root/` trees are *not* committed (derive with `unsquashfs app.img`).
-  Also `hw301_v1162.tar` (`v1162/app.img`, marker `v1162-20261020152434`): the
-  custom release image (`build_dual.sh release`, HU_DIRECT, diagnostics off).
-  It is not stock. Flash it with `--version 1162`. Roll back with `hw301_v129.tar`.
-- `dongle_dump.py`, `fw_download.py` — fetch stock firmware / dump flash.
+## Layout
 
-## Not committed (regenerable / vendor / owner data — see `../.gitignore`)
-- `fw/v*/root/` — unpacked stock rootfs → `unsquashfs fw/v<ver>/app.img`.
-- `dongle_dump/` — raw flash dumps → `dongle_dump.py`.
-- `work/out/`, `work/build-v*/`, `work/extract/`, `work/rollback/` — build outputs
-  and unpacked trees → rebuild with `work/tools/build.sh`.
-- `work/logs/` — device logs (owner data) → `work/tools/getlogs.py`.
-- `work/ghidra/proj/` — Ghidra project DB → re-import the stock binary.
-- `work/.venv/`, `work/exp/` — venv and scratch test stubs.
+| path | what |
+|---|---|
+| `fw/hw301_v129.tar`, `fw/v129/` | **official** stock v1.29: OTA tar + `app.img` + md5 (the build input and the rollback image) |
+| `fw/hw301_v126.tar`, `fw/v126/` | official stock v1.26 |
+| `fw/hw301_v1162.tar`, `fw/v1162/` | **custom release** (marker `v1162-20261020152434`, `build_dual.sh release`) |
+| `fw/hw301_v1160.tar` | custom, same as v1162 with bring-up diagnostics on (`build_dual.sh optA`) |
+| `fw/rollback/restore-app-v129-at-0x7e0000.bin` | FEL restore image of the `app` partition (stock v129 `app.img` padded to 0x3f0000) |
+| `fw/*.json` | vendor version metadata |
+| `work/src/cluster_dual.c` | the shim (installed as `libCoreUtils.so`) |
+| `work/tools/` | `build_dual.sh` → `build.sh` → `repack.sh`, `check_imports.sh`, `xcc.sh`, `flash_local.py`, `getlogs.py`, `fel_backup.sh`, `xref.py`/`findref.py` |
+| `work/ghidra/` | saved decompilation dumps + the scripts that made them (the other exploratory scripts are kept locally, git-ignored) |
+| `work/cmp/vendor_pos0.json` | a vendor upload chunk (reference for the flash JSON format) |
+| `dongle_dump.py`, `fw_download.py` | dump the web UI / fetch stock firmware from the vendor |
 
-## Build / flash (bench power only — see the FLASHING RULE in the notes)
+Not committed (`../.gitignore`): `work/out/`, `work/build-v*/` (build output),
+`work/logs/` (device logs), `work/rollback/` (your own FEL flash dumps),
+`work/third_party/` (xfel), `fw/v*/root/` (`unsquashfs fw/v<ver>/app.img`).
+
+## Build
+
+Needs Docker (muslcc toolchain, alpine) and `brew install squashfs`.
+
+```bash
+cd dongle/hw301
+./work/tools/build_dual.sh release      # -> work/out/hw301_v1162.tar
+./work/tools/build_dual.sh optA         # -> work/out/hw301_v1160.tar (diagnostics on)
 ```
-work/tools/build.sh 129 <code>        # produce work/out/hw301_v<code>.tar
-work/.venv/bin/python work/tools/flash_local.py work/out/hw301_v<code>.tar --version <code>
-work/.venv/bin/python work/tools/getlogs.py --out work/logs
+
+The build refuses an image whose shim imports a symbol the dongle cannot resolve.
+
+## Flash
+
+**Bench only.** Power the dongle from a USB charger, unplugged from the car, and join its Wi-Fi.
+Do not unplug while the percent is moving.
+
+```bash
+python3 work/tools/flash_local.py fw/hw301_v1162.tar --version 1162 --dry-run   # 127 chunks, sends nothing
+python3 work/tools/flash_local.py fw/hw301_v1162.tar --version 1162
+curl http://192.168.5.1/clbuild.txt                                             # v1162-20261020152434
 ```
-Recover a bad flash by flashing the stock image (`fw/hw301_v129.tar`) on bench power.
+
+The head unit also needs this repo's install with Cluster video ON.
+
+Test logs, pulled on bench power after a car trip:
+
+```bash
+python3 work/tools/getlogs.py --out work/logs
+grep -a cluster_dual work/logs/dmesg.log | tail -60
+```
+
+## Rollback
+
+### 1. Over Wi-Fi (the dongle still boots: LED on, `smartBox` AP up)
+
+Flash the official image with the same bench setup:
+
+```bash
+python3 work/tools/flash_local.py fw/hw301_v129.tar --version 129
+curl http://192.168.5.1/clbuild.txt    # 404 = stock (only custom images carry the marker)
+```
+
+v1.26 (`fw/hw301_v126.tar --version 126`) also works.
+
+### 2. Over FEL (soft-brick: no LED, no Wi-Fi, no USB after a flash)
+
+Only the `app` partition (0x7e0000, 0x6c0000 long) is written by an OTA, so a soft-brick
+is fixed by writing stock `app.img` back there over USB. You do not need a programmer or
+any soldering. Recovery takes about 5 minutes.
+
+1. **Get xfel** v1.4.0 or newer ([github.com/xboot/xfel](https://github.com/xboot/xfel), `brew install libusb`,
+   `make`). Put the binary at `work/third_party/xfel/xfel`, or set `XFEL=/path/to/xfel`.
+2. **Enter FEL.**
+   - Unplug the dongle and open it.
+   - On the 8-pin flash chip above the SoC, short **pin 2** (DO, the second leg from the top
+     on the left; pin 1 has the dot) to GND. The metal shell of the USB plug is GND.
+   - Plug the dongle into the Mac and release the short after about 2 s.
+   - `xfel version` should print `ID=0x00188600(V851/V853)`.
+3. **Back up first** (read-only). This reads the whole 16 MiB twice and compares the reads:
+   ```bash
+   ./work/tools/fel_backup.sh            # -> work/rollback/flash-<ts>-1.bin, flash-latest.bin
+   ```
+   Keep this dump. It holds the dongle's own `env`/`private` partitions, which are not in the repo.
+4. **Write the stock app partition.** The image is exactly 0x3f0000 bytes, 64 KiB aligned
+   (xfel erases whole blocks):
+   ```bash
+   X=work/third_party/xfel/xfel
+   $X spinor write 0x7e0000 fw/rollback/restore-app-v129-at-0x7e0000.bin
+   ```
+5. **Verify** by reading back and comparing. The first 4124672 bytes must match the stock md5:
+   ```bash
+   $X spinor read 0x7e0000 0x3f0000 /tmp/readback.bin
+   cmp /tmp/readback.bin fw/rollback/restore-app-v129-at-0x7e0000.bin && echo OK
+   head -c 4124672 /tmp/readback.bin | md5 ; cat fw/v129/appmd5sum.txt   # d5c46c2d363f97a1f274bd041aaea723
+   ```
+6. Unplug the dongle and power it from a USB charger. The LED and the `smartBox` AP come back on stock v1.29.
+
+To make a restore image from a different stock `app.img`, pad it to the next 64 KiB boundary
+with the bytes that follow it in your own dump at 0x7e0000+size. Write the result at 0x7e0000.

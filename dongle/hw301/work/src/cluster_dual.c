@@ -20,11 +20,11 @@
  *     STEP_DECRYPT derives the 32-byte stream key with PairingSessionDeriveKey
  *     (session+0x3ec, salt "DataStream-Salt"<cid>) and opens each VIDEO_FRAME
  *     with libCoreUtils chacha20_poly1305_*. Layout is pinned in
- *     work/notes/dual-screen-plan.md ("Phase B PINNED").
+ *     FINDINGS.md ("Phone side: ChaCha20-Poly1305").
  *
  * Head-unit side (dongle = CarPlay client; NO CPAAProxyEx patch):
  *   - CFArrayEnsureCreatedAndAppend: clone the SetupScreen stream 110 dict as
- *     type 111 (cluster_inject.c). Stock CPAAProxyEx then skips 111, so the
+ *     type 111 (old mirror experiment). Stock CPAAProxyEx then skips 111, so the
  *     single head-unit socket slot is never clobbered. The clone keeps 110's
  *     streamConnectionID, so the head unit derives the same key for 111 as 110.
  *   - that key is captured where CPAAProxyEx derives it: AES_CTR_Init called
@@ -65,10 +65,8 @@
  *
  * Logs -> /dev/kmsg (getlogs.py pulls dmesg.log; app.log loses late appends).
  *
- * Build (produces an image, does not flash). build_cluster.sh wraps these:
- *   WRAP_LIB=libCoreUtils.so CHECK_SYM=AirPlayReceiverSessionSetup \
- *   CLUSTER_CFLAGS=-DCLUSTER_STEP=1 CLUSTER_SRC=cluster_dual.c \
- *   ./work/tools/build.sh 129 1132
+ * Build (produces an image, does not flash): work/tools/build_dual.sh release
+ * (or optA for the same image with bring-up diagnostics).
  */
 #ifndef CLUSTER_STEP
 #define CLUSTER_STEP 3
@@ -101,7 +99,7 @@
  * each AU with the AES-CTR key captured from SetupProxyScreenSecurityInfo —
  * the same key other dongles install for the screen, and the same key the
  * head-unit hook derives for stream 110's connection id. cluster_dual.plainhu
- * is the only plaintext escape. See work/notes/phase-c-optionA.md. */
+ * is the only plaintext escape. See FINDINGS.md ("Head-unit side"). */
 #ifndef HU_DIRECT
 #define HU_DIRECT 0
 #endif
@@ -824,7 +822,7 @@ void CFArrayEnsureCreatedAndAppend(void **ioArray, const void *value) {
     if (!caller_is_cpaa(ra)) return;
     if (!is_type((CFRef)value, cf_dict_type)) return;
     if (!cf_dict_get((CFRef)value, k_conn)) return;        /* must be a stream dict */
-    {   /* clone the main stream only. The proven cluster_inject.c matched on
+    {   /* clone the main stream only. The old mirror shim matched on
          * streamConnectionID alone, so also accept a dict whose "type" is not
          * set yet at append time; reject any other explicit type. */
         int t = dict_type((CFRef)value);

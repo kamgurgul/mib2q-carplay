@@ -1,82 +1,37 @@
 #!/usr/bin/env bash
-# Build the HW301 dual-screen (Virtual Cockpit) images from cluster_dual.c.
-# No dongle shell needed: the step is baked in at compile time, one image each.
+# Build the HW301 dual-screen (Virtual Cockpit) image from cluster_dual.c.
+# No dongle shell needed: every option is baked in at compile time.
 #
-#   build_dual.sh [step]      step = 1 | 2 | 3 | all   (default: all)
+#   build_dual.sh [target]      target = release | release-input | optA | optA-input
 #
-#   step 1 -> hw301_v1132.tar  advertise cluster display + log SETUP/keys only
-#   step 2 -> hw301_v1133.tar  + open 111 listener, append dataPort, decrypt, count
-#   step 3 -> hw301_v1134.tar  + inject 111 to the head unit and relay (full)
+#   release        -> hw301_v1162.tar  shipped image: HU_DIRECT, diagnostics off
+#   release-input  -> hw301_v1163.tar  same, Input ChaCha key (fallback only)
+#   optA           -> hw301_v1160.tar  same as release + bring-up diagnostics
+#   optA-input     -> hw301_v1155.tar  optA with the Input key (fallback only)
 #
-# Flash ONE at a time on BENCH power, car-test, getlogs, then the next step:
-#   ./work/.venv/bin/python work/tools/flash_local.py work/out/hw301_v<code>.tar --version <code>
-# Recover any time by flashing stock fw/hw301_v129.tar --version 129.
+# Flash on BENCH power only:
+#   python3 work/tools/flash_local.py work/out/hw301_v<code>.tar --version <code>
+# Roll back any time with fw/hw301_v129.tar --version 129 (see README.md).
+#
+# Every target keeps HU_DIRECT=1. A step-3 image without it injects stream 111
+# into CPAAProxyEx and kills the session in ~0.6 s (v1150). Do not build one.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 build_step() {
-  local step="$1" code="$2" advert="${3:-3}" extra="${4:-}"
-  echo "######## building dual-screen STEP $step ADVERT=$advert ${extra:-} -> v$code ########"
+  local code="$1" extra="${2:-}"
+  echo "######## building dual-screen ${extra:-} -> v$code ########"
   WRAP_LIB=libCoreUtils.so \
   CHECK_SYM=AirPlayReceiverSessionSetup \
   CLUSTER_SRC=cluster_dual.c \
-  CLUSTER_CFLAGS="-DCLUSTER_STEP=$step -DCLUSTER_ADVERT=$advert ${extra}" \
+  CLUSTER_CFLAGS="-DCLUSTER_STEP=3 -DCLUSTER_ADVERT=3 -DSTEP_DECRYPT=1 -DHU_DIRECT=1 ${extra}" \
     ./work/tools/build.sh 129 "$code"
 }
 
-# Diagnostic step-1 variants (2026-10-19): iOS ends the session right after our
-# modified /info. CLUSTER_ADVERT isolates the cause. Flash one per car trip.
-#   advert0 (v1140) stock /info, logged only  -> MUST keep CarPlay up (control)
-#   advert1 (v1141) merge enabledFeatures only
-#   advert2 (v1142) append the cluster display only
-case "${1:-all}" in
-  1) build_step 1 1132 ;;
-  2) build_step 2 1133 ;;
-  3) build_step 3 1134 ;;
-  advert0) build_step 1 1140 0 ;;
-  advert1) build_step 1 1141 1 ;;
-  advert2) build_step 1 1142 2 ;;
-  # v1143: both edits, display now identical to the head-unit hook's proven one
-  # (viewAreas always, no displayUUID) after v1142 showed the display is rejected.
-  # v1145: + altScreen/viewAreas in every SETUP response (iOS validates the
-  # display against the receiver-accepted features; iPhone log, v1144)
-  hu1) build_step 1 1145 3 ;;
-  # v1146: step 2a transport - open the 111 listener, return its dataPort, count
-  # frames (no decrypt: the wireless screen is ChaCha; STEP_DECRYPT stays 0).
-  step2a) build_step 2 1147 3 ;;   # v1147 = v1146 + NULL guard + 10 s frame stats
-  # v1148: Phase B. Same listener as step 2a, plus ChaCha open of VIDEO_FRAME
-  # (Output key). nal_ok stays 0 -> rebuild with step2b-input (Input key).
-  step2b) build_step 2 1148 3 "-DSTEP_DECRYPT=1" ;;
-  step2b-input) build_step 2 1149 3 "-DSTEP_DECRYPT=1 -DCLUSTER_KEY_INPUT=1" ;;
-  # v1150: Phase C. Step 3 (inject 111 to the head unit + relay) WITH decrypt.
-  # The plain "3" target (v1134) has STEP_DECRYPT=0 and therefore never relays.
-  # Use step3-input only if Phase B needed the Input key (v1149).
-  step3) build_step 3 1150 3 "-DSTEP_DECRYPT=1" ;;
-  step3-input) build_step 3 1151 3 "-DSTEP_DECRYPT=1 -DCLUSTER_KEY_INPUT=1" ;;
-  # v1154: direct path. No 111 injection (v1150 crashed). Relay connects to
-  # the head unit :7100 and AES-CTR-seals frames with the captured screen key.
-  # Needs the head-unit hook that listens for the dongle on stream 110's key
-  # (phase-c-optionA.md). v1152/v1153 were the plaintext experiment; do not flash them.
-  optA) build_step 3 1160 3 "-DSTEP_DECRYPT=1 -DHU_DIRECT=1" ;;   # v1160: + cockpit-switch back-channel (updateViewArea)
-  optA-input) build_step 3 1155 3 "-DSTEP_DECRYPT=1 -DHU_DIRECT=1 -DCLUSTER_KEY_INPUT=1" ;;
-  # release = optA with bring-up diagnostics compiled out (CLUSTER_DIAG=0:
-  # no /info dump, no per-SETUP lines, no c111.h264 dump). HU_DIRECT stays on.
-  # A step-3 image without HU_DIRECT injects stream 111 into CPAAProxyEx and
-  # kills the session in about 0.6s (v1150, "arrray size = 2"). Do not flash it.
-  # Version is not 1160: that tar is optA, and a second build would overwrite it.
-  release) build_step 3 1162 3 "-DSTEP_DECRYPT=1 -DHU_DIRECT=1 -DCLUSTER_DIAG=0" ;;
-  release-input) build_step 3 1163 3 "-DSTEP_DECRYPT=1 -DHU_DIRECT=1 -DCLUSTER_KEY_INPUT=1 -DCLUSTER_DIAG=0" ;;
-  advert)
-    build_step 1 1140 0
-    build_step 1 1141 1
-    build_step 1 1142 2
-    echo "######## advert diagnostics v1140/v1141/v1142 in work/out/ ########"
-    ;;
-  all)
-    build_step 1 1132
-    build_step 2 1133
-    build_step 3 1134
-    echo "######## all three images in work/out/ ########"
-    ;;
-  *) echo "usage: $0 [1|2|3|all|advert|advert0|advert1|advert2|hu1|step2a|step2b|step2b-input|step3|step3-input|release|release-input|optA|optA-input]"; exit 1 ;;
+case "${1:-release}" in
+  release)       build_step 1162 "-DCLUSTER_DIAG=0" ;;
+  release-input) build_step 1163 "-DCLUSTER_DIAG=0 -DCLUSTER_KEY_INPUT=1" ;;
+  optA)          build_step 1160 ;;
+  optA-input)    build_step 1155 "-DCLUSTER_KEY_INPUT=1" ;;
+  *) echo "usage: $0 [release|release-input|optA|optA-input]"; exit 1 ;;
 esac

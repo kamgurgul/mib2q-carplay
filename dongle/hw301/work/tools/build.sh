@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
-# Build a modified HW301 OTA tar (stock v1.26 or v1.29) that adds the Virtual Cockpit cluster
+# Build a modified HW301 OTA tar (stock v1.29) that adds the Virtual Cockpit
 # shim, WITHOUT touching CPAAProxyEx. Injection = "wrapper rename":
 #
-#   libAirPlay.so (stock)  --rename-->  libAirPlayReal.so  (soname set distinct)
-#   cluster_shim.so        --install-->  libAirPlay.so      (soname libAirPlay.so,
-#                                                            NEEDED libAirPlayReal.so)
+#   libCoreUtils.so (stock) --rename-->  libCoreUtilsReal.so (soname set distinct)
+#   cluster_shim.so         --install--> libCoreUtils.so     (soname libCoreUtils.so,
+#                                                             NEEDED libCoreUtilsReal.so)
 #
-# CPAAProxyEx still NEEDS "libAirPlay.so" -> loads our shim -> shim overrides
-# AirPlayInfoArrayAddScreenDisplay and forwards the rest to libAirPlayReal.so via
-# its NEEDED + dlsym(RTLD_NEXT). Proven on musl in work/exp (TEST 1).
+# CPAAProxyEx still NEEDS "libCoreUtils.so" -> loads our shim -> the shim
+# overrides what it hooks and reaches the real libs via dlsym(RTLD_NEXT).
+# Normally called by build_dual.sh, which sets the env below.
 #
-#   build.sh [stock=129|126] [code]   (default stock 129, code 1<stock>)
+#   build.sh [stock=129] [code]   (default stock 129, code 1<stock>)
+#   env: WRAP_LIB, CHECK_SYM, CLUSTER_SRC, CLUSTER_CFLAGS
 #
 # Output: work/out/hw301_v<code>.tar  (+ app.img, appmd5sum.txt)
 # Flash with: work/tools/flash_local.py work/out/hw301_v<code>.tar --version <code>
@@ -36,9 +37,9 @@ test -f "$STOCK_IMG" || { echo "!! no stock image $STOCK_IMG (git checkout resto
 BUILD="work/build-v${CODE}"
 OUT="work/out"
 ALPINE="alpine:3.20"
-WRAP="${WRAP_LIB:-libAirPlay.so}"                   # which stock lib to wrap
-REAL="${WRAP%.so}Real.so"                           # e.g. libAirPlayReal.so
-MAINSYM="${CHECK_SYM:-AirPlayInfoArrayAddScreenDisplay}"  # a symbol to sanity-check is exported
+WRAP="${WRAP_LIB:-libCoreUtils.so}"                 # which stock lib to wrap
+REAL="${WRAP%.so}Real.so"                           # e.g. libCoreUtilsReal.so
+MAINSYM="${CHECK_SYM:-AirPlayReceiverSessionSetup}"  # a symbol to sanity-check is exported
 
 echo ">> 1. fresh-extract stock v${STOCK} rootfs -> $BUILD  (wrapping $WRAP)"
 rm -rf "$BUILD"; unsquashfs -d "$BUILD" "$STOCK_IMG" >/dev/null
@@ -51,9 +52,9 @@ BUILDID="v${CODE}-$(date +%Y%m%d%H%M%S)"
 test -d "$BUILD/web" && echo "$BUILDID" > "$BUILD/web/clbuild.txt"
 echo "   build marker: web/clbuild.txt = $BUILDID"
 
-echo ">> 2. build shim as $WRAP from src/${CLUSTER_SRC:-cluster_shim.c} (NEEDED $REAL)"
+echo ">> 2. build shim as $WRAP from src/${CLUSTER_SRC:-cluster_dual.c} (NEEDED $REAL)"
 mkdir -p "$OUT/stub"
-SRC="work/src/${CLUSTER_SRC:-cluster_shim.c}"       # resolved HERE (outer shell)
+SRC="work/src/${CLUSTER_SRC:-cluster_dual.c}"       # resolved HERE (outer shell)
 test -f "$SRC" || { echo "no shim source $SRC"; exit 1; }
 ./work/tools/xcc.sh sh -c "
   set -e
@@ -69,10 +70,6 @@ docker run --rm -v "$here":/src -w /src "$ALPINE" sh -c "
   apk add --no-cache patchelf >/dev/null 2>&1
   patchelf --set-soname '$REAL' '$BUILD/lib/$REAL'"
 
-if [ -n "${PATCH_CPAA:-}" ]; then
-  echo ">> 3b. binary-patch CPAAProxyEx: $PATCH_CPAA"
-  python3 work/tools/patch_bytes.py "$BUILD/bin/CPAAProxyEx" $PATCH_CPAA
-fi
 echo ">> 4. install shim as $WRAP"
 cp "$OUT/cluster_shim.so" "$BUILD/lib/$WRAP"
 
@@ -96,4 +93,4 @@ test -f "work/_verify/lib/$REAL" || { echo "verify: missing renamed real $REAL";
 rm -rf work/_verify
 echo ">> DONE. Flash with:"
 echo "     python3 work/tools/flash_local.py $OUT/hw301_v${CODE}.tar --version $CODE --dry-run"
-echo "   (drop --dry-run to actually flash; read work/notes/virtual-cockpit.md FLASHING RULE first)"
+echo "   (drop --dry-run to actually flash; bench power only, see README.md)"
