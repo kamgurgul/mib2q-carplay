@@ -124,11 +124,24 @@ CPAAProxyEx - no forwarding needed). Missing: the maneuver arrow/ETA.
   (Compile-checked at 1010x376.) Not a runtime file because the dongle has no
   shell; per-variant build instead.
 
-## STILL TO DO (hardening, unchanged priority)
-1. KDF for a distinct 111 key (remove 110/111 keystream reuse on the USB hop).
-2. Nonce-desync recovery (close 111 after N verify fails so iOS re-SETUPs).
-3. Off-thread head-unit writer (send_full must not block the phone read path).
-4. Firmware pinning (pass-through if not v129).
+## HARDENING STATUS
+1. KDF for a distinct 111 key (remove 110/111 keystream reuse on the USB hop) - TODO
+   (crypto; the one real security item, closest to what other dongles do).
+2. Nonce-desync recovery - DONE (v1156). After DESYNC_LIMIT=5 consecutive
+   chacha_open verify fails the receiver drops the 111 socket; iOS re-SETUPs
+   with a fresh counter. Resets on any good frame. Log: "111 nonce desync ...".
+3. Head-unit backpressure - DONE (v1156), as bounded drop rather than a separate
+   writer thread: the read path polls the head-unit socket for writability for
+   HU_WRITE_MS=60 ms; if not writable it DROPS the AU *before* AES (so the CTR
+   counter stays aligned - a dropped frame must not advance it) and asks the
+   phone for a key frame. The car pass showed the head unit keeping exact pace
+   (relayed==frames, send_err=0), so this only engages if the head unit stalls.
+   A true async writer thread (zero read-path wait) remains possible if 60 ms
+   drops ever show up as `dropped=` climbing in the log; deferred until observed.
+4. Firmware pinning - DROPPED. The shim and v129 ship as one flashed image
+   (build.sh extracts from fw/v129), so the shim never runs against firmware it
+   was not built for; a vendor OTA replaces the whole app partition (shim
+   included) rather than orphaning it. Nothing to pin.
 Zoom forwarding is NOT needed (zoom works). Cockpit-layout (updateViewArea)
 switching the cluster view: unverified - check whether switching layouts moves
 the cluster SafeArea; if not, that is the one command that may still need

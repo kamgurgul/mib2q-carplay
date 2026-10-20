@@ -180,12 +180,14 @@
 #define HU_CONNECT_MS 1000       /* runs on the phone read path: keep it short */
 #define HU_RETRY_S 5             /* pre-connect retry interval */
 #define HU_MAX_TRIES 12          /* per head-unit key generation (~1 min) */
+#define HU_WRITE_MS 60           /* max per-frame wait for the head-unit socket; else drop */
 #define SPSSI_SIZE 0x2b8         /* SetupProxyScreenSecurityInfo span, v129 */
 
 #define HDR_SIZE 128
 #define OP_VIDEO_FRAME 0
 #define OP_VIDEO_CONFIG 1
 #define MAX_BODY (8u * 1024u * 1024u)
+#define DESYNC_LIMIT 5           /* consecutive 111 verify fails -> drop the stream, let iOS re-SETUP */
 #define DUMP_LIMIT (2u * 1024u * 1024u)
 
 typedef void *CFRef;
@@ -1107,7 +1109,8 @@ static struct {
     int tries;           /* connect attempts for for_gen */
     long next_try;       /* seconds, from time_plain() (32-bit time on the dongle) */
     int nokey_logged;
-    unsigned long relayed, err;
+    unsigned long relayed, err, dropped;
+    int backlog;             /* consecutive drops; 0 after a successful send */
 } g_relay = { .fd = -1 };
 
 static void relay_drop_locked(int dead) {
@@ -1115,6 +1118,7 @@ static void relay_drop_locked(int dead) {
     g_relay.fd = -1;
     if (g_relay.enc) { r_ctr_final(&g_relay.ctx); g_relay.enc = 0; }
     g_relay.dead = dead;
+    g_relay.backlog = 0;
 }
 
 static int relay_current(unsigned rx_gen) {
@@ -1223,26 +1227,46 @@ static int relay_frame(unsigned rx_gen, int *thread_attached, ScreenHeader *h, u
         }
     }
     if (g_relay.fd >= 0) {
-        /* One continuous CTR span over the AVCC AU, matching AES_CTR_Update in
-         * SendProxyScreenFrame and the head-unit hook's decrypt of bodySize bytes.
-         * Config frames are not fed in, so they do not advance this counter. */
-        if (g_relay.enc) r_ctr_update(&g_relay.ctx, body, h->bodySize, body);
-        if (send_full(g_relay.fd, h, sizeof *h) != 0 || send_full(g_relay.fd, body, h->bodySize) != 0) {
-            g_relay.err++;
-            relay_drop_locked(1);
-            dlog("head-unit send failed; relay waits for the next head-unit SETUP (err=%lu)", g_relay.err);
+        /* Backpressure: this runs on the phone read path, so never block per
+         * frame waiting for a slow head unit. If the socket is not writable
+         * within HU_WRITE_MS, DROP this AU *before* encrypting - the AES-CTR
+         * counter must not advance for a frame the head unit never receives, or
+         * every later frame desyncs. A drop corrupts the decoder until the next
+         * IDR, so ask the phone for a key frame. The common case (head unit
+         * keeping up, as in the car test) sends immediately. */
+        struct pollfd wp = { g_relay.fd, POLLOUT, 0 };
+        if (poll(&wp, 1, HU_WRITE_MS) == 1 && (wp.revents & POLLOUT)) {
+            /* One continuous CTR span over the AVCC AU, matching AES_CTR_Update
+             * in SendProxyScreenFrame and the head unit's decrypt of bodySize
+             * bytes. Config frames are not fed in, so they never advance it. */
+            if (g_relay.enc) r_ctr_update(&g_relay.ctx, body, h->bodySize, body);
+            if (send_full(g_relay.fd, h, sizeof *h) != 0 || send_full(g_relay.fd, body, h->bodySize) != 0) {
+                g_relay.err++;
+                relay_drop_locked(1);
+                dlog("head-unit send failed; relay waits for the next head-unit SETUP (err=%lu)", g_relay.err);
+            } else {
+                g_relay.relayed++;
+                g_relay.backlog = 0;
+            }
         } else {
-            g_relay.relayed++;
+            /* not writable in time: drop, un-encrypted, counter untouched */
+            g_relay.dropped++;
+            if (++g_relay.backlog == 1 || g_relay.backlog % 60 == 0) {
+                dlog("head-unit slow: dropped %lu AUs (backlog=%d), requesting key frame",
+                     g_relay.dropped, g_relay.backlog);
+                want_kf = 1;   /* recover the decoder once the head unit catches up */
+            }
         }
     }
     pthread_mutex_unlock(&g_relay_lock);
     return want_kf;
 }
 
-static void relay_stats(unsigned long *relayed, unsigned long *err) {
+static void relay_stats(unsigned long *relayed, unsigned long *err, unsigned long *dropped) {
     pthread_mutex_lock(&g_relay_lock);
     *relayed = g_relay.relayed;
     *err = g_relay.err;
+    *dropped = g_relay.dropped;
     pthread_mutex_unlock(&g_relay_lock);
 }
 
@@ -1254,7 +1278,7 @@ static void *rx_thread(void *varg) {
     int dec_ok = 0, attached = 0;           /* attached: this thread fed the shared relay */
     int nal_len = 4, cfg_w = 0, cfg_h = 0;
     unsigned long frames = 0, idr = 0, bad = 0, relayed = 0, send_err = 0;
-    int log_now = 0;
+    int log_now = 0, desync = 0;
 #if STEP_DECRYPT
     uint8_t cc_key[32], cc_nonce[8];
 #endif
@@ -1327,7 +1351,19 @@ static void *rx_thread(void *varg) {
                     int has_idr = 0;
                     if (!chacha_open(cc_key, cc_nonce, &h, body, h.bodySize, &plain)) {
                         bad++;
+                        /* A failed verify does not advance the nonce, so the
+                         * dongle and the phone are now one frame out of step and
+                         * every later frame fails too. Stock tears the stream
+                         * down here; do the same so iOS re-SETUPs 111 with a
+                         * fresh counter. The shared head-unit relay socket stays
+                         * open (its CTR is independent). */
+                        if (++desync >= DESYNC_LIMIT) {
+                            dlog("111 nonce desync (%d consecutive verify fails); closing stream", desync);
+                            free(body);
+                            break;
+                        }
                     } else {
+                        desync = 0;
                         opened = 1;
                         h.bodySize = plain;   /* tag stripped; AU is body[0..plain) */
                         ok = au_ok(body, h.bodySize, nal_len, &has_idr);
@@ -1352,10 +1388,11 @@ static void *rx_thread(void *varg) {
                     if (frames == 1 || frames % 300 == 0 || now - last_log >= 10) { last_log = now; log_now = 1; }
                 }
                 if (log_now) {
+                    unsigned long dropped = 0;
                     log_now = 0;
-                    relay_stats(&relayed, &send_err);
-                    dlog("111 frames=%lu bytes=%u nal_ok=%d idr=%lu bad=%lu relayed=%lu send_err=%lu",
-                         frames, h.bodySize, ok, idr, bad, relayed, send_err);
+                    relay_stats(&relayed, &send_err, &dropped);
+                    dlog("111 frames=%lu bytes=%u nal_ok=%d idr=%lu bad=%lu relayed=%lu dropped=%lu send_err=%lu",
+                         frames, h.bodySize, ok, idr, bad, relayed, dropped, send_err);
                 }
 
                 /* relay the authenticated AU; relay_frame re-encrypts with the HU AES key. */
@@ -1369,9 +1406,12 @@ static void *rx_thread(void *varg) {
     }
 
 done:
-    relay_stats(&relayed, &send_err);
-    dlog("111 receiver exit frames=%lu idr=%lu bad=%lu relayed=%lu send_err=%lu",
-         frames, idr, bad, relayed, send_err);
+    {
+        unsigned long dropped = 0;
+        relay_stats(&relayed, &send_err, &dropped);
+        dlog("111 receiver exit frames=%lu idr=%lu bad=%lu relayed=%lu dropped=%lu send_err=%lu",
+             frames, idr, bad, relayed, dropped, send_err);
+    }
     if (listen_fd >= 0) close(listen_fd);   /* only set if we exited before accept */
     if (c >= 0) close(c);
     if (dfd >= 0) close(dfd);
