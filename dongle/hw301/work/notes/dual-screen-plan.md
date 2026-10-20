@@ -361,6 +361,17 @@ IMPLEMENTATION STATUS: per-frame loop is in `cluster_dual.c` behind
 relay). Output key first; `-DCLUSTER_KEY_INPUT=1` is the one-line swap to the
 Input key. Car trip still required (`nal_ok=1 bad=0`).
 
+### PHASE B PASSED (2026-10-20, v1148, car + iPhone log)
+- `111 chacha key derived info=DataStream-Output-Encryption-Key saltLen=35`
+  (Output key confirmed; v1149/Input not needed -> Phase C uses step3/v1150).
+- `111 video config body=40 sps=1440x540`, then `111 frames=1 bytes=183
+  nal_ok=1 idr=1 bad=0` and ~2100 frames over 2.5 min, all nal_ok=1 bad=0
+  (~15 fps, AUs ~3.5-4.5 KB, occasional ~44-61 KB).
+- iPhone: Activated endpoint, AltScreen ID 111 registered, both screen
+  streams resumed, no deactivation. MMI CarPlay stayed up.
+- Only one IDR in the run (the stream's first frame): Phase C relies on its
+  forceKeyFrame request when the head-unit socket opens mid-stream.
+
 ### Phase B VERIFIED against the binary (2026-10-19, before the car trip)
 - Key: FUN_0x12dcc call site 0x165c4 passes NULL for the Input-key buffer and
   sp+0x1d4 for the Output-key buffer -> stock derives ONLY the Output key
