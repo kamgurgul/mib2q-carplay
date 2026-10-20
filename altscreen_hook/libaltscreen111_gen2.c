@@ -1216,6 +1216,8 @@ static const char *g_noadvertise_senders_path = "/mnt/app/root/mibr-carplay111-n
 static int g_sender_noadvertise;
 /* Dongle-only listener: keyed with stream 110's connection id (0 = not ours). */
 static uint64_t g_dongle_alt_cid;
+static int g_alt_bc_last_view = -1;   /* last ViewArea index pushed to the dongle back-channel */
+static volatile int g_desired_view;   /* defined below; declared here for the back-channel */
 
 static int sender_listed(const char *model, const char *build)
 {
@@ -2092,10 +2094,27 @@ static void *alt_receiver_thread(void *arg)
     pthread_mutex_lock(&g_lock); g_alt_client = c; pthread_mutex_unlock(&g_lock);
     logf_u2("AltScreen stream 111 connected");
     publish_state("connected");
+    /* Dongle path only: the dongle cannot carry updateViewArea through
+     * CPAAProxyEx, so send the desired ViewArea back to it on this socket
+     * (magic "VIEW" + u32 LE index); the dongle forwards it to the phone.
+     * -1 forces a send of the current view on the first loop iteration. */
+    g_alt_bc_last_view = -1;
     for (;;) {
         AirPlayScreenHeaderCompat h;
         uint8_t *body = NULL;
-        int rr = read_exact(c, &h, sizeof(h));
+        int rr;
+        if (g_dongle_alt_cid) {                 /* dongle receiver: push view changes back to it */
+            int v = g_desired_view;
+            if (v != g_alt_bc_last_view) {
+                uint8_t m[8] = { 'V','I','E','W',
+                                 (uint8_t)v, (uint8_t)(v>>8), (uint8_t)(v>>16), (uint8_t)(v>>24) };
+                if (write(c, m, sizeof m) == (ssize_t)sizeof m) {
+                    g_alt_bc_last_view = v;
+                    logf_u2("dongle back-channel: sent ViewArea %d", v);
+                }
+            }
+        }
+        rr = read_exact(c, &h, sizeof(h));
         if (rr <= 0) break;
         if (h.bodySize > MAX_SCREEN_BODY) { logf_u2("reject bodySize=%u", h.bodySize); break; }
         if (h.bodySize) {

@@ -209,6 +209,8 @@
 #define HU_RETRY_S 5             /* pre-connect retry interval */
 #define HU_MAX_TRIES 12          /* per head-unit key generation (~1 min) */
 #define HU_WRITE_MS 60           /* max per-frame wait for the head-unit socket; else drop */
+#define VIEW_COUNT 2             /* advertised ViewAreas (wide, classic) */
+#define BC_MAGIC "VIEW"          /* head-unit -> dongle back-channel: "VIEW" + u32 LE index */
 #define SPSSI_SIZE 0x2b8         /* SetupProxyScreenSecurityInfo span, v129 */
 
 #define HDR_SIZE 128
@@ -279,6 +281,7 @@ static const void *array_cb, *dict_key_cb, *dict_val_cb, *bool_false;
 
 /* introspection (optional; resolved best-effort, not required by the hooks) */
 static void (*cf_dict_apply)(CFRef, void (*)(CFRef, CFRef, void *), void *);
+static CFRef (*cf_num_create)(CFRef, int, const void *);   /* CFNumberCreate, for adjacentViewAreas */
 static int64_t (*cf_get_i64)(CFRef);
 static unsigned long (*cf_number_type)(void);
 static unsigned long (*cf_boolean_type)(void);
@@ -410,6 +413,7 @@ static void bind_all(void) {
     *(void **)&cf_cstr_ptr = next_sym("CFStringGetCStringPtr");
     *(void **)&cf_cstr_get = next_sym("CFStringGetCString");
     *(void **)&cf_dict_apply = next_sym("CFDictionaryApplyFunction");
+    *(void **)&cf_num_create = next_sym("CFNumberCreate");
     *(void **)&cf_get_i64 = next_sym("CFGetInt64");
     *(void **)&cf_number_type = next_sym("CFNumberGetTypeID");
     *(void **)&cf_boolean_type = next_sym("CFBooleanGetTypeID");
@@ -960,6 +964,40 @@ static void ask_keyframe(void *session) {
     if (req) cf_release(req);
 }
 
+/* Forward a cockpit layout change to the phone: updateViewArea{viewAreaIndex}.
+ * Same send path as ask_keyframe. adjacentViewAreas (the other advertised
+ * indices, as CFNumbers) is required or iOS acks but keeps the old layout. */
+__attribute__((unused)) static void send_view(void *session, int view) {
+    CFRef req, params, adj = 0;
+    if (!session || !r_send_cmd || view < 0 || view >= VIEW_COUNT) return;
+    req = cf_dict_new(0, 0, dict_key_cb, dict_val_cb);
+    params = cf_dict_new(0, 0, dict_key_cb, dict_val_cb);
+    if (req && params) {
+        OSStatus e;
+        int v;
+        set_str(req, "type", "updateViewArea");
+        set_str(params, "uuid", CLUSTER_UUID);
+        set_i64(params, "viewAreaIndex", view);
+        set_i64(params, "animationDurationMillis", 0);
+        if (cf_num_create && (adj = cf_array_new(0, 0, array_cb))) {
+            for (v = 0; v < VIEW_COUNT; v++) {
+                int64_t idx = v;
+                CFRef num;
+                if (v == view) continue;
+                num = cf_num_create(0, 4 /* kCFNumberSInt64Type */, &idx);
+                if (num) { cf_array_append(adj, num); cf_release(num); }
+            }
+            set_value(params, "adjacentViewAreas", adj);
+        }
+        set_value(req, "params", params);
+        e = r_send_cmd(session, req, (void *)kf_done, 0);
+        dlog("updateViewArea -> phone index=%d rc=%d", view, e);
+    }
+    if (adj) cf_release(adj);
+    if (params) cf_release(params);
+    if (req) cf_release(req);
+}
+
 /* ---- H.264 sanity checks (the step-2 decrypt test; no dongle shell needed) --
  * A decrypted AVCC access unit tiles exactly into length-prefixed NALs; a wrong
  * key fails this on the first frame. nal_len comes from the avcC (byte 4 & 3)+1. */
@@ -1143,6 +1181,8 @@ static struct {
     int nokey_logged;
     unsigned long relayed, err, dropped;
     int backlog;             /* consecutive drops; 0 after a successful send */
+    uint8_t bc[8];           /* back-channel accumulator (VIEW message) */
+    int bc_len;
 } g_relay = { .fd = -1 };
 
 static void relay_drop_locked(int dead) {
@@ -1151,6 +1191,37 @@ static void relay_drop_locked(int dead) {
     if (g_relay.enc) { r_ctr_final(&g_relay.ctx); g_relay.enc = 0; }
     g_relay.dead = dead;
     g_relay.backlog = 0;
+    g_relay.bc_len = 0;
+}
+
+/* Non-blocking read of the head-unit back-channel (VIEW + u32 index). Returns
+ * the ViewArea index when a full message arrives, else -1. The head unit sends
+ * it on the stream-111 socket when the cockpit layout changes. */
+__attribute__((unused)) static int relay_poll_view(void) {
+    int view = -1;
+    pthread_mutex_lock(&g_relay_lock);
+    if (g_relay.fd >= 0) {
+        struct pollfd pf = { g_relay.fd, POLLIN, 0 };
+        while (view < 0 && poll(&pf, 1, 0) == 1 && (pf.revents & POLLIN)) {
+            ssize_t r = recv(g_relay.fd, g_relay.bc + g_relay.bc_len,
+                             (size_t)(8 - g_relay.bc_len), MSG_DONTWAIT);
+            if (r <= 0) break;
+            g_relay.bc_len += (int)r;
+            if (g_relay.bc_len == 8) {
+                if (memcmp(g_relay.bc, BC_MAGIC, 4) == 0) {
+                    view = g_relay.bc[4] | (g_relay.bc[5] << 8) |
+                           (g_relay.bc[6] << 16) | (g_relay.bc[7] << 24);
+                    g_relay.bc_len = 0;
+                } else {                       /* resync: drop the first byte */
+                    memmove(g_relay.bc, g_relay.bc + 1, 7);
+                    g_relay.bc_len = 7;
+                }
+            }
+            pf.revents = 0;
+        }
+    }
+    pthread_mutex_unlock(&g_relay_lock);
+    return view;
 }
 
 static int relay_current(unsigned rx_gen) {
@@ -1310,8 +1381,9 @@ static void *rx_thread(void *varg) {
     int dec_ok = 0, attached = 0;           /* attached: this thread fed the shared relay */
     int nal_len = 4, cfg_w = 0, cfg_h = 0;
     unsigned long frames = 0, idr = 0, bad = 0, relayed = 0, send_err = 0;
-    int log_now = 0, desync = 0;
+    int log_now = 0;
 #if STEP_DECRYPT
+    int desync = 0, last_view = -1;
     uint8_t cc_key[32], cc_nonce[8];
 #endif
     /* full cached VIDEO_CONFIG (header + body), replaced on every config */
@@ -1351,7 +1423,15 @@ static void *rx_thread(void *varg) {
     for (;;) {
         ScreenHeader h;
         uint8_t *body = 0;
-        int rr = read_full(c, &h, sizeof h, a.gen);
+        int rr;
+#if STEP_DECRYPT
+        /* cockpit layout change from the head unit -> tell the phone */
+        if (STEP_RELAY && !disabled() && !flag(NORELAY_FILE)) {
+            int vw = relay_poll_view();
+            if (vw >= 0 && vw != last_view) { last_view = vw; send_view(a.session, vw); }
+        }
+#endif
+        rr = read_full(c, &h, sizeof h, a.gen);
         if (rr <= 0) break;
         if (h.bodySize > MAX_BODY) { dlog("reject bodySize=%u", h.bodySize); break; }
         if (h.bodySize) {

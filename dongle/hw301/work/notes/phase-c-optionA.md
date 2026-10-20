@@ -180,3 +180,25 @@ when advertise_enabled() is true.
     dongle behaviour, rebuild with -DCLUSTER_URL_INITIAL=... (ALT_URL_RGI_ON =
     bare /map for head-unit-draws; the current default is the RGI_OFF phone-draws
     URL).
+
+## COCKPIT-SWITCH RESIZE - design (2026-10-20)
+Goal: wide<->classic cockpit switch re-renders the cluster into the matching
+SafeArea. Needs an `updateViewArea` to reach the PHONE. CPAAProxyEx does not
+know updateViewArea (strings: only changeModes/forceKeyFrame/requestUI/
+setLimitedUI), so it can neither handle nor forward it. But the dongle already
+sends commands to the phone via AirPlayReceiverSessionSendCommand (forceKeyFrame
+works), so it can send updateViewArea too - it only needs the view index.
+
+Channel: the stream-111 TCP socket, which BOTH ends own (head-unit hook accepts
+it; dongle relay connects it). Use it as a back-channel, head unit -> dongle:
+  message = 8 bytes: magic "VIEW" (0x56,0x49,0x45,0x57) + u32 LE view index.
+- Head unit (alt_receiver_thread, plain/dongle mode only): carplay_hook already
+  sets g_desired_view on an FctID-54 cockpit-layout change. When it differs from
+  the last value sent, write the 8-byte VIEW message to the client socket (the
+  dongle). Send once on connect too. Wired/other senders are unchanged (their
+  normal updateViewArea path via SendCommand to the phone still applies).
+- Dongle (relay): the relay socket is write-only today; add a non-blocking read.
+  On a VIEW message, send updateViewArea{index} to the PHONE session via
+  r_send_cmd (same path as forceKeyFrame). The phone re-renders into viewAreas[index].
+No CPAAProxyEx reverse-engineering; both ends are our code. SafeArea geometry is
+already advertised for both views (CLUSTER_SAFE0_* wide, CLUSTER_SAFE1_* classic).

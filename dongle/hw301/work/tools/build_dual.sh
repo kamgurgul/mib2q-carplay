@@ -57,7 +57,7 @@ case "${1:-all}" in
   # the head unit :7100 and AES-CTR-seals frames with the captured screen key.
   # Needs the head-unit hook that listens for the dongle on stream 110's key
   # (phase-c-optionA.md). v1152/v1153 were the plaintext experiment; do not flash them.
-  optA) build_step 3 1158 3 "-DSTEP_DECRYPT=1 -DHU_DIRECT=1" ;;   # v1158: + safe-area 270 calibration
+  optA) build_step 3 1160 3 "-DSTEP_DECRYPT=1 -DHU_DIRECT=1" ;;   # v1160: + cockpit-switch back-channel (updateViewArea)
   optA-input) build_step 3 1155 3 "-DSTEP_DECRYPT=1 -DHU_DIRECT=1 -DCLUSTER_KEY_INPUT=1" ;;
   # v1160: release = step3 with the bring-up diagnostics compiled out
   # (CLUSTER_DIAG=0: no /info dump, no per-SETUP lines, no c111.h264 dump).
