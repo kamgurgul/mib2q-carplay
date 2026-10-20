@@ -104,3 +104,32 @@ prove the map on the cluster, not the final security posture.
 BUILD STATUS: head-unit hook built (build/libaltscreen111_mhi2q.so, encrypted
 path); dongle v1154 built (optA), import check 43/43, dry-run OK. Not committed,
 not flashed.
+
+## FEATURES after the car pass (2026-10-20)
+Car-verified working on v1154: cluster map on the VC, CarPlay on the MMI,
+roller ZOOM works (the knob HID / changeMapZoomLevel reaches the phone through
+CPAAProxyEx - no forwarding needed). Missing: the maneuver arrow/ETA.
+
+- MANEUVER/ETA (v1156): the dongle advertised the bare cluster URL, so the phone
+  rendered a plain map with no turn card. initialURL is now
+  `maps:/car/instrumentcluster?showETA=yes&maneuverLayout=rightAligned&showSpeedLimit=no`
+  (the head-unit hook's RGI-off URL, which a real iPhone honours), so the phone
+  draws the maneuver + ETA into the cluster video. Overridable
+  -DCLUSTER_URL_INITIAL=... ; the bare `/map` is the RGI-on choice (head unit
+  draws its own maneuver). If v1156 shows a DOUBLE maneuver (phone + head-unit
+  RGI), rebuild with the bare /map URL.  Car test: build_dual.sh optA -> v1156.
+- MULTIPLE MAP SIZES: geometry is now -D overridable (CLUSTER_W/H/FPS/WMM/HMM),
+  default 1440x540. A different cluster builds with e.g.
+  `CLUSTER_CFLAGS="... -DCLUSTER_W=1010 -DCLUSTER_H=376" build_dual.sh ...`.
+  (Compile-checked at 1010x376.) Not a runtime file because the dongle has no
+  shell; per-variant build instead.
+
+## STILL TO DO (hardening, unchanged priority)
+1. KDF for a distinct 111 key (remove 110/111 keystream reuse on the USB hop).
+2. Nonce-desync recovery (close 111 after N verify fails so iOS re-SETUPs).
+3. Off-thread head-unit writer (send_full must not block the phone read path).
+4. Firmware pinning (pass-through if not v129).
+Zoom forwarding is NOT needed (zoom works). Cockpit-layout (updateViewArea)
+switching the cluster view: unverified - check whether switching layouts moves
+the cluster SafeArea; if not, that is the one command that may still need
+forwarding.

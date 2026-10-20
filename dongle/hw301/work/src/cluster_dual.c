@@ -133,12 +133,34 @@
 #define UTF8 0x08000100
 #define TYPE_MAIN 110
 #define TYPE_CLUSTER 111
+/* Advertised cluster geometry. Overridable at build time per cluster variant
+ * (e.g. the larger MIBSI geometry): build_dual.sh passes -DCLUSTER_W=... etc.
+ * Defaults are the B9 Virtual Cockpit 1440x540, 290x108 mm. */
+#ifndef CLUSTER_W
 #define CLUSTER_W 1440
+#endif
+#ifndef CLUSTER_H
 #define CLUSTER_H 540
+#endif
+#ifndef CLUSTER_FPS
 #define CLUSTER_FPS 30
+#endif
+#ifndef CLUSTER_WMM
 #define CLUSTER_WMM 290
+#endif
+#ifndef CLUSTER_HMM
 #define CLUSTER_HMM 108
+#endif
 #define CLUSTER_UUID "b7e6c5a0-2222-4000-8000-000000000002"
+/* The INITIAL URL decides what the phone renders into the cluster video. The
+ * bare URL gives a plain map with no maneuver/ETA (the arrow was missing). The
+ * head-unit hook uses showETA + maneuverLayout for a real iPhone, which makes
+ * the phone draw the turn card and ETA into the cluster itself. Match that.
+ * Override with -DCLUSTER_URL_INITIAL=... (e.g. the RGI-on bare /map when the
+ * head unit draws its own maneuver). */
+#ifndef CLUSTER_URL_INITIAL
+#define CLUSTER_URL_INITIAL "maps:/car/instrumentcluster?showETA=yes&maneuverLayout=rightAligned&showSpeedLimit=no"
+#endif
 #define URL_CLUSTER "maps:/car/instrumentcluster"
 #define URL_MAP "maps:/car/instrumentcluster/map"
 #define URL_CARD "maps:/car/instrumentcluster/instructioncard"
@@ -659,7 +681,7 @@ static CFRef augment_info(CFRef base) {
     set_i64(alt, "heightPhysical", CLUSTER_HMM);
     set_str(alt, "uuid", CLUSTER_UUID);
     /* no "displayUUID": the stock display and the head-unit hook's both use only "uuid" */
-    set_str(alt, "initialURL", URL_CLUSTER);
+    set_str(alt, "initialURL", CLUSTER_URL_INITIAL);
     add_urls(alt);
     add_views(alt);
     cf_array_append(displays, alt);
