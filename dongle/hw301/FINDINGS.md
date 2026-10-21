@@ -8,11 +8,14 @@ unless stated otherwise.
 
 ## Result
 
-Working and car-verified (v1154 onwards, release v1162): normal CarPlay on the MMI
-(stream 110, stock path) **and** a dedicated iOS cluster view (stream 111, 1440x540)
-on the Virtual Cockpit. It is not a mirror. CPAAProxyEx is not byte-patched. Roller zoom
-works. The phone draws maneuver and ETA. Switching between wide and classic cockpit
-layouts re-renders the map (v1160 back-channel).
+Shipped in mib2q-carplay **1.3** (needs the 1.3 head-unit hook). Car-verified with v1154:
+normal CarPlay on the MMI (stream 110, stock path) **and** a dedicated iOS cluster view
+(stream 111, 1440x540) on the Virtual Cockpit. It is not a mirror. CPAAProxyEx is not
+byte-patched. Roller zoom works.
+
+Built on top of that and still *car test pending*: the phone drawing maneuver and ETA
+(v1156), SafeArea 270 (v1158), and re-rendering the map on a wide/classic cockpit switch
+(v1160 back-channel). The release image v1162 includes all of these.
 
 ```
 iPhone ==Wi-Fi AirPlay==> HW301 (receiver: libAirPlay) ==USB CarPlay==> MHI2Q

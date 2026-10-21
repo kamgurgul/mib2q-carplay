@@ -58,6 +58,7 @@ final verified fact. `reconciles:` frontmatter records which legacy docs were fo
 
 ## 🗺️ AltScreen - CarPlay map video on the cluster  [x]
 - [altscreen-mhi2q](deploy/altscreen-mhi2q.md) - stream-111 hook + renderer, ctx 81/82, SafeArea/ViewAreas, PF port allowlist, runtime knobs, triage
+- [hw301-dongle](deploy/hw301-dongle.md) - HW301 wireless dongle custom firmware (from 1.3): flash, back to stock, FEL recovery
 - [hw-decoder](altscreen/hw-decoder.md) - zero-copy Qualcomm OMX H.264 decode into displayable 99, software fallback
 
 ## 🔍 Reverse engineering - iOS  [x]

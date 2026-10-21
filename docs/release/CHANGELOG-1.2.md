@@ -6,12 +6,6 @@ tests but have not been driven yet.
 
 ## New
 
-- **HW301 wireless dongle, custom app image v1162.** Stock HW301 firmware (v1.26 / v1.29)
-  only does CarPlay on the main screen. `dongle/hw301/fw/hw301_v1162.tar` (marker
-  `v1162-20261020152434`) adds the Virtual Cockpit map when the head unit already has
-  this release and Cluster video is on. Flash on a bench USB supply, never in the car;
-  roll back with `hw301_v129.tar --version 129`. Install steps are in the
-  [1.2 release notes](RELEASE_NOTES-1.2.md#hw301-wireless-dongle).
 - **CarPlay calls on the cluster phone tab.** The Virtual Cockpit telephone tab now works as
   with a Bluetooth phone: caller name and number, call state and timer, accept / hang up, hold,
   mute and dialling from the tab or the steering wheel, recents and favorites, missed calls,
@@ -110,7 +104,7 @@ tests but have not been driven yet.
 
 - README: **Supported units** (P5152 A5 F5 MU1329, P5092 MU1329) and **Tested wireless
   adapters** (Baseus Safe Journey: works, fast; Carlinkit 5.0 / 2Air: works, slow to start;
-  generic `smartBox-xxxx`: does not work).
+  generic `smartBox-xxxx`: does not work; the HW301 is supported from [1.3](CHANGELOG-1.3.md)).
   ([#5](https://github.com/kamgurgul/mib2q-carplay/issues/5))
 - README: a section on the CarPlay-RGI Green Engineering Menu page and all its buttons.
 - GitHub bug report template. It asks for firmware, settings and both log saves.

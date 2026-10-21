@@ -5,6 +5,8 @@ Firmware-mod workspace for the **HW301** wireless CarPlay dongle (setup Wi-Fi
 The custom image adds the Audi Virtual Cockpit cluster map. Normal CarPlay stays
 on the MMI, and a dedicated iOS cluster stream (111) goes to the head unit's altscreen hook.
 
+Supported from **mib2q-carplay 1.3** (the head-unit hook opens the cluster stream for this
+dongle only from that release). User guide: [docs/deploy/hw301-dongle.md](../../docs/deploy/hw301-dongle.md).
 How it works, what was learned, and what failed: **[FINDINGS.md](FINDINGS.md)**.
 The head-unit side lives in the repo root (`altscreen_hook/`, `scripts/`, `mods/`).
 
@@ -51,7 +53,7 @@ python3 work/tools/flash_local.py fw/hw301_v1162.tar --version 1162
 curl http://192.168.5.1/clbuild.txt                                             # v1162-20261020152434
 ```
 
-The head unit also needs this repo's install with Cluster video ON.
+The head unit also needs this repo's 1.3 (or newer) install with Cluster video ON.
 
 Test logs, pulled on bench power after a car trip:
 
