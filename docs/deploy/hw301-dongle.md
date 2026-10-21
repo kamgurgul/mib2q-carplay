@@ -38,6 +38,7 @@ It is CarPlay only. It does not add Android Auto on the cluster.
 | File | What it is |
 | --- | --- |
 | `dongle/hw301/fw/hw301_v1162.tar` | the custom image you flash (marker `v1162-20261020152434`) |
+| `dongle/hw301/fw/hw301_v1160.tar` | the same version as v1162, but it also contains enabled logging. Flash it only to collect logs for a bug report (`--version 1160`, marker `v1160-20261021065350`) |
 | `dongle/hw301/fw/hw301_v129.tar` | official stock v1.29, the rollback image |
 | `dongle/hw301/fw/hw301_v126.tar` | official stock v1.26 |
 | `dongle/hw301/fw/rollback/restore-app-v129-at-0x7e0000.bin` | FEL recovery image (see below) |

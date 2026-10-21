@@ -48,15 +48,13 @@ hw301/work/exp/
 .DS_Store
 
 # …but DO keep the firmware (these override the rules above):
-#   official stock OTA tars + their app.img (build input + Wi-Fi rollback)
-#   newest custom images (v1162 release, v1160 = release + diagnostics)
+#   official stock OTA tars (Wi-Fi rollback) + v129 app.img (the build input)
+#   newest custom image v1162, plus the same v1162 with logging enabled (file/OTA code 1160)
 #   FEL restore image of the app partition (stock v129, see README "Rollback")
 !hw301/fw/hw301_v126.tar
 !hw301/fw/hw301_v129.tar
 !hw301/fw/hw301_v1160.tar
 !hw301/fw/hw301_v1162.tar
-!hw301/fw/v126/app.img
 !hw301/fw/v129/app.img
-!hw301/fw/v1162/app.img
 !hw301/fw/rollback/
 !hw301/fw/rollback/restore-app-v129-at-0x7e0000.bin

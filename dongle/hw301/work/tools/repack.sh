@@ -23,12 +23,12 @@ mksquashfs "$rootfs" "$img" -comp xz -b 262144 -noappend -all-root -no-xattrs -n
 if command -v md5sum >/dev/null; then md5sum "$img" | awk '{print $1}' > "$md5f"
 else md5 -q "$img" | tr -d '\n' | sed 's/$/\n/' > "$md5f"; fi
 
-# app partition must hold this image; stock v126 (4730880) is the largest stock
-# image we have, so treat it as the floor for the partition size.
-stock=$(stat -f%z "$here/fw/v126/app.img" 2>/dev/null || echo 0)
+# app partition (GPT on the SPI-NOR, 0x7e0000-0xea0000) must hold this image.
+# A larger image would run into UDISK, so refuse to pack it.
+part=$((0x6c0000))
 now=$(stat -f%z "$img")
-echo "app.img  = $now bytes  (stock v126 = $stock)"
-[ "$now" -le "$((stock + 1048576))" ] || echo "WARNING: image >1MB larger than stock v126; confirm it fits the app partition before flashing"
+echo "app.img  = $now bytes  (app partition = $part)"
+[ "$now" -le "$part" ] || { echo "ERROR: image larger than the app partition; not packing"; exit 1; }
 
 # Build the OTA tar with a LINUX tar (clean ustar: app.img then appmd5sum.txt,
 # no AppleDouble ._* and no PaxHeader/* members). macOS bsdtar injects those and

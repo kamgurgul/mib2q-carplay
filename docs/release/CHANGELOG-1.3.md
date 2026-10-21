@@ -80,7 +80,7 @@ tests but have not been driven yet.
   tested wireless adapters (from 1.3, with the custom image).
 - New [HW301 guide](../deploy/hw301-dongle.md): flash, back to stock, FEL recovery, troubleshooting.
 - `dongle/hw301/`: the investigation notes are reduced to [FINDINGS.md](../../dongle/hw301/FINDINGS.md).
-  The official stock images (v1.26, v1.29), the custom images (v1162, and v1160 with diagnostics)
+  The official stock images (v1.26, v1.29), the custom image v1162 (and the same v1162 with logging enabled, `hw301_v1160.tar`)
   and the FEL restore image are committed.
 - Logging card also collects video-core fatal dumps, the tail of native navigation's console log,
   navigation and display-manager dumps; `sloginfo` runs first

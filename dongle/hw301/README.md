@@ -15,11 +15,10 @@ The head-unit side lives in the repo root (`altscreen_hook/`, `scripts/`, `mods/
 | path | what |
 |---|---|
 | `fw/hw301_v129.tar`, `fw/v129/` | **official** stock v1.29: OTA tar + `app.img` + md5 (the build input and the rollback image) |
-| `fw/hw301_v126.tar`, `fw/v126/` | official stock v1.26 |
-| `fw/hw301_v1162.tar`, `fw/v1162/` | **custom release** (marker `v1162-20261020152434`, `build_dual.sh release`) |
-| `fw/hw301_v1160.tar` | custom, same as v1162 with bring-up diagnostics on (`build_dual.sh optA`) |
+| `fw/hw301_v126.tar` | official stock v1.26 |
+| `fw/hw301_v1162.tar` | **custom release** (marker `v1162-20261020152434`, `build_dual.sh release`) |
+| `fw/hw301_v1160.tar` | **same version as v1162**, but it also contains enabled logging (diagnostic kmsg lines). It is a separate file and OTA code (1160, marker `v1160-20261021065350`) so the two can be told apart. `build_dual.sh optA` |
 | `fw/rollback/restore-app-v129-at-0x7e0000.bin` | FEL restore image of the `app` partition (stock v129 `app.img` padded to 0x3f0000) |
-| `fw/*.json` | vendor version metadata |
 | `work/src/cluster_dual.c` | the shim (installed as `libCoreUtils.so`) |
 | `work/tools/` | `build_dual.sh` → `build.sh` → `repack.sh`, `check_imports.sh`, `xcc.sh`, `flash_local.py`, `getlogs.py`, `fel_backup.sh`, `xref.py`/`findref.py` |
 | `work/ghidra/` | saved decompilation dumps + the scripts that made them (the other exploratory scripts are kept locally, git-ignored) |
@@ -28,7 +27,7 @@ The head-unit side lives in the repo root (`altscreen_hook/`, `scripts/`, `mods/
 
 Not committed (`../.gitignore`): `work/out/`, `work/build-v*/` (build output),
 `work/logs/` (device logs), `work/rollback/` (your own FEL flash dumps),
-`work/third_party/` (xfel), `fw/v*/root/` (`unsquashfs fw/v<ver>/app.img`).
+`work/third_party/` (xfel), `fw/v*/root/` (`unsquashfs fw/v129/app.img`).
 
 ## Build
 
@@ -37,7 +36,7 @@ Needs Docker (muslcc toolchain, alpine) and `brew install squashfs`.
 ```bash
 cd dongle/hw301
 ./work/tools/build_dual.sh release      # -> work/out/hw301_v1162.tar
-./work/tools/build_dual.sh optA         # -> work/out/hw301_v1160.tar (diagnostics on)
+./work/tools/build_dual.sh optA         # -> work/out/hw301_v1160.tar (v1162 + enabled logging)
 ```
 
 The build refuses an image whose shim imports a symbol the dongle cannot resolve.

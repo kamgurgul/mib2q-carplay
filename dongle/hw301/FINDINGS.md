@@ -195,8 +195,8 @@ of frames, `nal_ok=1 bad=0`):
 | 1154 | direct path, AES-CTR | first car pass: map on the VC |
 | 1156 | maneuver/ETA URL, desync recovery, backpressure | |
 | 1158 | SafeArea 270 | |
-| 1160 | cockpit-switch back-channel (`build_dual.sh optA`, diagnostics on) | archived `fw/hw301_v1160.tar` |
-| **1162** | release = 1160 with diagnostics off (`build_dual.sh release`) | archived `fw/hw301_v1162.tar` |
+| 1160 | **same version as v1162, also contains enabled logging** (`build_dual.sh optA`, `CLUSTER_DIAG=1`, `v1160-20261021065350`). It first added the cockpit-switch back-channel and was rebuilt 2026-10-21 from the v1162 source; the first v1160 predated the review fixes | archived `fw/hw301_v1160.tar` |
+| **1162** | release = same source with diagnostics off (`build_dual.sh release`, `v1162-20261020152434`) | archived `fw/hw301_v1162.tar` |
 
 ## Open items
 

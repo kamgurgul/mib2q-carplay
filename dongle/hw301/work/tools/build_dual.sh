@@ -6,7 +6,7 @@
 #
 #   release        -> hw301_v1162.tar  shipped image: HU_DIRECT, diagnostics off
 #   release-input  -> hw301_v1163.tar  same, Input ChaCha key (fallback only)
-#   optA           -> hw301_v1160.tar  same as release + bring-up diagnostics
+#   optA           -> hw301_v1160.tar  same version as release (v1162) + enabled logging
 #   optA-input     -> hw301_v1155.tar  optA with the Input key (fallback only)
 #
 # Flash on BENCH power only:
