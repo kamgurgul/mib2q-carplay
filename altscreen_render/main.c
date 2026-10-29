@@ -36,11 +36,15 @@
  *   ALTR_DISPLAYABLE_ID (default 99)                         [QNX]
  *   ALTR_LIVE_FILE  (default /tmp/altscreen_render.live)
  *   ALTR_STATUS_FILE(default /tmp/altscreen_render.status)
- *   ALTR_LIVE_TIMEOUT_MS (default 500) — .live removed if no frame within this
+ *   ALTR_LIVE_TIMEOUT_MS (default 0 = while connected) — .live removed if no frame
+ *                   within this. Apple Maps without a route sends pictures only when
+ *                   the map changes (issue #39: 0 pictures in 5.5 s while connected,
+ *                   North Up parked even longer), so a picture gap is not a lost
+ *                   stream; the tee closing is (the hook closes it whenever stream
+ *                   111 ends)
  *   ALTR_AA_LIVE_TIMEOUT_MS (default 0 = while connected) — same for Android Auto,
  *                   which sends almost no pictures while its map does not change
- *                   (car log 020: one picture every ~6 s), so a picture gap is not
- *                   a lost stream there; the tee closing is
+ *                   (car log 020: one picture every ~6 s)
  *   ALTR_HW_MIN_UPTIME_S (default 120) — no hardware decoder before this uptime;
  *                   software decode until then, then one reconnect to hardware.
  *                   Android Auto always; CarPlay only with the marker
@@ -622,7 +626,7 @@ static void sources_init(struct source *src, int *nsrc, int surface_w, int surfa
     src[*nsrc].view.stream_w = src[*nsrc].view.view_w = surface_w;
     src[*nsrc].view.stream_h = src[*nsrc].view.view_h = surface_h;
     src[*nsrc].view.crop_x = src[*nsrc].view.crop_y = 0;
-    src[*nsrc].live_timeout_ms = env_i("ALTR_LIVE_TIMEOUT_MS", 500);
+    src[*nsrc].live_timeout_ms = env_i("ALTR_LIVE_TIMEOUT_MS", 0);
     src[*nsrc].hw_off_marker = ALTR_HWDEC_OFF_MARKER;
     src[*nsrc].hw_off_boot = ALTR_HWDEC_OFF_BOOT;
     src[*nsrc].hw_settle_marker = ALTR_HW_SETTLE_MARKER;
@@ -856,8 +860,9 @@ int main(void)
                 break;
             }
             /* Heartbeat while the last picture is recent (or, timeout 0, for the
-             * whole connection): Android Auto sends almost no pictures while its
-             * map is still, and that must not drop ctx 81/82. */
+             * whole connection): Android Auto and Apple Maps without a route send
+             * almost no pictures while the map is still, and that must not drop
+             * ctx 81/82. */
             now = now_ms();
 #ifdef PLATFORM_QNX
             if (a.live_hold_until_ms) {

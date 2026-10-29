@@ -103,6 +103,16 @@ Changes since [1.3.1](CHANGELOG-1.3.1.md).
   and `gen2 showUI ETA flip url=…`. *The same sequence fixed it in the reporter's car; car test of
   this build pending.*
 
+- **CarPlay cluster map kept falling back to the Audi map with Apple Maps and no route
+  (issue #39).** Without a route, Apple Maps sends a new picture only when the map changes:
+  ~4-9 fps while moving, none for 5 s and more while still (North Up worst). The renderer
+  dropped its liveness heartbeat 500 ms after the last picture, so the cockpit switched to
+  ctx 74/80 and back every few seconds. CarPlay now keeps the last picture for as long as the
+  video connection is up, as Android Auto already did (`ALTR_LIVE_TIMEOUT_MS` default 0). The
+  hook closes that connection whenever stream 111 ends, so the cockpit still falls back on a
+  disconnect or a session end. `ALTR_LIVE_TIMEOUT_MS=500` restores the old behaviour. *Car test
+  pending.*
+
 ## Known issues
 
 - **HW301: the start of Siri's answer can be cut.** In the 2026-10-27 test the car took 1.6 to

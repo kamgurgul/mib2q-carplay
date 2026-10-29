@@ -216,7 +216,7 @@ Renderer (`altscreen_render`):
 | `ALTR_WIDTH` / `ALTR_HEIGHT` | 1440 / 540 | cluster surface size |
 | `ALTR_DISPLAYABLE_ID` | 99 | cluster plane id (also in `DisplayManagerMIB2High.dc[81]/dc[82]`) |
 | `ALTR_LIVE_FILE` | `/tmp/altscreen_render.live` | heartbeat (`pid=`), refreshed while frames are presented |
-| `ALTR_LIVE_TIMEOUT_MS` | 500 | heartbeat removed if no frame within this |
+| `ALTR_LIVE_TIMEOUT_MS` | 0 | heartbeat removed if no frame within this; 0 = kept while the tee is connected (the hook closes it when stream 111 ends) |
 | `ALTR_STATUS_FILE` | `/tmp/altscreen_render.status` | `state=`, size, `frames=` |
 | `/mnt/app/root/altscreen_render.hwdecode.off` | absent | software decode (GEM *HW decoder ON / OFF*); `/tmp/…` for this boot only |
 | `/mnt/app/root/altscreen_render.hwdecode.delayed` | absent | CarPlay waits `ALTR_HW_MIN_UPTIME_S` (120 s) before hardware decode (GEM *HW decoder 2-min delayed start*); Android Auto always waits |
