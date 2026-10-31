@@ -477,6 +477,8 @@ static int g2_zoom_pending;
 /* Java's confirmed route-guidance presentation (CMD_ALT_RGI via libcarplay_hook).
  * Logged only: the cluster URL follows the user switches, not this. */
 static volatile int g2_rgi_on;
+/* Session-local steering-wheel ETA override: -1 inherits GEM, 0 off, 1 on. */
+static volatile int g2_eta_override = -1;
 static pthread_t g2_control_thread;
 static pthread_t g2_output_thread;
 static int g2_workers_started;
@@ -1044,6 +1046,8 @@ static void active_alt_url_copy(char *out, size_t cap)
             nav_tristate_value(g_nav_compass_path, compass, sizeof(compass), "no");
             nav_tristate_value(g_nav_show_maneuver_path, card, sizeof(card), "yes");
         }
+        if (g2_eta_override >= 0)
+            snprintf(eta, sizeof(eta), "%s", g2_eta_override ? "yes" : "no");
         if (strcmp(card, "no") == 0 || strcmp(card, "0") == 0) {
             snprintf(out, cap, "%s?showETA=%s&maneuverLayout=no&showSpeedLimit=%s&showCompass=%s",
                      ALT_URL_MAP, eta, speed, compass);
@@ -3309,6 +3313,36 @@ int altscreen111_set_rgi(int on)
     return 0;
 }
 
+/* Session-local steering-wheel switch: preserve every persistent GEM setting, but
+ * temporarily suppress or restore only the phone's ETA on the current map session. */
+static int configured_eta(void)
+{
+    char eta[24];
+    if (nav_wide_all_active()) return 1;
+    nav_tristate_value(g_nav_eta_path, eta, sizeof(eta), "no");
+    return (strcmp(eta, "yes") == 0 || strcmp(eta, "1") == 0) ? 1 : 0;
+}
+
+int altscreen111_set_guidance_chrome(int mode)
+{
+    char active_url[384];
+    int configured, current, next, rc = ALT111_STALE;
+    if (mode < 0 || mode > 2) return -1;
+    configured = configured_eta();
+    pthread_mutex_lock(&g2_core_lock);
+    current = g2_eta_override >= 0 ? g2_eta_override : configured;
+    next = mode == 2 ? !current : (mode ? 1 : 0);
+    g2_eta_override = next;
+    if (g2_control_session)
+        rc = alt111_control_reshow(&g2_control, g2_control_session, 0);
+    pthread_cond_broadcast(&g2_core_cv);
+    pthread_mutex_unlock(&g2_core_lock);
+    active_alt_url_copy(active_url, sizeof(active_url));
+    logf_u2("gen2 steering-wheel ETA %s previous=%s initial=GEM queued=%d url=%s",
+            next ? "on" : "off", current ? "on" : "off", rc, active_url);
+    return rc == ALT111_OK ? 0 : -1;
+}
+
 /* One queued step per worker pass, so a fast roller spin cannot burst the phone. */
 static void gen2_process_map_zoom(void)
 {
@@ -3502,6 +3536,7 @@ static void gen2_control_release(void)
     if(s)(void)alt111_control_end(&g2_control,s);
     g2_control_session=0;
     g2_reshow_due_ms=0;
+    g2_eta_override=-1;
     pthread_mutex_unlock(&g2_core_lock);
     gen2_publish_status();
 }

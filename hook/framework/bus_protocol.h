@@ -131,6 +131,8 @@
                                         /* Speed at most 10 Hz, slow fields on */
                                         /* change. Hook: $PASCD (0xFFFB) and   */
                                         /* VehicleStatusUpdate (0xA101).       */
+#define CMD_ALT_GUIDANCE_CHROME 0x0119  /* binary [u8 0=off, 1=on, 2=toggle; */
+                                        /* temporary session ETA override]   */
 /* NOTE: dispatchable inbound types must be < MAX_TYPES in bus.c (grown to      */
 /* cover this 0x11x block).                                                     */
 

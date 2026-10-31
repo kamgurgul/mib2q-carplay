@@ -58,6 +58,7 @@ public final class CarplayBus {
     public static final int CMD_ALT_RGI        = 0x0116;   /* [u8 0=off 1=on] confirmed RGI presentation */
     public static final int CMD_TEL            = 0x0117;   /* [u8 action][u8 on]: 1 mute, 2 hold, 3 accept, 4 end, 5 swap; 6 [u8 service][AddressBookID] dial a favorite */
     public static final int CMD_VEHICLE        = 0x0118;   /* LE [u8 ver=1][u8 valid][u16 speed cm/s][u8 gear][u16 range km][i16 temp 0.1C][u8 warn][u32 ms] */
+    public static final int CMD_ALT_GUIDANCE_CHROME = 0x0119; /* [u8 0=off, 1=on, 2=toggle; session ETA override] */
 
     public interface Listener {
         void onFrame(int type, int flags, byte[] payload, int len);

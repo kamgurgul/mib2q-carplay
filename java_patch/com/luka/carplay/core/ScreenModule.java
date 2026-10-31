@@ -135,7 +135,9 @@ public final class ScreenModule implements Module {
 
     private static final CarplayBus.Listener HELLO_LISTENER = new CarplayBus.Listener() {
         public void onFrame(int type, int flags, byte[] payload, int len) {
-            synchronized (LOCK) { sendRgiStateLocked(); }
+            synchronized (LOCK) {
+                sendRgiStateLocked();
+            }
         }
     };
 
@@ -173,6 +175,25 @@ public final class ScreenModule implements Module {
         Log.i(TAG, "MFW long press: cluster -> " + (stock ? "stock map" : "phone map"));
         republish();
         com.luka.carplay.cluster.ClusterLayerController.reapply();
+    }
+
+    /** Double-click of the left roller: toggle only the phone-rendered ETA. */
+    public static void onSteeringWheelDoubleClick() {
+        synchronized (LOCK) {
+            if (!platformSupported || !connected || !altScreenActive) {
+                Log.i(TAG, "MFW double click ignored: connected=" + connected
+                    + " video=" + altScreenActive);
+                return;
+            }
+        }
+        boolean sent = CarplayBus.getInstance().sendBinary(
+            CarplayBus.CMD_ALT_GUIDANCE_CHROME,
+            new byte[] { (byte)2 }); /* toggle ETA relative to GEM configuration/current override */
+        if (!sent) {
+            Log.w(TAG, "MFW double click failed: CarplayBus unavailable");
+            return;
+        }
+        Log.i(TAG, "MFW double click: phone ETA toggle queued");
     }
 
     /** Fed by ScreenCombiBAPListener.updateMapVisibility() with the accepted stock value. */

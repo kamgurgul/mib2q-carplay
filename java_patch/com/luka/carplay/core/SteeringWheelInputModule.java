@@ -42,6 +42,7 @@ public final class SteeringWheelInputModule implements Module {
     private static final int KST_LONGPRESSED = 3;
     private static final int ATTR_VALID = 1;
     private static final long COLLAPSED_SELECT_WINDOW_MS = 600L;
+    private static final long DOUBLE_CLICK_WINDOW_MS = 350L;
 
     private static final Object SELECT_LOCK = new Object();
     private static long pendingPressUntil;
@@ -62,6 +63,9 @@ public final class SteeringWheelInputModule implements Module {
     private final Object pressLock = new Object();
     private boolean pressMapTab;
     private boolean pressLong;
+    private final RollerClickDetector clickDetector =
+        new RollerClickDetector(DOUBLE_CLICK_WINDOW_MS);
+    private Thread clickWorker;
 
     public String name() { return "mfw-input"; }
 
@@ -111,6 +115,15 @@ public final class SteeringWheelInputModule implements Module {
             listenerRegistration = registration;
             running = true;
             clearPendingSelects();
+            synchronized (pressLock) {
+                clickDetector.cancel();
+                Thread w = new Thread(new Runnable() {
+                    public void run() { clickLoop(); }
+                }, "carplay-mfw-click");
+                w.setDaemon(true);
+                w.start();
+                clickWorker = w;
+            }
             Log.i(TAG, "raw MFW OK listener ready (key=40 mapContext="
                 + (manager == null ? "unavailable, using CarPlay RGI state" : "20") + ")");
             return true;
@@ -137,7 +150,11 @@ public final class SteeringWheelInputModule implements Module {
         synchronized (pressLock) {
             pressMapTab = false;
             pressLong = false;
+            clickDetector.cancel();
+            pressLock.notifyAll();
         }
+        Thread oldClickWorker = clickWorker;
+        clickWorker = null;
         keyPanel = null;
         combiManager = null;
         listenerRegistration = null;
@@ -155,6 +172,34 @@ public final class SteeringWheelInputModule implements Module {
         }
         if (handle != null) handle.release();
         if (combiHandle != null) combiHandle.release();
+        if (oldClickWorker != null) {
+            oldClickWorker.interrupt();
+            try { oldClickWorker.join(500L); }
+            catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        }
+    }
+
+    /** Delay only the ordinary short-click action long enough to distinguish a double click. */
+    private void clickLoop() {
+        while (running) {
+            int action = RollerClickDetector.NONE;
+            synchronized (pressLock) {
+                action = clickDetector.poll(System.currentTimeMillis());
+                if (action == RollerClickDetector.NONE && running) {
+                    long wait = clickDetector.waitMillis(System.currentTimeMillis());
+                    try {
+                        if (wait > 0L) pressLock.wait(wait);
+                        else pressLock.wait();
+                    } catch (InterruptedException e) {
+                        /* stop() changes running and wakes/interrupts this worker. */
+                    }
+                    continue;
+                }
+            }
+            if (action == RollerClickDetector.SINGLE && running) {
+                ScreenModule.onSteeringWheelOkPressed();
+            }
+        }
     }
 
     /** Consume only the TerminalMode DDS_SELECT that originated as raw MFW key 40.
@@ -238,7 +283,11 @@ public final class SteeringWheelInputModule implements Module {
                 boolean fire;
                 synchronized (pressLock) {
                     fire = pressMapTab && !pressLong;
-                    if (fire) pressLong = true;
+                    if (fire) {
+                        pressLong = true;
+                        clickDetector.onLongPress();
+                        pressLock.notifyAll();
+                    }
                 }
                 if (!fire) return;
                 Log.i(TAG, "MFW OK long press board=" + keyboardId);
@@ -255,6 +304,10 @@ public final class SteeringWheelInputModule implements Module {
                 synchronized (pressLock) {
                     pressMapTab = mapTab;
                     pressLong = false;
+                    if (mapTab) {
+                        clickDetector.onPressed(System.currentTimeMillis());
+                        pressLock.notifyAll();
+                    }
                 }
                 return;
             }
@@ -267,7 +320,16 @@ public final class SteeringWheelInputModule implements Module {
                 pressMapTab = false;
                 pressLong = false;
             }
-            if (shortPress) ScreenModule.onSteeringWheelOkPressed();
+            int action = RollerClickDetector.NONE;
+            if (shortPress) {
+                synchronized (pressLock) {
+                    action = clickDetector.onReleased(System.currentTimeMillis(), true);
+                    pressLock.notifyAll();
+                }
+            }
+            if (action == RollerClickDetector.DOUBLE) {
+                ScreenModule.onSteeringWheelDoubleClick();
+            }
         }
 
         public void asyncException(int errorCode, String errorString, int requestType) { }

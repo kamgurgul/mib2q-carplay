@@ -24,10 +24,12 @@ DEFINE_LOG_MODULE(ALTZOOM);
 typedef int (*altscreen_map_zoom_fn)(int mapscale_steps);
 typedef int (*altscreen_view_area_fn)(int view);
 typedef int (*altscreen_set_rgi_fn)(int on);
+typedef int (*altscreen_set_guidance_chrome_fn)(int on);
 
 static altscreen_map_zoom_fn g_map_zoom;
 static altscreen_view_area_fn g_view_area;
 static altscreen_set_rgi_fn g_set_rgi;
+static altscreen_set_guidance_chrome_fn g_set_guidance_chrome;
 static int g_resolved;
 static int g_missing_logged;
 
@@ -37,6 +39,8 @@ static void resolve(void) {
     g_map_zoom = (altscreen_map_zoom_fn)dlsym(RTLD_DEFAULT, "altscreen111_map_zoom");
     g_view_area = (altscreen_view_area_fn)dlsym(RTLD_DEFAULT, "altscreen111_view_area");
     g_set_rgi = (altscreen_set_rgi_fn)dlsym(RTLD_DEFAULT, "altscreen111_set_rgi");
+    g_set_guidance_chrome = (altscreen_set_guidance_chrome_fn)dlsym(
+        RTLD_DEFAULT, "altscreen111_set_guidance_chrome");
     g_resolved = 1;
 }
 
@@ -91,16 +95,29 @@ static void on_alt_rgi(uint16_t type, uint8_t flags, const uint8_t* payload,
     LOG_INFO(LOG_MODULE, "CMD_ALT_RGI %u rc=%d", payload[0], g_set_rgi(payload[0] ? 1 : 0));
 }
 
+static void on_alt_guidance_chrome(uint16_t type, uint8_t flags, const uint8_t* payload,
+                                   uint32_t len, void* ctx) {
+    (void)type; (void)flags; (void)ctx;
+    if (!payload || len < 1) return;
+    resolve();
+    if (!g_set_guidance_chrome) return;
+    if (payload[0] > 2) return;
+    LOG_INFO(LOG_MODULE, "CMD_ALT_GUIDANCE_CHROME %u rc=%d", payload[0],
+             g_set_guidance_chrome((int)payload[0]));
+}
+
 static void altzoom_init(void) {
     bus_on(CMD_ALT_ZOOM, on_alt_zoom, NULL);
     bus_on(CMD_ALT_ZONE, on_alt_zone, NULL);
     bus_on(CMD_ALT_RGI, on_alt_rgi, NULL);
+    bus_on(CMD_ALT_GUIDANCE_CHROME, on_alt_guidance_chrome, NULL);
 }
 
 static void altzoom_shutdown(void) {
     bus_off(CMD_ALT_ZOOM);
     bus_off(CMD_ALT_ZONE);
     bus_off(CMD_ALT_RGI);
+    bus_off(CMD_ALT_GUIDANCE_CHROME);
 }
 
 const hook_module_def_t altzoom_module_def = {
