@@ -113,6 +113,23 @@ Changes since [1.3.1](CHANGELOG-1.3.1.md).
   disconnect or a session end. `ALTR_LIVE_TIMEOUT_MS=500` restores the old behaviour. *Car test
   pending.*
 
+- **Black main screen, then a reboot of the whole unit, after switching screens while driving
+  (car logs 2026-10-30, saves 009-011).** Stock's main-screen decoder and the cluster map's
+  hardware decoder share one video core. In save 011 the reverse camera and CarPlay / Audi
+  screen switches started and stopped stock's decoder four times in 80 s, with the cluster
+  decoder running all along. The next start of stock's decoder timed out in the video core
+  (`VCD_HWTimeoutHandler`, `MMKIVdecDriver_Start TimeOut!!!`). The main screen stayed black, the
+  log save hung, and the issue #14 freeze led to a watchdog reboot (save 009: no process core,
+  only a new boot). The CarPlay hook now tells the renderer before stock sets up or tears down
+  the main screen and waits up to 1.5 s for it to free the video core. The renderer suspends
+  only its decoder: the cockpit keeps the last map picture (no blink, no Audi map) until the
+  main screen has been quiet for 3 s (`ALTR_HW_YIELD_HOLD_S`), then it reconnects for a key frame
+  and the map moves again. The two decoders no longer change state at the same moment.
+  `altscreen111.log`: `hw yield (teardown110): renderer released the decoder in N ms`;
+  `altscreen_render.log`: `main screen video changing; carplay hardware decoder suspended, last
+  picture kept`, `main screen quiet; reconnecting carplay for a key frame`, `hardware decoder resumed`.
+  *Car test pending.*
+
 ## Known issues
 
 - **HW301: the start of Siri's answer can be cut.** In the 2026-10-27 test the car took 1.6 to

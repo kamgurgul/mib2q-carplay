@@ -612,6 +612,71 @@ static uint64_t monotonic_ms(void)
     return (uint64_t)ts.tv_sec * 1000u + (uint64_t)(ts.tv_nsec / 1000000L);
 }
 
+/*
+ * Main-screen video yield (car logs 2026-10-30, save 011).  Stock's 110 decoder
+ * and altscreen_render's stream-111 decoder share the one Venus video core.
+ * Starting or stopping stock's decoder while ours is open hung that core
+ * (VCD_HWTimeoutHandler, MMKIVdecDriver_Start TimeOut: black main screen, then
+ * the issue #14 watchdog reboot) after a reverse-camera / CarPlay switch burst.
+ *
+ * Before stock sets up or tears down stream 110 we stamp the yield file with
+ * the uptime; the renderer then closes its hardware decoder and decodes in
+ * software until the main screen has been quiet for a while.  We wait (bounded)
+ * until it has let go, so the two decoders never change state together.  The
+ * renderer creates the active file BEFORE it checks the yield file and we write
+ * the yield file BEFORE we check the active file: one of the two always sees
+ * the other.
+ */
+#define ALTR_HW_YIELD_PATH   "/tmp/altscreen_render.hw_yield"
+#define ALTR_HW_ACTIVE_PATH  "/tmp/altscreen_render.hw_active"
+#define ALTR_HW_YIELD_WAIT_MS 1500u
+
+/* pid in the renderer's active file, 0 when there is none (or it is unreadable). */
+static int renderer_hw_active_pid(void)
+{
+    char b[32];
+    int fd, pid = 0;
+    ssize_t n;
+    fd = open(ALTR_HW_ACTIVE_PATH, O_RDONLY);
+    if (fd < 0) return 0;
+    n = read(fd, b, sizeof(b) - 1u);
+    close(fd);
+    if (n <= 0) return -1;              /* being written: treat as active */
+    b[n] = 0;
+    if (sscanf(b, "pid=%d", &pid) != 1 || pid <= 0) return -1;
+    if (kill((pid_t)pid, 0) != 0 && errno == ESRCH) return 0;   /* stale: renderer gone */
+    return pid;
+}
+
+static void renderer_hw_yield(const char *why)
+{
+    char b[32];
+    int fd, n, pid;
+    uint64_t t0 = monotonic_ms();
+
+    n = snprintf(b, sizeof(b), "%llu\n", (unsigned long long)t0);
+    fd = open(ALTR_HW_YIELD_PATH, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd >= 0) {
+        if (n > 0) (void)write(fd, b, (size_t)n);
+        close(fd);
+    }
+    pid = renderer_hw_active_pid();
+    if (!pid) {
+        logf_u2("hw yield (%s): renderer has no hardware decoder", why);
+        return;
+    }
+    while (pid && monotonic_ms() - t0 < ALTR_HW_YIELD_WAIT_MS) {
+        usleep(20000);
+        pid = renderer_hw_active_pid();
+    }
+    if (pid)
+        logf_u2("hw yield (%s): renderer pid=%d still holds the decoder after %u ms; continuing",
+                why, pid, ALTR_HW_YIELD_WAIT_MS);
+    else
+        logf_u2("hw yield (%s): renderer released the decoder in %llu ms", why,
+                (unsigned long long)(monotonic_ms() - t0));
+}
+
 static unsigned gen2_d2_enabled(void)
 {
     return (access(g2_d2_enable_marker,F_OK)==0 ||
@@ -4200,6 +4265,8 @@ static OSStatus mibr_session_setup(AirPlayReceiverSessionRef s, CFDictionaryRef 
     gen2_runtime_ready();
     log_stream_types("SETUP entry",request);
     note_sender(request);
+    if(g_enabled && request && contains_stream_type(request,110))
+        renderer_hw_yield("setup110");
 
     /*
      * Recovered IRC ordering: pass the original request to stock first.
@@ -4359,6 +4426,8 @@ static void mibr_session_teardown(AirPlayReceiverSessionRef s, CFDictionaryRef r
 
     logf_u2("GEN2 TEARDOWN entry request=%s reason=%d alt=%d main110=%d otherStreams=%d private111_decoupled=1",
             request?"dict":"NULL",(int)reason,has_alt,has_main,other);
+    if(has_main || full_session)
+        renderer_hw_yield(full_session ? "session-teardown" : "teardown110");
 
     if(has_alt){
         logf_u2("GEN2 TEARDOWN explicit stream111 otherStreams=%d main110=%d",other,has_main);

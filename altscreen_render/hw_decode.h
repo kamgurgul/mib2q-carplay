@@ -40,6 +40,18 @@ uint64_t altr_hwdec_frames(altr_hwdec_t *d);
 /* 1 once the component reported an error or an unsupported port change. */
 int altr_hwdec_failed(altr_hwdec_t *d);
 
+/* Close only the decoder (the video core is free for stock's main-screen
+ * decoder); window 99 keeps the last picture. 0 = done, -1 = stuck as in
+ * altr_hwdec_destroy. Feeding a suspended decoder fails. */
+int altr_hwdec_suspend(altr_hwdec_t *d);
+
+/* Reopen a suspended decoder on the same window; the next input must start with
+ * SPS/PPS + IDR. 0 = running, -1 = failed (*stuck as in altr_hwdec_create;
+ * without stuck the caller destroys d). */
+int altr_hwdec_resume(altr_hwdec_t *d, int *stuck);
+
+int altr_hwdec_suspended(altr_hwdec_t *d);
+
 /* 0 = released. -1 = the decoder never left Executing or the video hardware
  * stopped answering; its buffers were left allocated on purpose and the caller
  * must restart the process. */

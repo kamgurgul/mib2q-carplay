@@ -49,6 +49,10 @@
  *                   software decode until then, then one reconnect to hardware.
  *                   Android Auto always; CarPlay only with the marker
  *                   /mnt/app/root/altscreen_render.hwdecode.delayed (GEM toggle)
+ *   ALTR_HW_YIELD_HOLD_S (default 3, min 1) — after the CarPlay hook announces a
+ *                   main-screen video setup/teardown (/tmp/altscreen_render.hw_yield)
+ *                   the hardware decoder is suspended (last picture kept on the
+ *                   cockpit) and reopened this long after the last one
  *
  * Copyright (c) 2026
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -206,6 +210,7 @@ struct app {
     uint64_t hw_frames_seen;
     int hw_tried;             /* hardware attempted on this tee connection */
     int hw_deferred;          /* software decode for now: boot settle time or start cooldown */
+    int hw_waiting;           /* main-screen yield: no decoding; hw (if any) suspended, last picture kept */
     uint64_t hw_min_uptime_ms;    /* configured boot settle time (ALTR_HW_MIN_UPTIME_S) */
     uint64_t hw_upgrade_at_ms;    /* deferred: reconnect to hardware at this uptime */
     uint64_t live_hold_until_ms;  /* planned switch to hardware: keep .live fresh until the first picture */
@@ -407,6 +412,75 @@ static void hw_switch_off(const struct source *s)
                  s->hw_off_marker, errno);
 }
 
+/* Main-screen video yield (car logs 2026-10-30, save 011). Stock's main-screen
+ * decoder and ours share the one Venus video core; stock starting it right after
+ * a reverse-camera / CarPlay switch burst, with ours open, hung the core
+ * (VCD_HWTimeoutHandler, MMKIVdecDriver_Start TimeOut): black main screen, then
+ * the issue #14 freeze and watchdog reboot. The CarPlay hook in dio_manager
+ * stamps ALTR_HW_YIELD_FILE with the uptime before stock sets up or tears down
+ * the main screen stream and waits (bounded) while ALTR_HW_ACTIVE_FILE names a
+ * live renderer. We suspend the hardware decoder at once (window 99 keeps the
+ * last picture, so nothing blinks), drop the stream until the main screen has
+ * been quiet for ALTR_HW_YIELD_HOLD_S (stock's decoder is up ~0.5 s after its
+ * SETUP), then reconnect for a key frame and resume. Order: we write the active file before reading the yield file, the
+ * hook writes the yield file before reading the active file. */
+#define ALTR_HW_YIELD_FILE    "/tmp/altscreen_render.hw_yield"
+#define ALTR_HW_ACTIVE_FILE   "/tmp/altscreen_render.hw_active"
+#define ALTR_HW_YIELD_POLL_MS 40u
+
+static uint64_t g_hw_yield_hold_ms = 3000u;
+
+/* Uptime until which hardware decode stays off, 0 = no hold. Both sides use
+ * CLOCK_MONOTONIC (uptime). The file is read at most every 40 ms unless forced. */
+static uint64_t hw_yield_until(int force)
+{
+    static uint64_t checked_ms, until;
+    uint64_t now = now_ms();
+    if (force || !checked_ms || now - checked_ms >= ALTR_HW_YIELD_POLL_MS) {
+        char b[32];
+        unsigned long long t = 0;
+        ssize_t n;
+        int fd = open(ALTR_HW_YIELD_FILE, O_RDONLY);
+        checked_ms = now;
+        until = 0;
+        if (fd >= 0) {
+            n = read(fd, b, sizeof(b) - 1);
+            close(fd);
+            if (n > 0) {
+                b[n] = 0;
+                if (sscanf(b, "%llu", &t) == 1 && t) until = (uint64_t)t + g_hw_yield_hold_ms;
+            }
+        }
+    }
+    return until > now ? until : 0;
+}
+
+static void hw_active_mark(int on)
+{
+    if (on) {
+        char b[32];
+        int n = snprintf(b, sizeof(b), "pid=%d\n", (int)getpid());
+        int fd = open(ALTR_HW_ACTIVE_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd >= 0) {
+            if (n > 0) (void)!write(fd, b, (size_t)n);
+            close(fd);
+        }
+    } else {
+        unlink(ALTR_HW_ACTIVE_FILE);
+    }
+}
+
+/* Claim the video core before a hardware start: 0 = go ahead (active file
+ * written), 1 = a main-screen change keeps hardware off until *until. */
+static int hw_yield_claim(uint64_t *until)
+{
+    hw_active_mark(1);
+    *until = hw_yield_until(1);
+    if (!*until) return 0;
+    hw_active_mark(0);
+    return 1;
+}
+
 /* Bounded hardware-decoder starts across renderer restarts (idea from
  * luka-dev/mib2q-carplay-rgi, sink_omx_qnx.c).  Failures this process sees
  * already switch hardware decode off (hw_give_up, the watchdog); what they miss
@@ -589,7 +663,27 @@ static void hw_close(struct app *a)
         _exit(3);
     }
     hw_starts_clear(a->src);    /* started and stopped cleanly: not a failing start */
+    hw_active_mark(0);          /* the video core is free for stock's decoder */
     a->hw = NULL;
+}
+
+/* Main-screen yield: close only the decoder, window 99 keeps the last picture.
+ * Stuck is handled as in hw_close. */
+static void hw_suspend(struct app *a)
+{
+    int rc;
+    if (!a->hw) return;
+    wd_arm(a->src, "suspend", ALTR_WD_DESTROY_MS, 0);
+    rc = altr_hwdec_suspend(a->hw);
+    wd_disarm();
+    if (rc != 0) {
+        hw_switch_off(a->src);
+        set_live(0);
+        fprintf(stderr, "altscreen_render: stuck hardware decoder; HW decoder switched OFF, "
+                "exiting for a clean restart\n");
+        _exit(3);
+    }
+    hw_active_mark(0);          /* the video core is free for stock's decoder */
 }
 
 static void hw_give_up(struct app *a, const char *why)
@@ -702,7 +796,10 @@ int main(void)
     {
         int s = env_i("ALTR_HW_MIN_UPTIME_S", 120);
         a.hw_min_uptime_ms = s > 0 ? (uint64_t)s * 1000u : 0;   /* CLOCK_MONOTONIC = uptime on QNX */
+        s = env_i("ALTR_HW_YIELD_HOLD_S", 3);
+        g_hw_yield_hold_ms = (uint64_t)(s > 0 ? s : 1) * 1000u;   /* the hook waits for our release */
     }
+    hw_active_mark(0);          /* a predecessor's marker; it no longer holds a decoder */
     {
         int any_hw = 0;
         for (k = 0; k < nsrc; k++) any_hw |= hw_wanted(&src[k]);
@@ -736,6 +833,7 @@ int main(void)
         const struct source *s = NULL;
         int fd = -1;
         int upgrade = 0;            /* planned reconnect from software to hardware decode */
+        int dropped = 0;            /* waiting: stream discarded or decoder state lost, resume needs a reconnect */
         omx_probe_poll(a.surface_w, a.surface_h);
         /* Only one phone session exists at a time, so at most one tee listens. */
         for (k = 0; k < nsrc && fd < 0; k++) {
@@ -743,6 +841,10 @@ int main(void)
             fd = tee_connect(host, s->port);
         }
         if (fd < 0) {
+#ifdef PLATFORM_QNX
+            hw_close(&a);               /* a suspended decoder: the session is gone */
+            a.hw_waiting = 0;
+#endif
             set_live(0);
             g_source_name = "none";
             write_status("waiting_tee", a.last_w, a.last_h, a.frames);
@@ -762,6 +864,28 @@ int main(void)
             if (g_stop) { close(fd); goto done; }
             omx_probe_poll(a.surface_w, a.surface_h);
 #ifdef PLATFORM_QNX
+            if (a.hw && !a.hw_waiting && hw_yield_until(0)) {
+                /* Stock is about to start or stop its main-screen decoder (the
+                 * hook waits for us): free the video core now. The cockpit keeps
+                 * the last picture until the main screen is quiet. */
+                fprintf(stderr, "altscreen_render: main screen video changing; %s hardware decoder "
+                        "suspended, last picture kept\n", s->name);
+                hw_suspend(&a);
+                a.hw_waiting = 1;
+                dropped = 1;                        /* mid-stream: resume only after a reconnect */
+            }
+            if (a.hw_waiting) {
+                if (a.hw) set_live(1);              /* the frozen picture stays on the cockpit */
+                if (dropped && !hw_yield_until(0)) {
+                    /* The decoder needs SPS/PPS + IDR again: the tee replays from
+                     * the last key frame on a new connection. */
+                    fprintf(stderr, "altscreen_render: main screen quiet; reconnecting %s for a "
+                            "key frame\n", s->name);
+                    upgrade = 1;
+                    a.live_hold_until_ms = now_ms() + ALTR_UPGRADE_LIVE_HOLD_MS;
+                    break;
+                }
+            }
             if (a.hw_deferred && now_ms() >= a.hw_upgrade_at_ms) {
                 /* The tee replays from the last keyframe, so the reconnect costs
                  * one picture; .live is kept so the cockpit does not switch away. */
@@ -775,11 +899,43 @@ int main(void)
             fd_set rd; struct timeval tv;
             FD_ZERO(&rd); FD_SET(fd, &rd);
             tv.tv_sec = 0; tv.tv_usec = 200000;
+#ifdef PLATFORM_QNX
+            if (a.hw && !a.hw_waiting) tv.tv_usec = 40000;   /* see a yield quickly: the hook is waiting */
+#endif
             int r = select(fd + 1, &rd, NULL, NULL, &tv);
             if (r > 0 && FD_ISSET(fd, &rd)) {
                 ssize_t n = recv(fd, buf, sizeof(buf), 0);
                 if (n <= 0) break;
 #ifdef PLATFORM_QNX
+                if (a.hw_waiting) {
+                    uint64_t until;
+                    /* Once anything was dropped only a reconnect brings a key frame. */
+                    if (dropped || hw_yield_until(0)) { dropped = 1; continue; }
+                    if (hw_yield_claim(&until) != 0) { dropped = 1; continue; }
+                    a.hw_waiting = 0;
+                    if (a.hw) {
+                        int stuck = 0;
+                        if (a.live_hold_until_ms && now_ms() < a.live_hold_until_ms) set_live(1);
+                        wd_arm(s, "resume", ALTR_WD_CREATE_MS, a.live_hold_until_ms);
+                        if (altr_hwdec_resume(a.hw, &stuck) != 0) {
+                            wd_disarm();
+                            if (stuck) {
+                                hw_switch_off(s);
+                                set_live(0);
+                                fprintf(stderr, "altscreen_render: video hardware not answering; "
+                                        "HW decoder switched OFF, exiting for a clean restart\n");
+                                _exit(3);
+                            }
+                            hw_give_up(&a, "resume failed");
+                            ensure_gl(&a);
+                            break;
+                        }
+                        wd_disarm();
+                        fprintf(stderr, "altscreen_render: %s hardware decoder resumed\n", s->name);
+                    } else {
+                        hw_active_mark(0);           /* the gate below claims it again */
+                    }
+                }
                 if (!a.hw && !a.hw_tried && !a.hw_deferred && hw_wanted(s)) {
                     int hw_gate;
                     uint64_t hw_defer_until = 0;
@@ -798,7 +954,17 @@ int main(void)
                                 (unsigned long long)(a.hw_min_uptime_ms / 1000u), s->name);
                         a.hw_upgrade_at_ms = a.hw_min_uptime_ms;
                         a.hw_deferred = 1;
+                    } else if (hw_yield_claim(&hw_defer_until) != 0) {
+                        /* The main screen video changed moments ago: wait for the video
+                         * core instead of a software start and a later swap. */
+                        fprintf(stderr, "altscreen_render: main screen video changed; %s waits %llu ms "
+                                "for the video core\n", s->name,
+                                (unsigned long long)(hw_defer_until - now_ms()));
+                        a.hw_waiting = 1;
+                        dropped = 1;
+                        continue;
                     } else if ((hw_gate = hw_starts_begin(s, now_ms(), &hw_defer_until)) != 0) {
+                        hw_active_mark(0);
                         if (hw_gate > 0) {
                             /* Same path as the boot settle time: software now, one
                              * reconnect to hardware when the cooldown is over. */
@@ -818,6 +984,7 @@ int main(void)
                         a.hw_frames_seen = 0;
                         if (!a.hw) {
                             hw_give_up(&a, "setup failed");
+                            if (!stuck) hw_active_mark(0);   /* stuck: exiting, the hook sees the pid gone */
                             if (stuck) {
                                 set_live(0);
                                 fprintf(stderr, "altscreen_render: video hardware not answering; "
@@ -879,7 +1046,16 @@ int main(void)
 
         close(fd);
 #ifdef PLATFORM_QNX
-        hw_close(&a);
+        if (a.hw && a.hw_waiting) {
+            /* Suspended for the main screen: keep window 99 and its last picture
+             * across the reconnect (the hook also resets us when iOS re-sends the
+             * cluster config right after a main-screen change). */
+            upgrade = 1;
+            a.live_hold_until_ms = now_ms() + ALTR_UPGRADE_LIVE_HOLD_MS;
+        } else {
+            hw_close(&a);
+            a.hw_waiting = 0;
+        }
         a.hw_tried = 0;
         a.hw_deferred = 0;
         if (!upgrade) a.live_hold_until_ms = 0;

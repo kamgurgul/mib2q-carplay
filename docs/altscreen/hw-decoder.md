@@ -94,6 +94,26 @@ Hung video hardware (issue #14):
   The renderer switches hardware decode OFF and exits; the restarted renderer uses software.
 - **Watchdog.** Setup (10 s), teardown (8 s) and each feed (4 s) have a deadline. An OMX call
   that is still blocked after it switches hardware decode OFF and exits the process.
+- **Main-screen yield (car logs 2026-10-30, save 011).** With the cluster decoder running, a
+  reverse-camera / CarPlay / Audi screen burst started and stopped stock's 1024x480 decoder four
+  times in 80 s. The fifth start hit `VCD_HWTimeoutHandler` -> `MMKIVdecDriver_Start TimeOut` ->
+  `OMX_EventError` in dio_manager. Result: a black main screen, a log save that hung in `mount`,
+  and (save 009) the #14 watchdog reboot with no process core. So the two decoders must not change
+  state at the same time. Before stock's 110 SETUP or teardown (also a whole-session teardown), the
+  CarPlay hook writes the uptime (ms) into `/tmp/altscreen_render.hw_yield` and waits up to 1.5 s
+  while `/tmp/altscreen_render.hw_active` names a live renderer. The renderer polls the yield
+  file every 40 ms while it decodes in hardware. It then **suspends** the decoder
+  (`altr_hwdec_suspend`: OMX component, hidden decode window and parser closed, window 99 with
+  the last picture kept) and keeps `.live` fresh. It discards the stream until
+  `ALTR_HW_YIELD_HOLD_S` (default 3 s) after the last yield, because stock's decoder is
+  Executing about 0.5 s after its SETUP. It then reconnects the tee for a key frame and resumes
+  (`altr_hwdec_resume`). The cockpit shows a frozen map rather than the Audi map, and there is
+  no software round trip or window swap. A reconnect while waiting keeps the suspended decoder,
+  so iOS's cluster re-config about 2.5 s after the main screen returns (save 010: consumer reset
+  at 125.7 s after the 110 SETUP at 123.3 s) does not blink either. A new connection that meets a
+  yield waits the same way before its first decoder. Ordering: the renderer writes the active
+  file before it reads the yield file, and the hook does the reverse, so a hardware start cannot
+  slip past a yield.
 - **Bounded starts (cooldown).** The checks above only catch failures the renderer lives to see.
   A renderer that crashes inside the decoder start, or before the first picture, would be
   restarted by `carplay_monitor.sh` and try hardware again, and each failed `OMX_GetHandle` can
