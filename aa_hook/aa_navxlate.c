@@ -11,17 +11,18 @@
  *
  * Schemas: aa-proxy-rs src/protos/protos.proto. Maneuver mapping: headunit-revived
  * AapNavigationHelper.maneuverTypeToLegacyNextEvent. Roundabout side (clockwise = left-hand
- * traffic) is inferred. Cue text, later steps and destinations are dropped (not in the legacy
- * format). Lanes of steps[0] (not in the legacy format either) go to Java beside the message:
+ * traffic) is inferred. Cue text and later steps are dropped (not in the legacy
+ * format). Trip details go to /tmp/aa_trip (aa_trip.c). Lanes of steps[0] go to Java beside the message:
  * /tmp/aa_lanes, a fixed-length text record rewritten in place when it changes (reader:
  * com.luka.carplay.aa.AaLaneFeed).
  *
  * The navigation channel is learned when gal registers its navigation-status endpoint
  * (aa_hook.c, aa_nav_set_channel); 12 is the value verified on MU0918. Message ids 0x8006/0x8007
  * also exist on media channels, so nothing is rewritten on any other channel.
- * Marker aa_cluster.navxlate_off = leave the new messages untouched (and no lanes record).
+ * Marker aa_cluster.navxlate_off = leave the new messages untouched (and no lanes or trip record).
  */
 #include "aa_hook.h"
+#include "aa_trip.h"
 #include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -30,7 +31,7 @@
 
 static volatile unsigned nav_channel = 12u;   /* MU0918; replaced by the learned channel */
 
-void aa_nav_set_channel(unsigned channel) { nav_channel = channel; }
+void aa_nav_set_channel(unsigned channel) { nav_channel = channel; aa_trip_reset(); }
 
 typedef struct { const unsigned char *p, *e; } pb;
 static int pb_varint(pb *b, uint64_t *v)
@@ -271,8 +272,10 @@ void aa_nav_translate(unsigned char ch, const void *shared)
     if (!base || end < off + 2 || end - off > 64u * 1024u) return;
     p = (unsigned char *)(uintptr_t)(base + off); n = end - off;
     id = ((unsigned)p[0] << 8) | p[1];
-    if (id != 0x8006 && id != 0x8007) return;
+    if (id != 0x8003 && id != 0x8006 && id != 0x8007) return;
     if (aa_marker(AA_MARKER_NAVXLATE_OFF)) return;
+    aa_trip_update(id, p + 2, n - 2);
+    if (id == 0x8003) return;                         /* status still reaches stock unchanged */
     if (logged < 6) {                                 /* raw sample to check the parser against real data */
         char hex[3 * 96 + 1]; unsigned i, k = n < 96 ? n : 96;
         for (i = 0; i < k; i++) { static const char d[] = "0123456789abcdef"; hex[3*i] = d[p[i] >> 4]; hex[3*i+1] = d[p[i] & 15]; hex[3*i+2] = ' '; }

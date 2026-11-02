@@ -356,7 +356,8 @@ static size_t msg(uint8_t *m,unsigned id,const uint8_t *params,size_t n){
 }
 static size_t param(uint8_t *p,unsigned id,const uint16_t *v,size_t count){
     size_t i;put_be16(p,(unsigned)(4+2*count));put_be16(p+2,id);
-    for(i=0;i<count;++i)put_be16(p+4+2*i,v[i]);return 4+2*count;
+    for(i=0;i<count;++i)put_be16(p+4+2*i,v[i]);
+    return 4+2*count;
 }
 static const uint16_t car_comp_body[]={6,0,0x0010,6,2,128}; /* {id 0x10}, {max road name 128} */
 static size_t car_comp(uint8_t *p){return param(p,ID_RGD_COMPONENT,car_comp_body,6);}

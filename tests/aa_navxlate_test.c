@@ -9,6 +9,7 @@
 #include <stdio.h>
 void aa_log(const char *fmt, ...) { (void)fmt; }
 int aa_marker(const char *path) { (void)path; return 0; }
+void aa_trip_reset(void) { }
 
 typedef struct { unsigned char b[512]; unsigned n; } buf;
 static void v(buf *o, uint64_t x) { o->n += put_varint(o->b + o->n, x); }

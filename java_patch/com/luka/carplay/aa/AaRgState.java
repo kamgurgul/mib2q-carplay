@@ -29,8 +29,10 @@
  *    grey from its angles) and status 0.  No lanes / no route: showing 0 + the C hook's lg0 clear.
  *    Lanes live only while a route is active and survive maneuver changes (independent event,
  *    like iOS); the route end clears them.
- *  - not sent (the Android Auto DSI has no such data): current_road, destination,
- *    eta_seconds, time_remaining_seconds, dist_dest_m.
+ *  - final destination, distance and travel time come from AaTripFeed, not the legacy DSI.
+ *    ETA uses the HU navigation clock plus the sampled remaining duration. Snapshot replay
+ *    never re-anchors it. Missing/expired fields and route/session ends explicitly clear it.
+ *  - current_road is not sent (the Android Auto DSI has no such data).
  *
  * Android Auto quirks handled (drive log 21_19700101_002420):
  *  - Google Maps sends "depart, 0 m" at connect / free drive with no route: ignored.
@@ -69,6 +71,11 @@ public final class AaRgState {
     /* lanes of the current step ("" = none) and the lane event id */
     private AaLaneFeed.Lanes lanes = AaLaneFeed.NONE;
     private int laneEvent;
+    private AaTripFeed.Trip trip;
+    private long tripAfterMs;
+    private String destination = "";
+    private int tripMeters = -1, tripSeconds = -1;
+    private long tripEta = -1, tripPositionMs;
     /* counters for the log / tests */
     private int nStarts, nEnds, nManeuvers;
     private String lastAction = "";
@@ -95,6 +102,47 @@ public final class AaRgState {
         lanes = n;
         if (n.count > 0) laneEvent++;
         return true;
+    }
+
+    /** Called by the metadata worker. A bad/torn read keeps the last sample until it expires.
+     * systemMs matches the hook's sample clock; utcMs is the HU's navigation clock, which
+     * can be years ahead of QNX CLOCK_REALTIME. Trip data alone never starts guidance. */
+    public synchronized boolean onTrip(AaTripFeed.Trip sample, long systemMs, long utcMs) {
+        if (!routeActive) return false;
+        if (sample != null) trip = sample;
+        String name = "";
+        int meters = -1, seconds = -1;
+        long eta = -1, position = 0;
+        if (trip != null) {
+            if (AaTripFeed.fresh(trip.stateMs, systemMs, tripAfterMs)) name = trip.destination;
+            if (AaTripFeed.fresh(trip.positionMs, systemMs, tripAfterMs)) {
+                meters = trip.meters;
+                seconds = trip.seconds;
+                position = trip.positionMs;
+                if (seconds >= 0) {
+                    // Retain the absolute ETA when polling or replaying the same sample.
+                    eta = position == tripPositionMs && seconds == tripSeconds ? tripEta
+                        : (utcMs - (systemMs - position)) / 1000L + seconds;
+                }
+            }
+        }
+        boolean changed = !name.equals(destination) || meters != tripMeters || seconds != tripSeconds || eta != tripEta;
+        destination = name;
+        tripMeters = meters;
+        tripSeconds = seconds;
+        tripEta = eta;
+        tripPositionMs = position;
+        return changed;
+    }
+
+    private void clearTrip() {
+        trip = null;
+        destination = "";
+        tripMeters = tripSeconds = -1;
+        tripEta = -1;
+        tripPositionMs = 0;
+        // Even an unread file from the previous route/session is now too old.
+        tripAfterMs = System.currentTimeMillis();
     }
 
     private static String key(int event, int side, int angle, int number, String road) {
@@ -173,6 +221,7 @@ public final class AaRgState {
 
     /** Guidance ended (valid=2, native focus, watchdog, session end). */
     public synchronized boolean endRoute(String why) {
+        clearTrip();
         pending = null;
         pendingRoad = null;
         pendingKey = null;
@@ -272,6 +321,10 @@ public final class AaRgState {
         b.append("@routeguidance\n");
         b.append("source_supports_rg:n:1\n");
         b.append("route_generation:n:").append(routeGeneration).append('\n');
+        b.append("destination:s:").append(clean(destination)).append('\n');
+        b.append("dist_dest_m:n:").append(tripMeters).append('\n');
+        b.append("time_remaining_seconds:n:").append(tripSeconds).append('\n');
+        b.append("eta_seconds:n:").append(tripEta).append('\n');
         if (!routeActive || cur == null) {
             b.append("route_state:n:0\n");
             b.append("visible_in_app:n:0\n");

@@ -15,6 +15,15 @@ has a **profile** for. A profile is the set of symbol offsets of that exact buil
 receiver the hook keeps Android Auto stock and logs an `abi.fingerprint` line. Route guidance in
 the cockpit and HUD does not depend on this; it works on every firmware the jar builds for.
 
+A profile also records two addresses of the `gal` build it was validated with. The hook touches
+no `gal` object, so a known receiver under a different `gal` runs as well, **unpinned**
+(`init enabled profile=<name> gal=unpinned` in the log). A safety marker,
+`/tmp/aa_cluster.unpinned`, exists from start-up until the first cluster frame or a normal
+`gal` exit. If an unpinned `gal` crashes before either, the next start finds the marker and
+keeps Android Auto stock (`init disabled reason=unpinned_failed_before`) until a reboot clears
+`/tmp`. At worst, one session is lost instead of a crash loop. Deleting the marker allows
+another try without a reboot.
+
 | Firmware | Receiver | Profile |
 |---|---|---|
 | `MHI2Q_US_AUG22_P3639` MU0918 | sha256 `6ef4abea…` (gal `6fffb360…`) | built in, validated on the car upstream |
@@ -38,6 +47,8 @@ the cockpit and HUD does not depend on this; it works on every firmware the jar 
 
 - **`Identical to the receiver validated on the car (MU0918)`** or **`this gal is built in
   (profile …)`**: nothing to port. The log already says `init enabled profile=<that name>`.
+- **`The receiver is identical to MU0918 … only gal differs`**: the hook already runs unpinned.
+  Once the cluster map worked on the car, add the printed entry to pin that `gal` build.
 - **Missing symbols**: this receiver cannot run the hook. Use the cluster guidance without the
   map (`aa_cluster.off` keeps the launcher quiet).
 - **A candidate profile entry**: the symbols exist at other offsets. The offsets must equal the

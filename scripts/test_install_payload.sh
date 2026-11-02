@@ -11,7 +11,8 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 fail() { echo "FAIL ($1): $2"; exit 1; }
 
-mode() { stat -f %Lp "$1" 2>/dev/null || stat -c %a "$1"; }
+# GNU first: GNU `stat -f` succeeds too, printing file-system info instead of the mode.
+mode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
 
 stock_si='{
     "usb": {

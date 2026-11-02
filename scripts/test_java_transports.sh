@@ -53,6 +53,16 @@ mkdir -p "$TEST_DIR/aa"
 "$TEST_JDK/bin/java" -cp "$TEST_DIR/aa:$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR" \
     com.luka.carplay.aa.AaRouteStateTest
 
+# Real native rich-navigation parser -> record -> Java -> existing BAP trip outputs.
+cc -std=gnu99 -O1 -Wall -Wextra -Werror -pthread \
+    "$PROJECT_DIR/tests/aa_trip_test.c" -o "$TEST_DIR/aa_trip"
+"$TEST_DIR/aa_trip" "$TEST_DIR/aa_trip.bin"
+"$TEST_JDK/bin/javac" -encoding UTF-8 \
+    -cp "$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR" -d "$TEST_DIR/aa" \
+    "$PROJECT_DIR/tests/AaTripDetailsTest.java"
+"$TEST_JDK/bin/java" -cp "$TEST_DIR/aa:$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR" \
+    com.luka.carplay.aa.AaTripDetailsTest "$TEST_DIR/aa_trip.bin"
+
 # Exercise the actual lifecycle worker against controllable external modules.
 mkdir -p "$TEST_DIR/lifecycle"
 "$TEST_JDK/bin/javac" -encoding UTF-8 -d "$TEST_DIR/lifecycle" \

@@ -22,7 +22,6 @@ on the cluster (CarPlay AltScreen and the Android Auto cluster display).
 - [Logs and diagnostics](#logs-and-diagnostics)
 - [Tests](#tests)
 - [Repository layout](#repository-layout)
-- [TODO](#todo)
 - [Credits](#credits)
 - [License](#license)
 
@@ -60,8 +59,11 @@ CarPlay or Android Auto automatically.
   Classic and Sport cockpit layouts), the same turn arrow, distance, lanes, route text and
   HUD as CarPlay, and Android Auto cover art. Tested on the car; the steering-wheel roller
   does not zoom the Android Auto map (Android Auto has no zoom command for it). The cluster
-  map needs a receiver profile for the unit's `gal` (MU0918, MU1329 and MU1201 are built in). See
+  map needs a known `libautoreceiver.so` (the MU0918 one, shared by MU1329, MU1201 and MU1316);
+  untested `gal` builds run with a crash guard ([firmware-porting](docs/android-auto/firmware-porting.md)). See
   [`docs/android-auto/overview.md`](docs/android-auto/overview.md).
+  The updated hook and Java patch also bridge final destination, remaining trip distance and
+  ETA when the navigation app supplies them (host-tested; car validation pending).
 
 **Compatibility:** Audi MHI2Q units with a fully digital cluster (Virtual Cockpit).
 Developed and tested on an **Audi A5 (F5) with MU1329** (`MHI2Q_ER_AUG22_P5152`) firmware. Other MHI2Q
@@ -313,6 +315,9 @@ bash scripts/test_maneuver_native.sh   # renderer engine (ASan/UBSan)
 ```
 
 The Java suites need `stock/base.jar` and a host JDK 8 in `stock/jdk/` (or set `JDK=`).
+GitHub Actions runs `run_tests.sh` on every push and pull request
+([`.github/workflows/tests.yml`](.github/workflows/tests.yml)); the Java suites stay local
+because the stock HMI jar cannot be published.
 
 ## Repository layout
 

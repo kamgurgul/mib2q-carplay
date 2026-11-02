@@ -1,0 +1,41 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host:
+    # C + shell suites (scripts/run_tests.sh). The Java suites need the proprietary stock
+    # HMI jar (stock/base.jar), which cannot be published, so they stay local.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # clang as cc: Ubuntu's gcc enables _FORTIFY_SOURCE by default, which rejects the hooks'
+      # deliberately ignored write() results; neither the QNX toolchain nor macOS clang does.
+      # ksh/mksh: the installer and startup scripts are also checked under pdksh-like shells
+      # (QNX 6.5 /bin/sh).
+      - name: Install toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang zlib1g-dev ksh mksh
+          mkdir -p "$RUNNER_TEMP/bin"
+          ln -s "$(command -v clang)" "$RUNNER_TEMP/bin/cc"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Host tests
+        env:
+          SKIP_JAR_CHECK: "1"   # no build/carplay_hook.jar without the stock jar
+        run: |
+          cc --version | head -1
+          sh scripts/run_tests.sh

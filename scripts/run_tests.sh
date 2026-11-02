@@ -21,13 +21,13 @@ cc -std=gnu99 -O1 -Wall -Wextra -Werror -Wno-unused-function \
 "$OUT/gl_program_cache"
 
 printf '%-32s ' coverart_safety_test
-cc -std=c99 -O2 -Wall -Wextra -Werror -pedantic -Ihook \
+cc -std=gnu99 -O2 -Wall -Wextra -Werror -pedantic -Ihook \
     tests/coverart_safety_test.c hook/coverart/jpeg_safety.c \
     -o "$OUT/coverart_safety"
 "$OUT/coverart_safety"
 
 printf '%-32s ' coverart_stream_test
-cc -std=c99 -O2 -Wall -Wextra -Werror -Ihook \
+cc -std=gnu99 -O2 -Wall -Wextra -Werror -Ihook \
     tests/coverart_stream_test.c hook/coverart/coverart_stream.c \
     hook/framework/iap2_protocol.c -o "$OUT/coverart_stream"
 "$OUT/coverart_stream"
@@ -44,25 +44,25 @@ printf '%-32s ' rgd_lane_cache_test
 python3 -I tests/test_rgd_lane_cache.py
 
 printf '%-32s ' rgd_tlv_test
-cc -std=c99 -O1 -Wall -Wextra -Werror -Wno-unused-variable -Wno-unused-function \
+cc -std=gnu99 -O1 -Wall -Wextra -Werror -Wno-unused-variable -Wno-unused-function \
     -DENABLE_LOGGING=0 -Ihook tests/rgd_tlv_test.c hook/routeguidance/rgd_tlv.c \
     -o "$OUT/rgd_tlv"
 "$OUT/rgd_tlv"
 
 printf '%-32s ' inject_generation_test
-cc -std=c99 -O1 -Wall -Wextra -Werror -Wno-unused-function \
+cc -std=gnu99 -O1 -Wall -Wextra -Werror -Wno-unused-function \
     -DENABLE_LOGGING=0 -Ihook -Ihook/framework tests/inject_generation_test.c -o "$OUT/inject_generation"
 "$OUT/inject_generation"
 
 printf '%-32s ' state_trace_test
-cc -std=c99 -O2 -Wall -Wextra -Werror -Ihook \
+cc -std=gnu99 -O2 -Wall -Wextra -Werror -Ihook \
     -DENABLE_LOGGING=0 -DENABLE_STATE_TRACE=1 \
     tests/state_trace_test.c hook/framework/state_trace.c \
     hook/framework/iap2_protocol.c -o "$OUT/state_trace"
 "$OUT/state_trace" && echo OK
 
 printf '%-32s ' signal_guard_test
-cc -std=c99 -O2 -Wall -Wextra -Werror -pedantic -Ihook \
+cc -std=gnu99 -O2 -Wall -Wextra -Werror -pedantic -Ihook \
     tests/signal_guard_test.c hook/framework/signal_guard.c \
     -o "$OUT/signal_guard"
 "$OUT/signal_guard"
@@ -75,7 +75,7 @@ cc -std=gnu99 -O2 -Wall -Wextra -Werror \
 "$OUT/bus_transport"
 
 printf '%-32s ' state_trace_logger_test
-cc -std=c99 -O2 -Wall -Wextra -Werror -Ihook \
+cc -std=gnu99 -O2 -Wall -Wextra -Werror -Ihook \
     -DENABLE_LOGGING=0 -DENABLE_STATE_TRACE=1 \
     tests/state_trace_logger_test.c hook/framework/logging.c \
     -lpthread -ldl -o "$OUT/state_trace_logger"
@@ -102,12 +102,12 @@ printf '%-32s ' install_payload_test
 sh scripts/test_install_payload.sh
 
 printf '%-32s ' altscreen_view_test
-cc -std=c99 -O2 -Wall -Wextra -Werror -pedantic -Ialtscreen_render \
+cc -std=gnu99 -O2 -Wall -Wextra -Werror -pedantic -Ialtscreen_render \
     tests/altscreen_view_test.c altscreen_render/view.c -o "$OUT/altscreen_view"
 "$OUT/altscreen_view"
 
 printf '%-32s ' alt111_control_test
-cc -std=c99 -O2 -Wall -Wextra -Werror -pedantic -Ialtscreen_hook/include \
+cc -std=gnu99 -O2 -Wall -Wextra -Werror -pedantic -Ialtscreen_hook/include \
     tests/alt111_control_test.c altscreen_hook/src/alt111_control.c \
     altscreen_hook/src/alt111_profile.c -o "$OUT/alt111_control"
 "$OUT/alt111_control"
@@ -120,12 +120,24 @@ cc -std=gnu99 -O1 -Wall -Wextra -Werror -Wno-unused-function \
     tests/aa_navxlate_test.c -o "$OUT/aa_navxlate"
 "$OUT/aa_navxlate"
 
+printf '%-32s ' aa_trip_test
+cc -std=gnu99 -O1 -Wall -Wextra -Werror -pthread -fsanitize=address,undefined \
+    tests/aa_trip_test.c -o "$OUT/aa_trip"
+"$OUT/aa_trip"
+
 printf '%-32s ' aa_uiconfig_test
-cc -std=gnu99 -O1 -Wall -Wextra -Werror -Wno-unused-function \
+# -rdynamic: the hook finds the fake queueOutgoing via dlsym(RTLD_DEFAULT) (Linux needs the export).
+cc -rdynamic -std=gnu99 -O1 -Wall -Wextra -Werror -Wno-unused-function \
     "-DAA_VIEW_PATH=\"$OUT/aa_view\"" "-DAA_FILE_INSETS=\"$OUT/aa_insets\"" "-DAA_FILE_DPI=\"$OUT/aa_dpi\"" \
     "-DAA_THEME_PATH=\"$OUT/aa_theme\"" \
     tests/aa_uiconfig_test.c -ldl -o "$OUT/aa_uiconfig"
 "$OUT/aa_uiconfig"
+
+printf '%-32s ' aa_hook_gate_test
+# _GNU_SOURCE: glibc hides dladdr/RTLD_NEXT without it (QNX and macOS do not).
+cc -std=gnu99 -O1 -Wall -Wextra -Werror -Wno-unused-function -pthread -D_GNU_SOURCE \
+    "-DAA_UNPINNED_PATH=\"$OUT/aa_unpinned\"" tests/aa_hook_gate_test.c -ldl -o "$OUT/aa_hook_gate"
+"$OUT/aa_hook_gate"
 
 printf '%-32s ' tel_hook_test
 cc -std=gnu99 -O1 -Wall -Wextra -Werror -Wno-unused-function \
@@ -140,12 +152,17 @@ cc -std=gnu99 -O1 -Wall -Wextra -Werror -Wno-unused-function \
 "$OUT/vehicle_hook"
 
 printf '%-32s ' nav_boost_test
-cc -std=gnu99 -O1 -Wall -Wextra -Werror -Itests/stubs/qnx -Dmain=nav_boost_main \
-    -c navboost/nav_boost.c -o "$OUT/nav_boost.o"
-cc -std=gnu99 -O1 -Wall -Wextra -Werror -Itests/stubs/qnx tests/nav_boost_test.c "$OUT/nav_boost.o" \
-    -Wl,--wrap=open,--wrap=close,--wrap=opendir,--wrap=readdir,--wrap=closedir,--wrap=write \
-    -o "$OUT/nav_boost"
-"$OUT/nav_boost"
+# The test interposes libc with ld --wrap, which macOS ld64 lacks; it runs on Linux (CI).
+if printf 'int main(void){return 0;}\n' | cc -x c - -Wl,--wrap=open -o "$OUT/wrap_probe" 2>/dev/null; then
+    cc -std=gnu99 -O1 -Wall -Wextra -Werror -Itests/stubs/qnx -Dmain=nav_boost_main \
+        -c navboost/nav_boost.c -o "$OUT/nav_boost.o"
+    cc -std=gnu99 -O1 -Wall -Wextra -Werror -Itests/stubs/qnx tests/nav_boost_test.c "$OUT/nav_boost.o" \
+        -Wl,--wrap=open,--wrap=close,--wrap=opendir,--wrap=readdir,--wrap=closedir,--wrap=write \
+        -o "$OUT/nav_boost"
+    "$OUT/nav_boost"
+else
+    echo "SKIP: linker has no --wrap"
+fi
 
 printf '%-32s ' aa_tee_test
 cc -std=gnu99 -O1 -Wall -Wextra -Werror -Iaa_hook \

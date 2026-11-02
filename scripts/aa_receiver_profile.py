@@ -101,16 +101,21 @@ def main():
         return 0
     if hashes["libautoreceiver.so"] == MU0918["libautoreceiver.so"]:
         print("\nThe receiver is identical to MU0918, so its object layouts are the validated ones;"
-              "\nonly gal differs. The entry below (gal addresses from this gal) is safe to add.")
+              "\nonly gal differs. The hook already runs here unpinned (log: gal=unpinned); add the"
+              "\nentry below (gal addresses from this gal) once the cluster map worked on the car.")
     g, r = dynsyms(gal), dynsyms(recv)
-    missing = [s for s in REQUIRED if s not in r] + [s for _, s in GAL if s not in g]
+    missing = [s for s in REQUIRED if s not in r]
     if missing:
         print("\nMissing symbols, the hook cannot run on this receiver:")
         for s in missing:
             print("  " + s)
         return 1
+    # The gal addresses only pin the validated build; without them the hook runs unpinned.
+    no_gal = [s for _, s in GAL if s not in g]
+    if no_gal:
+        print("\ngal lacks %s: a profile can only run unpinned." % ", ".join(no_gal))
     v = dict((k, r[s]) for k, s in RECEIVER)
-    v.update((k, g[s]) for k, s in GAL)
+    v.update((k, g.get(s, 0)) for k, s in GAL)
     print("\nSymbol offsets (compare with abi.fingerprint in /tmp/aa_cluster_hook.log):")
     print("  " + " ".join("%s=0x%x" % (k, v[k]) for k, _ in RECEIVER + GAL))
     print("\nCandidate aa_hook.c profile entry (UNVERIFIED object layouts, see firmware-porting.md):")

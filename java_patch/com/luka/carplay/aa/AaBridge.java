@@ -11,8 +11,8 @@
  *      frame the CarPlay C hook produces for an iPhone (AaRgState) and hands it to
  *      RouteGuidance in-process through CarplayBus.injectLocal (sticky, so a RouteGuidance
  *      that starts later still gets the latest frame).  BAPBridge stays the single BAP writer;
- *   3. adds the lanes of the current step, which the gal hook writes to /tmp/aa_lanes
- *      (AaLaneFeed), while a route is active.
+ *   3. adds lanes (/tmp/aa_lanes) and final-destination trip details (/tmp/aa_trip)
+ *      from the gal hook while a route is active.
  *
  * Hook points: the rebuilt AndroidAuto2ListenerDistributor constructor calls attach(); the
  * rebuilt AndroidAuto2NavHandler constructor calls subscribeNavigation().  The lifecycle signal
@@ -273,22 +273,28 @@ public final class AaBridge extends DSIAndroidAuto2DefaultListener implements IA
         t.start();
     }
 
-    /* Lanes of the current Android Auto step (gal hook record, AaLaneFeed), polled while a route
-     * is active; a change is published as a full frame like a turn or distance. */
+    /* Rich metadata absent from the legacy DSI; polled off the DSI dispatcher. */
     private void startLanePoller() {
-        Thread t = new Thread("carplay-aa-lanes") {
+        Thread t = new Thread("carplay-aa-metadata") {
             public void run() {
                 while (true) {
                     try {
                         Thread.sleep(LANE_POLL_MS);
                         if (!rg.isRouteActive()) continue;       /* route end already cleared the lanes */
-                        if (rg.onLanes(AaLaneFeed.read(AaLaneFeed.PATH))) {
+                        boolean changed = rg.onLanes(AaLaneFeed.read(AaLaneFeed.PATH));
+                        if (changed) {
                             Log.i(TAG, "lanes " + (rg.lanes().length() == 0 ? "none" : rg.lanes())
                                 + " event=" + rg.laneEvent());
-                            publish();
                         }
+                        AaTripFeed.Trip trip = AaTripFeed.read(AaTripFeed.PATH);
+                        long systemMs = System.currentTimeMillis(), utcMs = systemMs;
+                        try {
+                            if (CarPlayApp.framework() != null) utcMs = CarPlayApp.framework().getUTCTime();
+                        } catch (Exception e) { /* same system-clock fallback as BAPBridge */ }
+                        if (rg.onTrip(trip, systemMs, utcMs)) changed = true;
+                        if (changed) publish();
                     } catch (Throwable e) {
-                        Log.w(TAG, "lanes: " + e);
+                        Log.w(TAG, "metadata: " + e);
                     }
                 }
             }

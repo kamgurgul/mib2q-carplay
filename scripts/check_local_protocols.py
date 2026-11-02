@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check duplicated constants at shipping Java/C transport boundaries (no HU)."""
 import ast
+import os
 import re
 import struct
 import zipfile
@@ -59,10 +60,17 @@ for name, value in constants("hook/framework/bus_protocol.h").items():
 compare("maneuver_render/protocol.h", "java_patch/com/luka/carplay/rgd/RendererServer.java", {
     "CR_TCP_PORT": "PORT", "CR_PKT_SIZE": "PKT_SIZE",
 }, ("CMD_", "EVT_", "MAN_FLAG_"))
+compare("aa_hook/aa_trip.h", "java_patch/com/luka/carplay/aa/AaTripFeed.java", {
+    "AA_TRIP_RECORD_SIZE": "RECORD_SIZE",
+})
 # ponytail: altscreen_render/AltscreenControlServer compare dropped (RGI-only fork has no altscreen).
 print(f"Local transport constants: {checks} matching Java/C ports, opcodes, flags, sizes and limits")
 jar = ROOT / "build/carplay_hook.jar"
 if not jar.exists():
+    # CI has no stock HMI jar to build against, so it can only check the constants.
+    if os.environ.get("SKIP_JAR_CHECK") == "1":
+        print("Shipping JAR: skipped (SKIP_JAR_CHECK=1)")
+        raise SystemExit(0)
     raise SystemExit("Build Java first to check the shipping class-file target")
 with zipfile.ZipFile(jar) as archive:
     classes = [name for name in archive.namelist() if name.endswith(".class")]

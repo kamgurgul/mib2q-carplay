@@ -26,6 +26,10 @@
  * receiver keeps stock behaviour and logs a fingerprint line from which a profile can be made
  * (docs/android-auto/firmware-porting.md). The marker aa_cluster.abi_trial forces a trial on an
  * unknown receiver; gal may then crash and Android Auto restarts, so use it only to test.
+ * The hook touches no gal object, so a known receiver under an unknown gal build runs too
+ * ("unpinned"), guarded by /tmp/aa_cluster.unpinned: it exists from start-up until the first
+ * cluster frame or a clean exit, and finding it at start-up (the last unpinned gal died
+ * before either) keeps Android Auto stock until the next reboot.
  * Without this hook Android Auto still drives the cluster arrow, HUD and lanes from Java.
  *
  * Runs only when gal is started by aa_startup.sh (AA_CLUSTER_HOOK=1). Log: /tmp/aa_cluster_hook.log.
@@ -35,6 +39,7 @@
 #include "aa_hook.h"
 
 #include <dlfcn.h>
+#include <fcntl.h>
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -60,8 +65,8 @@ typedef void (*unexpected_fn)(void *, unsigned char);
 /* ---- receiver profiles -------------------------------------------------------------- */
 
 /* Offsets of the interposed/called libautoreceiver symbols from the library base
- * (GalReceiver::registerService minus .reg), and two absolute gal addresses that pin the
- * gal build. A profile is only added after its object layouts were verified. */
+ * (GalReceiver::registerService minus .reg), and two absolute gal addresses of the gal build
+ * it was validated with. A profile is only added after its object layouts were verified. */
 struct aa_profile {
     const char *name;
     uint32_t reg, sink_vt, base_vt, config, send_config, set_focus, ack;
@@ -104,6 +109,7 @@ static uint32_t input_vtable[10];
 static unsigned video_service, input_service, nav_service = 256;
 static unsigned input_channel = 256;
 static int enabled, registered, attempted, captured_session;
+static volatile int unpinned;        /* running under an unpinned gal, safety marker armed */
 static unsigned long frame_count, frame_bytes;
 static unsigned long channel_messages[256];
 static const char *profile_name = "none";
@@ -136,6 +142,27 @@ void aa_log(const char *fmt, ...)
 int aa_marker(const char *path) { return access(path, F_OK) == 0; }
 
 static void *sym(const char *s) { return dlsym(RTLD_NEXT, s); }
+
+/* Arms the unpinned safety marker. 0 = a previous unpinned gal died before a frame or a clean
+ * exit (or the marker cannot be written): stay stock. /tmp is cleared by a reboot. */
+static int unpinned_begin(const char *path)
+{
+    int fd;
+    if (access(path, F_OK) == 0) return 0;
+    fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0644);
+    if (fd < 0) return 0;
+    close(fd);
+    return 1;
+}
+
+/* The unpinned gal showed a cluster frame or is exiting normally: next start may try again. */
+static void unpinned_done(const char *why)
+{
+    if (!unpinned) return;
+    unpinned = 0;
+    unlink(AA_UNPINNED_PATH);
+    aa_log("abi.unpinned_ok reason=%s", why);
+}
 
 /* Only append to a fresh protobuf-lite SSO unknown-field string. */
 static int unknown(void *object, const unsigned char *data, unsigned n)
@@ -218,6 +245,7 @@ static void secondary_data(void *sink, uint64_t timestamp, const void *shared, u
     int rc;
     aa_relayout_tick(sink);
     ++frame_count;
+    if (unpinned) unpinned_done("first_frame");
     if (p && size) { frame_bytes += size; aa_tee_frame(p, size); }
     rc = ack_frames(sink, (int)u32(sink, 0x18), 1);
     if (frame_count <= 3 || frame_count % 900 == 0)
@@ -470,21 +498,28 @@ EXPORT void _ZN13MessageRouter12routeMessageEhRK10shared_ptrI8IoBufferE(void *r,
 
 /* ---- load-time gate ----------------------------------------------------------------- */
 
-static const struct aa_profile *match_profile(void)
+static int receiver_matches(const struct aa_profile *p)
 {
-    unsigned i;
-    uintptr_t gal_ctl = (uintptr_t)dlsym(RTLD_DEFAULT, "_ZN3gal14CGALController10s_instanceE");
-    uintptr_t gal_vsink = (uintptr_t)dlsym(RTLD_DEFAULT, "_ZTVN3gal14CVideoSinkImplE");
-    for (i = 0; i < sizeof(profiles) / sizeof(profiles[0]); i++) {
+    uintptr_t base = (uintptr_t)real_register - p->reg;
+    return (uintptr_t)sink_vtable == base + p->sink_vt && (uintptr_t)base_vtable == base + p->base_vt &&
+        (uintptr_t)real_config == base + p->config && (uintptr_t)send_config == base + p->send_config &&
+        (uintptr_t)set_focus == base + p->set_focus && (uintptr_t)ack_frames == base + p->ack;
+}
+
+/* A profile whose receiver offsets match; *pinned = its gal build matches too. Every object the
+ * hook touches is in the receiver, so the gal pin only records the validated combination. */
+static const struct aa_profile *match_profile(uintptr_t gal_ctl, uintptr_t gal_vsink, int *pinned)
+{
+    unsigned i, n = sizeof(profiles) / sizeof(profiles[0]);
+    const struct aa_profile *receiver = NULL;
+    *pinned = 0;
+    for (i = 0; i < n; i++) {
         const struct aa_profile *p = &profiles[i];
-        uintptr_t base = (uintptr_t)real_register - p->reg;
-        if (gal_ctl == p->gal_controller && gal_vsink == p->gal_vsink_vt &&
-            (uintptr_t)sink_vtable == base + p->sink_vt && (uintptr_t)base_vtable == base + p->base_vt &&
-            (uintptr_t)real_config == base + p->config && (uintptr_t)send_config == base + p->send_config &&
-            (uintptr_t)set_focus == base + p->set_focus && (uintptr_t)ack_frames == base + p->ack)
-            return p;
+        if (!receiver_matches(p)) continue;
+        if (gal_ctl == p->gal_controller && gal_vsink == p->gal_vsink_vt) { *pinned = 1; return p; }
+        if (!receiver) receiver = p;
     }
-    return NULL;
+    return receiver;
 }
 
 /* One line with everything a new profile needs (offsets from the receiver's load base). */
@@ -509,7 +544,7 @@ __attribute__((constructor)) static void aa_hook_init(void)
     const struct aa_profile *p;
     const char *opt = getenv("AA_CLUSTER_HOOK");
     const char *port = getenv("AA_CLUSTER_TEE_PORT");
-    int resolved;
+    int resolved, pinned;
     /* Always resolve: every interposer forwards to these, enabled or not. */
 #define RES(var, name) var = (void *)sym(name)
     RES(real_register, "_ZN11GalReceiver15registerServiceEP20ProtocolEndpointBase");
@@ -539,9 +574,11 @@ __attribute__((constructor)) static void aa_hook_init(void)
         return;
     }
     log_fingerprint();
-    p = match_profile();
+    p = match_profile((uintptr_t)dlsym(RTLD_DEFAULT, "_ZN3gal14CGALController10s_instanceE"),
+                      (uintptr_t)dlsym(RTLD_DEFAULT, "_ZTVN3gal14CVideoSinkImplE"), &pinned);
     if (p) {
         profile_name = p->name;
+        if (!pinned) aa_log("abi.unpinned receiver=%s, gal build not validated", p->name);
     } else if (aa_marker(AA_MARKER_ABI_TRIAL)) {
         profile_name = "trial";
         aa_log("abi.TRIAL unknown receiver, forced by %s: gal may crash", AA_MARKER_ABI_TRIAL);
@@ -557,6 +594,21 @@ __attribute__((constructor)) static void aa_hook_init(void)
         aa_log("init disabled reason=tee_listen");
         return;
     }
+    if (p && !pinned) {
+        if (!unpinned_begin(AA_UNPINNED_PATH)) {
+            aa_log("init disabled reason=unpinned_failed_before (%s left by a gal that died before a "
+                   "cluster frame; stock until reboot)", AA_UNPINNED_PATH);
+            return;
+        }
+        unpinned = 1;
+    }
     enabled = 1;
-    aa_log("init enabled profile=%s", profile_name);
+    aa_log("init enabled profile=%s gal=%s", profile_name,
+           !p ? "unchecked" : pinned ? "pinned" : "unpinned");
+}
+
+/* Normal gal exit (session end): an unpinned run that never got a frame did not crash either. */
+__attribute__((destructor)) static void aa_hook_fini(void)
+{
+    unpinned_done("clean_exit");
 }

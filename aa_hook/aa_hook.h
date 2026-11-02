@@ -27,6 +27,9 @@
 #define AA_FILE_INSETS         AA_MARKER_DIR "aa_cluster.insets"        /* see aa_uiconfig.c */
 #endif
 #define AA_LOG_PATH            "/tmp/aa_cluster_hook.log"
+#ifndef AA_UNPINNED_PATH
+#define AA_UNPINNED_PATH       "/tmp/aa_cluster.unpinned"               /* unpinned gal on trial */
+#endif
 #ifndef AA_LANES_PATH
 #define AA_LANES_PATH          "/tmp/aa_lanes"
 #endif

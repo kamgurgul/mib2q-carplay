@@ -18,8 +18,9 @@ an Android-Auto-only fork of LuKa's project validated on MU0918. That fork repla
 CarPlay features. Here, both phone types work on one install, and the session owner decides
 which features run.
 
-Tested on an Audi A5 (F5) with MU1329 (`MHI2Q_ER_AUG22_P5152`): everything below works there
-except a zoom for the Android Auto cluster map, which Android Auto does not offer. The unit's
+The existing map/guidance features were tested on an Audi A5 (F5) with MU1329
+(`MHI2Q_ER_AUG22_P5152`). The new trip-details bridge is host-tested and awaits car validation;
+Android Auto does not offer cluster-map zoom. The unit's
 `libautoreceiver.so` is byte-identical to the MU0918 one; its `gal` has its own profile
 ([firmware-porting](firmware-porting.md)).
 
@@ -27,9 +28,11 @@ except a zoom for the Android Auto cluster map, which Android Auto does not offe
 
 | Feature | Needs | MU1329 |
 |---|---|---|
-| Turn arrow, distance bar, lanes and route text in the Virtual Cockpit and HUD | jar only | works |
+| Turn arrow, distance bar and route text in the Virtual Cockpit and HUD | jar only | works |
 | Maneuver arrow over the Audi map / over the phone map | jar + `maneuver_render` | works |
 | Android Auto cover art on the VC media screen | jar only | works |
+| Lane arrows in the Virtual Cockpit and HUD | jar + the hook (`/tmp/aa_lanes`) | works |
+| Final destination, remaining trip distance and ETA in the stock VC route display | updated jar + hook; app must send rich navigation metadata | host-tested; car validation pending |
 | Google Maps / Waze **map video** in the cockpit (ctx 81/82) | + `aa_startup.sh`, `libaa_cluster_hook.so`, `altscreen_render` | works (receiver profile built in) |
 | Large / Classic / Sport layouts sent to the phone | + the hook | works |
 | Steering-wheel roller zoom of the phone map | - | not possible: no zoom command for the cluster display; the roller zooms only the hidden Audi map (scale bar) |
@@ -63,7 +66,7 @@ flowchart LR
     phone["Android phone"] -->|"cluster display, H.264"| hook["libaa_cluster_hook.so in gal"]
     hook -->|":19821 Annex-B"| altr["altscreen_render -> window 99"]
     hook -->|"0x8006/0x8007 -> legacy"| dsi["stock Android Auto DSI"]
-    hook -->|"/tmp/aa_lanes"| bridge
+    hook -->|"/tmp/aa_lanes + /tmp/aa_trip"| bridge
     dsi -->|"next turn / distance"| bridge["AaBridge -> AaRgState"]
     bridge -->|"EVT_RGD_UPDATE (in-process)"| rg["RouteGuidance -> BAPBridge"]
     rg -->|BAP| vc["Virtual Cockpit + HUD"]
@@ -82,6 +85,10 @@ flowchart LR
   through `CarplayBus.injectLocal`, so BAPBridge stays the single BAP writer.
 - `aa/AaRgState`, `aa/AaManeuverMap`, `aa/AaLaneFeed`: Android Auto turn events -> the same
   text frame the CarPlay C hook produces (one maneuver slot, generation per route, lanes).
+- `aa/AaTripFeed`: reads the hook's final-destination name, distance and remaining duration.
+  `AaBridge` polls it alongside lanes; `AaRgState` publishes the existing `destination`,
+  `dist_dest_m`, `time_remaining_seconds` and `eta_seconds` keys. `BAPBridge` uses its existing
+  destination/arrival/distance outputs, including the steering-wheel OK time-left presentation.
 - `aa/VcMapViewGate` + `ClusterService.updateGALState`: while ctx 81/82 shows the phone's
   map, the stock "navigation on mobile device" state (BAP InfoStates 6) is held back. That
   state would take the VC out of its map view.
@@ -103,6 +110,12 @@ flowchart LR
   sends the dark theme and the view's safe area (0x8009 on every view change). Frames go to a
   loopback tee that keeps the AUs since the last keyframe, so a renderer that connects late
   starts on a keyframe.
+- `aa_trip.c`: reads `0x8006.destinations` and `0x8007.destination_distances` **before**
+  translation discards them. Both use the last entry (final destination, not the next stop).
+  Missing fields clear their values; changing destination clears old estimates. Native
+  unavailable/inactive/rerouting status clears the snapshot without changing stock delivery.
+  This needs the rich messages; a legacy-only app/receiver retains its normal turn guidance
+  with no invented trip values.
 - `altscreen_render`: one renderer for both phone types. It tries the CarPlay tee, then the
   Android Auto tee. For Android Auto it opens the hardware decoder at 1920x1080 and blits the
   centred 1440x540 viewport 1:1 into window 99 (no scaling); the FFmpeg fallback crops the same
@@ -115,6 +128,35 @@ flowchart LR
   installed and `aa_cluster.off` is absent.
 
 ## 🔧 Switches
+
+### Trip details
+
+Install the updated `libaa_cluster_hook.so` and `carplay_hook.jar` together. Trip details
+appear in the existing Audi route-information fields when the app sends them; no video
+renderer change or new menu switch is needed. The existing OK-button time-left view also
+uses this data. A route with stops reports the **final destination** and its total remaining
+distance/time.
+
+`/tmp/aa_trip` is a fixed 320-byte, big-endian `AAT1` record with a checksum (layout in
+`AaTripFeed.java`). Destination and estimates have independent timestamps and expire after
+30 seconds without a fresh sample (estimates for an unchanged destination also refresh its
+name, for apps that send it only on step changes). Partial reads retain the previous sample only until that
+deadline. Route/session cancellation rejects records older than the cancellation, including
+files left by an earlier `gal` process. Metadata never starts guidance by itself.
+
+ETA is computed from the numeric remaining duration and the HU navigation UTC clock,
+accounting for the sample's age. The hook's system-clock timestamp is only used for age;
+QNX can still have a 1970 clock while the navigation clock is correct. The localized ETA
+string from Android Auto is not parsed. Re-reading the same sample does not move arrival
+time forward. An app omitting the numeric duration has no ETA.
+
+Validation: `tests/aa_trip_test.c` covers the real destination capture, multi-stop messages,
+missing/malformed fields and UTF-8 boundaries under ASan/UBSan. `tests/AaTripDetailsTest.java`
+reads a record produced by the C parser and exercises the real Java route parser/BAP outputs,
+clock conversion, repeated samples, expiry and cancellation/reconnect. It runs from
+`scripts/test_java_transports.sh`. Live app/vehicle validation is still pending.
+
+### Marker files
 
 They apply on the next phone connection, except the first row, which needs a reboot.
 
