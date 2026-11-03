@@ -130,8 +130,11 @@ public class TouchpadController {
         lastTpX = tpX;
         lastTpY = tpY;
 
-        accumDx += dx;
-        accumDy += dy;
+        /* Dominant axis per sample: a vertical swipe with a little sideways drift must not
+         * build up accumDx into a phantom left/right at the end of a list
+         * (luka-dev MHI2Q-2026-10-29). */
+        if ((dx < 0 ? -dx : dx) >= (dy < 0 ? -dy : dy)) accumDx += dx;
+        else accumDy += dy;
 
         /* DEAD_ZONE gate: suppress emits until the cumulative drift
          * since touch-down exceeds it on either axis.  Once armed,

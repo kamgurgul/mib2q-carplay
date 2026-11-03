@@ -409,6 +409,7 @@ static const char *g_nav_surface_path = "/mnt/app/root/mibr-carplay111-nav.surfa
 static const char *g_nav_eta_path = "/mnt/app/root/mibr-carplay111-nav.showETA";
 static const char *g_nav_speed_path = "/mnt/app/root/mibr-carplay111-nav.showSpeedLimit";
 static const char *g_nav_compass_path = "/mnt/app/root/mibr-carplay111-nav.showCompass";
+static const char *g_nav_hide_guidance_path = "/mnt/app/root/mibr-carplay111-nav.hideDuringGuidance";
 static const char *g_nav_maneuver_path = "/mnt/app/root/mibr-carplay111-nav.maneuverLayout";
 static const char *g_nav_show_maneuver_path = "/mnt/app/root/mibr-carplay111-nav.showManeuver";
 static const char *g_nav_wide_all_path = "/mnt/app/root/mibr-carplay111-nav.wideAll";
@@ -1043,6 +1044,16 @@ static void active_alt_url_copy(char *out, size_t cap)
             nav_tristate_value(g_nav_speed_path, speed, sizeof(speed), "no");
             nav_tristate_value(g_nav_compass_path, compass, sizeof(compass), "no");
             nav_tristate_value(g_nav_show_maneuver_path, card, sizeof(card), "yes");
+        }
+        /* Explicit guidance policy wins over the wide-view override. Other overlays remain.
+         * Absent = independent GEM switches (the existing behavior). */
+        {
+            char hide[8];
+            nav_tristate_value(g_nav_hide_guidance_path, hide, sizeof(hide), "no");
+            if (g2_rgi_on && (strcmp(hide, "yes") == 0 || strcmp(hide, "1") == 0)) {
+                snprintf(card, sizeof(card), "%s", "no");
+                snprintf(eta, sizeof(eta), "%s", "no");
+            }
         }
         if (strcmp(card, "no") == 0 || strcmp(card, "0") == 0) {
             snprintf(out, cap, "%s?showETA=%s&maneuverLayout=no&showSpeedLimit=%s&showCompass=%s",
@@ -3295,17 +3306,26 @@ int altscreen111_view_area(int view)
     return rc;
 }
 
-/*
- * Exported for libcarplay_hook's CMD_ALT_RGI handler: Java confirmed (1) or withdrew (0)
- * its own route-guidance presentation.  Logged only: the cluster URL (turn card, ETA,
- * speed limit) is set by the GEM switches, which re-send showUI themselves.
- */
+/* Native guidance edges re-send showUI only when the selected policy changes the URL.
+ * The serialized control worker owns phone commands, just as for a ViewArea change. */
 int altscreen111_set_rgi(int on)
 {
+    char before[384], after[384];
+    int changed;
     on = on ? 1 : 0;
     if (g2_rgi_on == on) return 0;
+    /* URL files are read outside the core lock, as for a ViewArea change. */
+    active_alt_url_copy(before, sizeof(before));
     g2_rgi_on = on;
-    logf_u2("gen2 route guidance %s (cluster URL unchanged)", on ? "on" : "off");
+    active_alt_url_copy(after, sizeof(after));
+    changed = strcmp(before, after) != 0;
+    pthread_mutex_lock(&g2_core_lock);
+    if (changed && g2_control_session && g2_control.active)
+        alt111_control_reshow(&g2_control, g2_control_session, 0);
+    pthread_cond_broadcast(&g2_core_cv);
+    pthread_mutex_unlock(&g2_core_lock);
+    logf_u2("gen2 route guidance %s (cluster URL %s)", on ? "on" : "off",
+            changed ? "changed" : "unchanged");
     return 0;
 }
 

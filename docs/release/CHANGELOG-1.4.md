@@ -76,6 +76,54 @@ Changes since [1.3.1](CHANGELOG-1.3.1.md).
   built against the unit's `lsd.jxe` is byte-identical to the release jar, and the stock linkage
   audit passes against it (0 errors). *Car test pending.*
 
+- **CarPlay settings in the MMI (issue #42).** *Connection manager → Options → CarPlay settings*
+  gathers the CarPlay options in one native screen, with a two-line description of the selected
+  item, in 14 languages (en, de, ru, uk, es, fr, it, nl, pl, pt, cs, tr, zh, zh_HK; other MMI
+  languages show English). Adapted from luka-dev's MHI2Q-2026-10-29 release.
+  - **Maps on Cluster** (On / Off): the CarPlay map on the Virtual Cockpit. *Next connection.*
+  - **Maneuver Cards Position** (App default / Left / Center / Right): where the iPhone puts the
+    turn card and arrival time on the cluster map (`leftAligned`, `topAligned`, `rightAligned`).
+  - **Route Guidance** (On / Off): turn-by-turn on the cluster and HUD, CarPlay and Android Auto.
+    Applies in the running session.
+  - **Map Cards during Guidance** (Hidden / Shown): hides the phone's turn card and ETA in the
+    cluster map while the cockpit shows the car's own guidance arrow. New file
+    `/mnt/app/root/mibr-carplay111-nav.hideDuringGuidance`; it wins over *all features on wide
+    view*. Shown (default) leaves the map switches as they are.
+  - **Guidance Maneuver Preview** (Always next maneuver / Follow road when far): with *Follow
+    road when far* (default, as before) the cockpit shows a straight arrow until the next turn is
+    within 1.5 km (3 km on motorways). New marker `/mnt/app/carplay_rgd.next_maneuver` for
+    *Always next maneuver*. Applies at once, without dropping the route.
+  - The map switches of the GEM menu: turn card, ETA, speed limit, compass (Off / On / Phone
+    setting) and all features on wide view.
+
+  Every item writes the same file as the matching GEM button, so the two menus always show the
+  same state. The patched `de.audi.tghu.connectivity.hmi.Activator` falls back to the stock
+  Connection Manager if anything in the new screen fails to load. *Car test pending.*
+
+- **Android Auto final destination, remaining distance and ETA.** The Android Auto hook reads the
+  destination (NavigationState) and the distance, time and arrival estimate (CurrentPosition)
+  that Google Maps sends about once a second, and writes them to `/tmp/aa_trip`. The Java patch
+  shows them in the cockpit and HUD like CarPlay's: destination, distance to destination,
+  time remaining and arrival time. A trip record older than 30 s is ignored; fresh estimates also
+  keep an unchanged destination current. *Car test pending.*
+
+- **Android Auto cluster map on untested `gal` builds (crash guard).** The hook used to need an
+  exact profile for both `libautoreceiver.so` and `gal`. It touches no `gal` object, so a known
+  receiver with an unknown `gal` now runs **unpinned** (`init enabled profile=<name>
+  gal=unpinned`). A marker, `/tmp/aa_cluster.unpinned`, exists from start-up until the first
+  cluster picture or a normal `gal` exit. If an unpinned `gal` crashes before either, the next
+  start finds the marker and keeps Android Auto stock (`init disabled
+  reason=unpinned_failed_before`) until a reboot. This covers units with the MU0918 receiver and
+  any `gal`; a different receiver still needs a profile
+  ([firmware-porting](../android-auto/firmware-porting.md)). *Car test pending.*
+
+- **CarPlay cluster map at 30 FPS.** The hook adds the accessory PPID `bf889dfdaea54096` to the
+  iAP2 Identify when stock sends none (new module `hook/mapsprofile`). In Apple's
+  CarExperienceAssets that profile only sets `mapsRefreshRate=30`, so Maps renders the cluster
+  map for 30 FPS instead of about 20 (upstream measurement on a virtual iPhone: 21 -> 29.7
+  pictures/s). `carplay_hook.log`: `Identify: +PPID bf889dfdaea54096`. Off:
+  `/mnt/app/root/carplay_maps30.off`. From luka-dev MHI2Q-2026-10-29. *Car test pending.*
+
 ## Changed
 
 - **The head unit no longer needs to recognise the HW301.** The v1172 image uses the normal
@@ -86,6 +134,26 @@ Changes since [1.3.1](CHANGELOG-1.3.1.md).
   socket with `poll()` instead of `select()`, so a high descriptor number no longer stops the
   cluster stream. A stalled view or key frame message times out after 200 ms instead of
   blocking, and these messages also go out while the cluster video is idle.
+- **GEM *HW decoder ON / OFF* covers Android Auto too.** It used to switch CarPlay's decoder
+  only. ON now also clears Android Auto's markers and both start records; OFF sets both.
+- **An Android Auto hardware decoder failure turns hardware decode off for this boot only**
+  (`/tmp/altscreen_render.aa.hwdecode.off`), no longer for good. See issue #44 below. CarPlay keeps
+  the persistent marker. `altscreen_render.log` names the marker whenever hardware decode is off:
+  `hardware decode OFF (… present); software decode`.
+- **Android Auto software decoding uses two frame threads** (`ALTR_AA_DECODE_THREADS`, 1-4,
+  1 = as before). Only the fallback without the hardware decoder is affected: one thread could not
+  keep up with 1080p30 (issue #44); two decode about 1.75x faster (host measurement). The cost
+  is one picture of delay, so while the map stands still the cockpit shows the picture before the
+  last one. CarPlay stays on the low-delay decoder, because Apple Maps without a route sends few
+  pictures.
+- **Save logs also lists `/mnt/app` and `/mnt/app/root`** (`markers_ls.txt`), so a report shows
+  every setting marker.
+- **Phone route guidance no longer sets the Audi navigation's "route guidance active" flag.**
+  The cockpit accepts CarPlay / Android Auto guidance through a flag of its own in the patched
+  `ClusterService` (`setCarPlayRgiActive`). See the stale-route fix below.
+- **The car's guidance is stopped only when it is running.** At phone connect the cluster abort
+  (`setRouteGuidanceAborted`) is now sent only while Audi navigation guides or calculates a route,
+  so it can no longer race the start of CarPlay guidance. From luka-dev MHI2Q-2026-10-29.
 
 ## Fixed
 
@@ -130,6 +198,52 @@ Changes since [1.3.1](CHANGELOG-1.3.1.md).
   picture kept`, `main screen quiet; reconnecting carplay for a key frame`, `hardware decoder resumed`.
   *Car test pending.*
 
+- **Android Auto cluster map froze for about 90 s at a time (issue #44).** The phone kept sending
+  30 pictures a second, but the renderer decoded only about 60% of them. An earlier hardware
+  decoder failure had left the persistent Android Auto off marker, so every later session decoded
+  the 1080p30 stream in software. Software decode cannot keep up (this FFmpeg build has no NEON),
+  the tee fell behind, and the picture waited for Google Maps' next key frame, which comes only
+  every minute or two. The GEM switch, which only cleared CarPlay's marker, could not undo it.
+  Fixed by the two *Changed* items above. Units that already have the marker: press **HW decoder
+  ON** once (if it reports OFF, press it again). *Car test pending.*
+
+- **Audi navigation resumed an old route after standby.** To make the cockpit accept phone
+  guidance, the Java patch forced the navigation-wide "route guidance active" flag. Stock
+  `RouteManager` stores that flag at standby (`RoutePersistenceController.storeGuidanceStatus`),
+  so a forced `true` made Audi navigation resume a historical route on a later start. The patch
+  now uses its own `ClusterService` flag, and on the first connect with idle Audi navigation it
+  stores the real (inactive) status once, which clears a stale entry left by older builds.
+  From luka-dev MHI2Q-2026-10-29. *Car test pending.*
+
+- **Route guidance or Now Playing messages could be corrupted when incoming and outgoing iAP2
+  traffic overlapped** (luka-dev #79, #81). The hook kept the direction and buffer of the current
+  message in shared state, so an outgoing message could change them under an incoming one. Each
+  dispatch now has its own context, and route guidance handles incoming messages only.
+
+- **The cluster map stream no longer stops on a single damaged picture.** The hardware decoder
+  treats `OMX_ErrorStreamCorrupt` and `OMX_ErrorMbErrorsInFrame` as recoverable (the next key
+  frame repairs the picture) instead of falling back to software decode. Hardware and timeout
+  errors still fall back as before. From luka-dev MHI2Q-2026-10-29.
+
+- **Stale cover art when the next track has none.** iOS announces "no artwork" as an empty file
+  transfer; the hook now clears the picture on the cockpit instead of keeping the previous one.
+  From luka-dev MHI2Q-2026-10-29.
+
+- **The VC phone tab stuck on "Ending call", or a call that stayed after it ended.**
+  `dio_manager` keys a CarPlay call by its CallUUID, or by the number while the UUID is empty, and
+  removes it only on a disconnect. A call first reported without a UUID left an orphan under the
+  number. The phone tab now hides those orphans, always confirms a hang-up, and clears a call
+  that iOS does not report as ended within 1 s. From luka-dev MHI2Q-2026-10-29.
+- **Play / pause bouncing at volume 0.** Stock's switch to "paused by mute" handed main audio
+  straight back to the iPhone (`Audio_Media: Borrow -> Unborrow`, sent only by that transition),
+  and every repeated playback-state update could unmute the MMI. That hand-back is dropped and
+  repeated states are ignored. From luka-dev MHI2Q-2026-10-29.
+- **Dialling from the VC while CarPlay was in the background did nothing.** iOS ignores the call
+  request unless CarPlay owns the screen. The patch now switches the MMI to CarPlay and dials once
+  the iPhone has the screen (5 s window). From luka-dev MHI2Q-2026-10-29.
+- **Touchpad: a vertical swipe could jump left or right at the end of a list.** Each touch sample
+  now counts only on the axis that moved more. From luka-dev MHI2Q-2026-10-29.
+
 ## Known issues
 
 - **HW301: the start of Siri's answer can be cut.** In the 2026-10-27 test the car took 1.6 to
@@ -139,6 +253,12 @@ Changes since [1.3.1](CHANGELOG-1.3.1.md).
 - **Short cluster map blinks.** The picture restarts for a moment when iOS restarts its video
   encoder (seen several times when route guidance starts, on both screens at once) and when the
   car asks for a key frame (seen while the MMI showed the Audi menu).
+- **Yanosik with *all features on wide view* ON.** That switch makes the wide and small maps use
+  different cluster URLs, so every wide ↔ small switch re-sends `showUI` to the phone (car logs
+  2026-11-02, saves 012/013). Apple Maps and Google Maps just redraw; Yanosik restarts its
+  CarPlay screens: the cluster map stops and the first switch closed the app on the MMI (the
+  iPhone gave the main screen back to the car 0.15 s after `showUI`). Workaround: switch *all
+  features on wide view* OFF, so a layout switch sends only `updateViewArea`.
 
 ## Documentation
 
@@ -147,6 +267,13 @@ Changes since [1.3.1](CHANGELOG-1.3.1.md).
 - [hw301-dongle](../deploy/hw301-dongle.md), dongle README and FINDINGS: v1167 and its
   per-layout URLs; the v1172 design, its build and the first car test; the v1176 route
   guidance bridge.
+- [hw-decoder](../altscreen/hw-decoder.md) and [Android Auto overview](../android-auto/overview.md):
+  the Android Auto decoder markers and issue #44.
+- [firmware-porting](../android-auto/firmware-porting.md): unpinned `gal` mode and its marker.
+- README: the MMI CarPlay settings, the release layout and the 1.4 known issues.
+- Tests: GitHub Actions runs `scripts/run_tests.sh` on every push and pull request (Ubuntu,
+  clang); the Java suites need the proprietary stock jar and stay local
+  (`test_route_info.sh`, `test_java_transports.sh`, new `test_mmi_settings.sh`).
 
 ## Updating from 1.3.1
 

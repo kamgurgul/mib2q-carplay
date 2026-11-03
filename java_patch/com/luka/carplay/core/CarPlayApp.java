@@ -349,6 +349,15 @@ public final class CarPlayApp {
      * invokes this from NavigationJobs; the small worker keeps teardown/start outside that
      * dispatcher and coalesces rapid remove+add pairs. */
     public static void onNavigationServiceChanged() {
+        requestRgdRebind("Navigation service changed");
+    }
+
+    /** Reuse the serialized RGD restart and hook snapshot replay after an MMI toggle. */
+    public static void onRouteGuidanceSettingsChanged() {
+        requestRgdRebind("Route guidance setting changed");
+    }
+
+    private static void requestRgdRebind(final String reason) {
         final int generation;
         final int activeLifecycleGeneration;
         final IContext activeContext;
@@ -376,7 +385,7 @@ public final class CarPlayApp {
                     try { MODULES[RGD_MODULE_INDEX].stop(); }
                     catch (Throwable x) { Log.w(TAG, "rgd rebind stop: " + x); }
                     synchronized (lock) { started[RGD_MODULE_INDEX] = false; }
-                    Log.i(TAG, "Navigation service changed - rebinding RGD");
+                    Log.i(TAG, reason + " - rebinding RGD");
                     if (!startPass(activeLifecycleGeneration)
                             && lifecycleCurrent(activeLifecycleGeneration, true,
                                                 activeContext)) {

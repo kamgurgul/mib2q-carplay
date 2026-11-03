@@ -423,17 +423,25 @@ static bool module_wants_message(hook_module_t* mod, uint16_t msgid) {
     return false;
 }
 
-static bool dispatch_message(const iap2_frame_t* frame) {
+/* Per-call metadata: Encode and Decode can overlap or re-enter through a callback.
+ * A shared direction/raw buffer let an outgoing frame corrupt an incoming parser.
+ * Adapted from luka-dev MHI2Q-2026-10-29. */
+static bool dispatch_message(const iap2_frame_t* frame, msg_direction_t direction,
+                             const uint8_t* raw_buf, size_t raw_len) {
     bool consumed = false;
+    hook_context_t ctx = g_fw.ctx;
+    ctx.direction = direction;
+    ctx.msgid = frame->msgid;
+    ctx.raw_buf = raw_buf;
+    ctx.raw_len = raw_len;
+    ctx._priv = NULL;
     for (int i = 0; i < g_fw.module_count && !consumed; i++) {
         hook_module_t* mod = &g_fw.modules[i];
         if (!mod->active || !mod->def.on_message) continue;
         if (!module_wants_message(mod, frame->msgid)) continue;
-        g_fw.ctx.current_module = mod;
-        g_fw.ctx.msgid = frame->msgid;
-        consumed = mod->def.on_message(&g_fw.ctx, frame);
+        ctx.current_module = mod;
+        consumed = mod->def.on_message(&ctx, frame);
     }
-    g_fw.ctx.current_module = NULL;
     return consumed;
 }
 
@@ -916,9 +924,6 @@ HOOK_EXPORT int _ZN14NmeIAP2Message6DecodeEPKhi(void* self, const uint8_t* buf, 
 
     uint16_t msgid = read_be16(buf + 4);
 
-    g_fw.ctx.direction = MSG_DIR_INCOMING;
-    g_fw.ctx.raw_buf = buf;
-    g_fw.ctx.raw_len = (size_t)len;
 
     {
         size_t dump_len = (frame_len <= (uint16_t)len) ? (size_t)frame_len : (size_t)len;
@@ -936,7 +941,7 @@ HOOK_EXPORT int _ZN14NmeIAP2Message6DecodeEPKhi(void* self, const uint8_t* buf, 
     };
     state_trace_note_iap_semantic(MSG_DIR_INCOMING, msgid,
                                   frame.payload, frame.payload_len);
-    dispatch_message(&frame);
+    dispatch_message(&frame, MSG_DIR_INCOMING, buf, (size_t)len);
 
     return ret;
 }
@@ -995,9 +1000,6 @@ HOOK_EXPORT int _ZNK14NmeIAP2Message6EncodeER8NmeArrayIhE(const void* self, void
         .payload_len = (len > 6) ? (len - 6) : 0
     };
 
-    g_fw.ctx.direction = MSG_DIR_OUTGOING;
-    g_fw.ctx.raw_buf = data;
-    g_fw.ctx.raw_len = len;
 
     {
         size_t dump_len = (frame.frame_len <= len) ? frame.frame_len : len;
@@ -1012,7 +1014,7 @@ HOOK_EXPORT int _ZNK14NmeIAP2Message6EncodeER8NmeArrayIhE(const void* self, void
     state_trace_note_iap_semantic(MSG_DIR_OUTGOING, frame.msgid,
                                   frame.payload, frame.payload_len);
 
-    dispatch_message(&frame);
+    dispatch_message(&frame, MSG_DIR_OUTGOING, data, len);
 
     return ret;
 }

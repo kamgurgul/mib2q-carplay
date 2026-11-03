@@ -50,8 +50,17 @@ extensions: SyntaxHdr = 0x7F100001, DisplayPictureBuffer = 0x7F100008
 **Default ON** since log set 018. Turned OFF by `/mnt/app/root/altscreen_render.hwdecode.off`
 (GEM CarPlay-RGI -> *HW decoder ON / OFF*) or, for the rest of the boot, `/tmp/altscreen_render.hwdecode.off`.
 After a real hardware failure the renderer writes both itself (the /mnt/app one only when that
-partition is writable) and stays on software decode. Read per CarPlay connection; the decoder
+partition is writable) and stays on software decode. Read per phone connection; the decoder
 is created on the first stream bytes.
+
+Android Auto has its own pair, `altscreen_render.aa.hwdecode.off`. After an Android Auto
+hardware failure the renderer writes only the `/tmp` one, so the next boot tries hardware again
+(after the boot settle time). Software decode cannot keep up with the 1080p30 Android Auto stream
+(this FFmpeg build has no NEON). The tee then falls behind and waits for a key frame, and
+Google Maps sends one only every minute or two, so the cockpit picture froze for about 90 s at
+a time while the main screen kept moving (issue #44). The GEM *HW decoder ON / OFF* switch sets
+and clears both pairs; ON also clears the start records. The renderer log names the marker
+that keeps hardware decode off (`hardware decode OFF (… present)`).
 
 What the car taught us:
 

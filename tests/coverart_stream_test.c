@@ -117,6 +117,24 @@ static void file_identity_and_lifecycle(void)
     feed(wire, n); assert(!image); reset();
 }
 
+static void explicit_artwork_clear(void)
+{
+    size_t n = data(wire, 1, 1, 0x80, jpg, 300);
+    n += setup(wire + n, 2, 2, 0, 2);
+    feed(wire, n); assert(image && image_len == 0);
+    free(image); image = NULL;
+    n = data(wire, 3, 1, 0x40, jpg + 300, 300);
+    feed(wire, n); assert(!image); /* earlier transfer must not resurrect art */
+    n = data(wire, 4, 3, 0xc0, newer, 600);
+    feed(wire, n); expect(newer, 600); reset();
+    n = data(wire, 1, 1, 0xc0, jpg, 600);
+    n += setup(wire + n, 2, 2, 0, 2);
+    feed(wire, n); assert(image && !image_len); /* latest event in a batch wins */
+    free(image); image = NULL; reset();
+    n = setup(wire, 1, 1, 0, 7); /* empty non-artwork is not a clear */
+    feed(wire, n); assert(!image); reset();
+}
+
 static void checksums_order_and_wrap(void)
 {
     size_t n = data(wire, 254, 1, 0x80, jpg, 200);
@@ -216,6 +234,7 @@ int main(void)
     jpg[598] = 255; jpg[599] = 217;
     memcpy(newer, jpg, 600); newer[200] = 0x22;
     fragmented_and_batched(); file_identity_and_lifecycle();
+    explicit_artwork_clear();
     checksums_order_and_wrap(); size_only_setup(); negotiated_sessions(); bounds_and_noise();
     puts("coverart_stream_test: fragmentation, batch, file IDs, completion, checksum, reorder/wrap, reset and bounds PASS");
     return 0;

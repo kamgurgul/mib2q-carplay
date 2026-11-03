@@ -169,7 +169,7 @@ They apply on the next phone connection, except the first row, which needs a reb
 | `/mnt/app/root/aa_cluster.daynight` | opt-in: cluster map Light by day, Dark by night from the MMI day/night design (GEM: *Android Auto cluster day/night*; picked at phone connect) |
 | `/mnt/app/root/aa_cluster.dpi` | density, one number 80..400 (default 125 = 1:1 on the 125 PPI panel) |
 | `/mnt/app/root/aa_cluster.insets` | 12 numbers: top bottom left right for full, classic, sport |
-| `/mnt/app/root/altscreen_render.aa.hwdecode.off` | Android Auto software decode |
+| `/mnt/app/root/altscreen_render.aa.hwdecode.off` | Android Auto software decode (GEM *HW decoder ON / OFF* switches it with CarPlay's; a hardware failure writes only `/tmp/altscreen_render.aa.hwdecode.off`, issue #44) |
 | `/mnt/app/carplay_rgd.disabled` | route guidance off for both phone types |
 
 ## 📜 Logs

@@ -1,5 +1,6 @@
 package de.audi.app.terminalmode.dsi.carplay;
 
+import com.luka.carplay.telephony.CarPlayDisclaimerSkip;
 import com.luka.carplay.telephony.GatedPhoneService;
 import de.audi.app.terminalmode.IContext;
 import de.audi.app.terminalmode.ITerminalModeConfiguration;
@@ -88,6 +89,7 @@ public class CarplayDSILifecycleController extends AbstractDSIController impleme
         this.dsiCarplaySafe = dsicarplaysafe;
         this.dsiCarplayProxy = dsicarplaysafeproxy;
         this.dsiCarPlayListener = carplaydsilifecyclecontroller$dsicarplaylistenerimpl;
+        this.dsiCarPlayListener.setDsiCarplaySafe(dsicarplaysafe);
         this.carPlayDsiController = new CarplayDSILifecycleController.CarplayDSIController(this);
         this.configuration = icontext.getConfiguration();
         this.keyEventController = new CarplayDSILifecycleController.TerminalModeDSIKeyEventsController(this);
@@ -105,11 +107,22 @@ public class CarplayDSILifecycleController extends AbstractDSIController impleme
         /* The same component object can be deinit/init'd; deinit clears the singleton sink. */
         ((CarplayDSILifecycleController.TerminalModeDSIKeyEventsController)this.keyEventController)
             .installTouchpadSink();
-        /* Cluster telephone tab actions -> CarPlay (GatedPhoneListener). */
+        /* Cluster telephone tab actions -> CarPlay (GatedPhoneListener). With CarPlay in the
+         * background on the MMI, iOS ignores requestUI2("tel:...") on its own, and the
+         * requestUI(0) of the later switch to CarPlay overwrites it. Keep the tel: URL and
+         * switch the MMI to CarPlay; the screen hand-over then dials it
+         * (luka-dev MHI2Q-2026-10-29). */
         final DSICarplaySafe dsi = this.dsiCarplaySafe;
+        final IFrameworkAccess fwAccess = this.fw;
+        final CarplayDSILifecycleController.DSICarplayListenerImpl listener = this.dsiCarPlayListener;
         GatedPhoneService.setCommands(new GatedPhoneService.Commands() {
             public void dial(String number) {
-                dsi.requestUI2("tel:" + number);
+                String url = "tel:" + number;
+                if (!listener.isScreenOwnedByDevice()) {
+                    listener.setPendingTelUrl(url);
+                    CarPlayDisclaimerSkip.press(fwAccess, "VC dial");
+                }
+                dsi.requestUI2(url);
             }
         });
     }
@@ -121,6 +134,7 @@ public class CarplayDSILifecycleController extends AbstractDSIController impleme
          * connect cycles. */
         TouchpadController.getInstance().setTouchSink(null);
         GatedPhoneService.setCommands(null);
+        this.dsiCarPlayListener.resetPlaybackState();
         super.deinit();
         this.carPlayDsiController.deinit();
     }
@@ -170,6 +184,7 @@ public class CarplayDSILifecycleController extends AbstractDSIController impleme
     private class CarplayDSIController extends DefaultEventListener implements ICarplayDSIController {
         private static final String DSI_TEL_IDENTIFIER = "tel:";
         private static final String LOGCLASS = "CarplayDSIController";
+        private static final String UNBORROW_AFTER_MUTE = "Audio_Media: Borrow -> Unborrow";
         private final CarplayDSILifecycleController this$0;
 
         private CarplayDSIController(CarplayDSILifecycleController carplaydsilifecyclecontroller) {
@@ -241,6 +256,7 @@ public class CarplayDSILifecycleController extends AbstractDSIController impleme
                 serviceconfiguration.yResolution = this.this$0.configuration.getWindowResolutionY();
             }
 
+            this.this$0.dsiCarPlayListener.resetPlaybackState();
             this.this$0.dsiCarplaySafe.startService(serviceconfiguration);
             if (this.this$0.logger.isDebug2()) {
                 this.this$0
@@ -257,6 +273,7 @@ public class CarplayDSILifecycleController extends AbstractDSIController impleme
 
         public void stopService() {
             this.this$0.logger.log(1000000, "[%1.stopService]", LOGCLASS);
+            this.this$0.dsiCarPlayListener.resetPlaybackState();
         }
 
         public void postButtonEvent(int i, int j) {
@@ -279,10 +296,28 @@ public class CarplayDSILifecycleController extends AbstractDSIController impleme
 
         public void requestUI(int i) {
             this.this$0.logger.log(1000000, "[%1.requestUI]", LOGCLASS);
-            this.this$0.dsiCarplaySafe.requestUI(this.mapUIId(i));
+            int mapped = this.mapUIId(i);
+            if (mapped == 0) {
+                /* The switch to CarPlay for a VC dial: the call screen, not CarPlay home. */
+                String pendingUrl = this.this$0.dsiCarPlayListener.peekPendingTelUrl(System.currentTimeMillis());
+                if (pendingUrl != null) {
+                    this.this$0.dsiCarplaySafe.requestUI2(pendingUrl);
+                    return;
+                }
+            }
+            this.this$0.dsiCarplaySafe.requestUI(mapped);
         }
 
         public void requestModeChange(IDSIAppState[] aidsiappstate, IDSIResource[] aidsiresource, String s) {
+            /* Volume 0: stock's PAUSED -> PAUSED_BY_MUTE sends "Paused -> Paused by mute" (BORROW)
+             * and at once "Borrow -> Unborrow". That UNBORROW hands main audio back to the
+             * muted iPhone, so playback resumes and bounces. Keep main audio borrowed
+             * (luka-dev MHI2Q-2026-10-29). */
+            if (UNBORROW_AFTER_MUTE.equals(s)) {
+                this.this$0.logger.log(
+                    1000000, "[%1.requestModeChange] suppress erroneous unborrow on PAUSED -> PAUSED_BY_MUTE", LOGCLASS);
+                return;
+            }
             this.this$0
                 .logger
                 .log(
@@ -294,6 +329,7 @@ public class CarplayDSILifecycleController extends AbstractDSIController impleme
                 );
             ResourceRequest[] aresourcerequest = this.convertResource2DSIResourceRequest(aidsiresource, false);
             AppStateRequest[] aappstaterequest = this.convertAppState2DSIAppStateRequest(aidsiappstate);
+            this.this$0.dsiCarPlayListener.trackRequestedScreenOwner(aidsiresource);
             this.this$0.dsiCarplaySafe.requestModeChange(aresourcerequest, aappstaterequest, s);
             if (this.this$0.logger.isDebug2()) {
                 this.this$0
@@ -472,13 +508,73 @@ public class CarplayDSILifecycleController extends AbstractDSIController impleme
 
     public static class DSICarplayListenerImpl implements DSICarplayListener {
         private static final String LOGCLASS = "DSICarplayListenerImpl";
+        private static final long PENDING_TEL_MS = 5000L;
         private final LogChannel logger;
         private final DispatcherBase dispatcher;
         private final IEventBus eventBus;
         private final IContext context;
         private ICarplayDSIControllerListener dioDSIControllerListener;
         private volatile TrackPlayPositionEvent notifiedPlayPosition;
+        private volatile PlaybackInfoChangedEvent.PlaybackState notifiedPlaybackState;
+        /* Main screen (DSI resource 2) owned by the iPhone; a VC dial waits for it. */
+        private volatile boolean screenOwnedByDevice;
+        private volatile String pendingTelUrl;
+        private volatile long pendingTelUrlMs;
+        private DSICarplaySafe dsiCarplaySafe;
         private final PlayPositionLogger playPositionLogger;
+
+        void setDsiCarplaySafe(DSICarplaySafe dsi) { this.dsiCarplaySafe = dsi; }
+
+        boolean isScreenOwnedByDevice() { return this.screenOwnedByDevice; }
+
+        void setPendingTelUrl(String url) {
+            this.pendingTelUrl = url;
+            this.pendingTelUrlMs = url != null ? System.currentTimeMillis() : 0L;
+        }
+
+        /* A pending VC dial is good for 5 s. */
+        String peekPendingTelUrl(long nowMs) {
+            String url = this.pendingTelUrl;
+            if (url != null && nowMs - this.pendingTelUrlMs < PENDING_TEL_MS) return url;
+            this.pendingTelUrl = null;
+            return null;
+        }
+
+        String consumePendingTelUrl(long nowMs) {
+            String url = peekPendingTelUrl(nowMs);
+            this.pendingTelUrl = null;
+            return url;
+        }
+
+        void trackRequestedScreenOwner(IDSIResource[] aidsiresource) {
+            if (aidsiresource == null) return;
+            for (int i = 0; i < aidsiresource.length; i++) {
+                IDSIResource r = aidsiresource[i];
+                /* owner 1 = MAINUNIT, 2 = DEVICE */
+                if (r != null && r.getDSIResourceId() == 2) this.screenOwnedByDevice = r.getOwner() != 1;
+            }
+        }
+
+        void trackScreenOwner(Resource[] aresource) {
+            if (aresource == null) return;
+            for (int i = 0; i < aresource.length; i++) {
+                Resource r = aresource[i];
+                if (r == null || r.getResourceID() != 2) continue;
+                boolean owned = r.getOwner() == 2;
+                this.screenOwnedByDevice = owned;
+                if (owned && this.dsiCarplaySafe != null) {
+                    String url = consumePendingTelUrl(System.currentTimeMillis());
+                    if (url != null) this.dsiCarplaySafe.requestUI2(url);
+                }
+            }
+        }
+
+        void resetPlaybackState() {
+            this.notifiedPlaybackState = null;
+            this.screenOwnedByDevice = false;
+            this.pendingTelUrl = null;
+            this.pendingTelUrlMs = 0L;
+        }
 
         private IResource[] convertResource(Resource[] aresource) {
             IResource[] airesource = new IResource[aresource.length];
@@ -545,6 +641,7 @@ public class CarplayDSILifecycleController extends AbstractDSIController impleme
         }
 
         public void init() {
+            this.notifiedPlaybackState = null;
             this.dioDSIControllerListener = (ICarplayDSIControllerListener)this.context
                 .get(
                     SmartphoneManager.SmartphoneType.CARPLAY,
@@ -556,6 +653,7 @@ public class CarplayDSILifecycleController extends AbstractDSIController impleme
             if (!this.isValid(i)) {
                 this.logger.log(10000000, "<- [%1.updateMode] Invalid.", LOGCLASS);
             } else {
+                this.trackScreenOwner(aresource);
                 final IAppState[] aiappstate = this.convertAppState(aappstate);
                 final IResource[] airesource = this.convertResource(aresource);
                 this.dispatcher
@@ -594,6 +692,7 @@ public class CarplayDSILifecycleController extends AbstractDSIController impleme
         }
 
         public void responseModeChange(Resource[] aresource, AppState[] aappstate, int i) {
+            if (this.isValid(i)) this.trackScreenOwner(aresource);
         }
 
         public void asyncException(int i, String s, int j) {
@@ -684,8 +783,15 @@ public class CarplayDSILifecycleController extends AbstractDSIController impleme
 
         public void updatePlaybackState(PlaybackInfo playbackinfo, int i) {
             if (this.isValid(i)) {
+                /* dio_manager calls this on every iAP2 PlaybackAttributes update (shuffle,
+                 * repeat, queue ...). A repeated PLAYING that arrives while "paused by mute" is
+                 * on its way to the iPhone made AudibleStateSyncer demute the MMI, so play/pause
+                 * bounced at volume 0. Forward state changes only (luka-dev MHI2Q-2026-10-29). */
+                PlaybackInfoChangedEvent.PlaybackState state = this.convert(playbackinfo.getStatus());
+                if (state == this.notifiedPlaybackState) return;
+                this.notifiedPlaybackState = state;
                 PlaybackInfoChangedEvent playbackinfochangedevent = new PlaybackInfoChangedEvent.Builder()
-                    .setPlaybackState(this.convert(playbackinfo.getStatus()))
+                    .setPlaybackState(state)
                     .build();
                 this.logger.log(1000000, "<- [%1.updatePlaybackState] %2", LOGCLASS, playbackinfochangedevent);
                 this.playPositionLogger.playbackStateChanged();

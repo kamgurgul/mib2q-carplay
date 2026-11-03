@@ -52,7 +52,16 @@ CarPlay or Android Auto automatically.
   the touchpad goes to CarPlay the stock way).
 - **AltScreen (optional, experimental).** The CarPlay map video on the cluster. The
   phone's turn card, ETA, speed limit and compass each switch ON / OFF in the GEM menu
-  (defaults: turn card ON, ETA OFF, speed limit OFF, compass OFF).
+  (defaults: turn card ON, ETA OFF, speed limit OFF, compass OFF). *All features on wide
+  view* shows all four on the wide cockpit view only; it re-sends the cluster request on every
+  wide ↔ small switch, which makes Yanosik restart (keep it OFF with Yanosik).
+- **CarPlay settings in the MMI** (*Connection manager → Options → CarPlay settings*, from
+  luka-dev's 2026-10-29 release, 14 languages): Maps on Cluster, Maneuver Cards Position
+  (left / center / right), Route Guidance, Map Cards during Guidance (hide the phone's turn
+  card and ETA while the cockpit shows native guidance), Guidance Maneuver Preview (always the
+  next maneuver, or follow road while it is far away), plus the GEM map switches (turn card,
+  ETA, speed limit, compass, all features in wide view). They write the same files as the GEM
+  buttons, so both menus always agree. Host-tested; car validation pending.
   Status and open issues are in
   [`docs/deploy/altscreen-mhi2q.md`](docs/deploy/altscreen-mhi2q.md).
 - **Android Auto.** The Google Maps / Waze map video on the cluster (following the Large,
@@ -63,7 +72,10 @@ CarPlay or Android Auto automatically.
   untested `gal` builds run with a crash guard ([firmware-porting](docs/android-auto/firmware-porting.md)). See
   [`docs/android-auto/overview.md`](docs/android-auto/overview.md).
   The updated hook and Java patch also bridge final destination, remaining trip distance and
-  ETA when the navigation app supplies them (host-tested; car validation pending).
+  ETA when the navigation app supplies them (host-tested; car validation pending). Hardware
+  decoding of the Android Auto map matters: software decoding cannot keep up and the map
+  freezes ([#44](https://github.com/kamgurgul/mib2q-carplay/issues/44)); GEM *HW decoder ON*
+  re-enables it.
 
 **Compatibility:** Audi MHI2Q units with a fully digital cluster (Virtual Cockpit).
 Developed and tested on an **Audi A5 (F5) with MU1329** (`MHI2Q_ER_AUG22_P5152`) firmware. Other MHI2Q
@@ -174,6 +186,16 @@ This runs every build below in order, then replaces
 `mods/install_MoreIncredibleBash/mod/carplay/` with exactly one complete release. Copy
 `mods/install_MoreIncredibleBash/` to the SD card and go to [Install](#install).
 
+To package a versioned release (the layout of the GitHub release zips) instead:
+
+```sh
+./scripts/build_release.sh              # full build, then release/mib2q-carplay-1.4/ and .zip
+NO_BUILD=1 ./scripts/build_release.sh   # package the build that is already staged
+```
+
+It needs `docs/release/RELEASE_NOTES-<version>.md`. The zip's `SD-CARD/` folder is what goes on
+the card (see [Install](#install)).
+
 The individual builds write to `build/`:
 
 ```sh
@@ -213,9 +235,31 @@ child of `smartphone_integrator.json` is replaced too.
 
 ## Install
 
-**With M.I.B. (recommended):**
+**From a release zip (recommended):** one M.I.B. run installs CarPlay and the
+[CarPlay-RGI menu](#carplay-rgi-menu-green-engineering-menu).
 
-1. Copy `mods/install_MoreIncredibleBash/` to the M.I.B. SD card.
+1. Copy the **contents** of the zip's `SD-CARD/` folder to the root of the M.I.B. SD card:
+
+   ```text
+   SD card root/
+   ├─ mod/custom.sh, command.sh   setup: installs the release, then the menu
+   ├─ mod/install/                installer (reads ../../carplay)
+   ├─ mod/menu/                   Green Engineering Menu installer
+   └─ carplay/                    the release + VERSION
+   ```
+2. Disconnect the phone.
+3. Run **GEM → M.I.B. → Advanced Settings → Run Custom Script** and wait for
+   `DONE. mib2q-carplay <version> installed.`
+4. Reboot (see below).
+
+To update, copy the new `carplay/` **and** `mod/` and run the same script again. The menu's
+*Install / update CarPlay* button updates the program files only, not the menu itself.
+The release notes in [`docs/release/`](docs/release/) list what changed.
+
+**From a source build:**
+
+1. Copy `mods/install_MoreIncredibleBash/` to the M.I.B. SD card (and
+   `mods/menu_install_MoreIncredibleBash/` when the menu changed).
 2. Disconnect CarPlay.
 3. Run **GEM → M.I.B. → Advanced Settings → Run Custom Script**.
 
@@ -270,7 +314,7 @@ Its buttons run byte-identical copies of the M.I.B. mods, stored on the unit in
 | Reset SafeArea to built-in | drop both custom SafeAreas | no |
 | Small-map SafeAreas ON / OFF | toggle between three ViewAreas (wide + classic + sport) and a single wide one (next CarPlay connect) | no |
 | Re-request cluster map | re-send the cluster request in the running session so iOS picks the map app again (test) | no |
-| HW decoder ON / OFF | toggle hardware H.264 decode for the cluster video (default ON; next CarPlay connect) | no |
+| HW decoder ON / OFF | toggle hardware H.264 decode for the cluster video, CarPlay and Android Auto (default ON; next phone connect) | no |
 | HW decoder 2-min delayed start ON / OFF | CarPlay decodes in software for the first 2 minutes after an MMI start, then switches to hardware (default OFF: hardware at once). Turn on if the MMI freezes when CarPlay connects right after a start | no |
 | Android Auto cluster map ON / OFF | Android Auto cluster map on/off (next phone connect) | no |
 | Android Auto cluster day/night ON / OFF | opt-in, experimental: the Android Auto cluster map follows the MMI day/night design instead of always dark (picked at each phone connect) | no |
@@ -311,6 +355,7 @@ These run on the host and need no unit:
 ./scripts/run_tests.sh                 # C + shell: parser, bus, cover art, installer, supervisor
 bash scripts/test_route_info.sh        # Java route guidance / BAP bridge against the stock jar
 bash scripts/test_java_transports.sh   # Java bus, renderer sockets, touchpad, PDC
+bash scripts/test_mmi_settings.sh      # MMI CarPlay settings, translations, cover-art clear
 bash scripts/test_maneuver_native.sh   # renderer engine (ASan/UBSan)
 ```
 

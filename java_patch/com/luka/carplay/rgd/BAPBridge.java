@@ -46,6 +46,16 @@ public class BAPBridge {
     private static final int EXITVIEW_EU = 0;
     private static final int EXITVIEW_NAR = 1;
 
+    /* MMI "Guidance Maneuver Preview": marker present = always the next maneuver.
+     * Read when the module starts; RouteGuidance.onPreviewSettingsChanged() reloads it
+     * under the RouteGuidance monitor that also serializes update(). Default keeps this
+     * fork's follow-road behavior. */
+    private static final String NEXT_MANEUVER_MARKER = "/mnt/app/carplay_rgd.next_maneuver";
+    private boolean followWhenFar = !new java.io.File(NEXT_MANEUVER_MARKER).exists();
+    public void reloadPreviewSetting() {
+        followWhenFar = !new java.io.File(NEXT_MANEUVER_MARKER).exists();
+    }
+
     /*
      * Fixed maneuver thresholds (meters).
      * These are intentionally static (no speed/time conversion at runtime).
@@ -136,15 +146,11 @@ public class BAPBridge {
      * keeps onShutdown from reopening the RG gate when CarPlay nav merely ends mid-session. */
     private volatile boolean takeoverEngaged = false;
     private boolean nativeStopAttempted = false;
-    /* Our rgActive forge is an overlay on shared HMI state, not our own flag: the whole
-     * navigation app reads DSIResponseContainer.isRgActive() (StartRouteGuidanceSequences,
-     * RgStopGuidanceGeneralCommand, RGStartGuidanceCalculatedRoute, ClusterViewMode ...).
-     * Remember what the DSI last reported so releasing the overlay restores that value
-     * instead of guessing -- a stale forged "true" sends the stock "start route guidance"
-     * sequence down the add-stopover/replace-destination-on-active-route branch of a route
-     * the nav core no longer guides, and it aborts on every attempt until the next reboot. */
-    private boolean rgActiveForced = false;
-    private boolean rgActiveSaved = false;
+    /* CarPlay RGI is announced to the cluster with ClusterService.setCarPlayRgiActive(),
+     * never by forging DSIResponseContainer.setRgActive(true): the whole navigation app
+     * reads that flag, and RouteManager stores it at standby (POWERSTATE_STANDBY ->
+     * RoutePersistenceController.storeGuidanceStatus), so a forged "true" made Audi
+     * navigation resume an old route on a later start (luka-dev MHI2Q-2026-10-29). */
     /* A route-absent result is definite for connect-time takeover, but a stock route may
      * still be started later in the same CarPlay session.  Re-check that result once when
      * CarPlay RGI itself activates; a successfully issued stop remains session-final. */
@@ -475,9 +481,17 @@ public class BAPBridge {
     /** @return true only after RouteManager supplied a definite result.  A null singleton,
      *  null RouteManager or transient exception is PENDING and must be retried by startRetry. */
     private boolean tryStopNativeNavigation() {
-        /* Always issue the cluster-side abort signal first — at minimum it
-         * resets cluster UI state even if RouteManager is unavailable. */
-        if (!nativeAbortIssued && csRef != null) {
+        DSIResponseContainer container = null;
+        try { container = csRef != null ? csRef.getDSIResponseContainer() : null; }
+        catch (Throwable t) { /* unknown: treated as running below */ }
+        /* null container = unknown, so behave as before (abort + RouteManager check). */
+        boolean nativeRgRunning = container == null
+            || container.isRgActive() || container.getRgRouteCalculationState() != 0;
+
+        /* Abort only while native RG runs or calculates: setRouteGuidanceAborted() and the
+         * RgStopGuidanceGeneralCommand it queues on NavigationJobs otherwise race with
+         * CarPlay RGI startup. */
+        if (nativeRgRunning && !nativeAbortIssued && csRef != null) {
             try {
                 csRef.setRouteGuidanceAborted();
                 nativeAbortIssued = true;
@@ -502,6 +516,21 @@ public class BAPBridge {
                 logNativeStopEdge(2,
                     "Pre-gate: PENDING — RouteManager is null", true);
                 return false;
+            }
+            if (!nativeRgRunning) {
+                /* Scrub a stale savedRGActive=true that older builds' forged rgActive left in
+                 * persistence: re-store the guidance status as stock does at standby, now
+                 * with the real (inactive) flag, so no historical route auto-resumes. */
+                if (rm instanceof de.audi.tghu.navi.app.routeguidance.RouteManager) {
+                    try {
+                        ((de.audi.tghu.navi.app.routeguidance.RouteManager) rm)
+                            .notifyPowerListenerOnEnterState(2, 0);
+                    } catch (Throwable ignore) { /* best effort */ }
+                }
+                nativeStopWasRouteAbsent = true;
+                logNativeStopEdge(3,
+                    "Pre-gate: DONE — native RG already inactive", false);
+                return true;
             }
             /* Skip work if no active route — stopRouteGuidance() is a heavy
              * CommandList walk; harmless on idle but spammy in the log. */
@@ -564,28 +593,14 @@ public class BAPBridge {
     }
 
     /**
-     * Force cluster acceptance flags so VC accepts RGI BAP messages.
+     * Force cluster acceptance flags so VC accepts RGI BAP messages. The CarPlay flag lives
+     * in ClusterService (refreshRGIValid), not in the navigation-wide DSIResponseContainer.
      */
     private void forceClusterRouteInfoState(boolean active) {
         if (csRef == null) return;
 
-        try {
-            DSIResponseContainer container = csRef.getDSIResponseContainer();
-            if (container != null) {
-                if (active) {
-                    if (!rgActiveForced) {
-                        rgActiveSaved = container.isRgActive();
-                        rgActiveForced = true;
-                    }
-                    container.setRgActive(true);
-                } else if (rgActiveForced) {
-                    rgActiveForced = false;
-                    container.setRgActive(rgActiveSaved);
-                    Log.i(TAG, "rgActive overlay released (restored " + rgActiveSaved + ")");
-                }
-            }
-        } catch (Exception e) {
-        }
+        try { csRef.setCarPlayRgiActive(active); }
+        catch (Throwable t) { Log.w(TAG, "setCarPlayRgiActive failed: " + t.getMessage()); }
 
         if (active) {
             try { csRef.updateRGIString(new short[]{1}); }
@@ -1034,7 +1049,7 @@ public class BAPBridge {
             /* Like Audi navigation, show "follow road" until the next maneuver enters
              * the prepare zone (1.5 km city / 3 km highway); the real icon replaces it
              * there. */
-            boolean follow = hasUsableDistance && !isArrival && distM > prepareThreshold;
+            boolean follow = followWhenFar && hasUsableDistance && !isArrival && distM > prepareThreshold;
             if (showManeuver && hasManeuverList && follow != followSent) {
                 dirty |= RouteGuidance.State.DIRTY_MANEUVER_ICON;
             }

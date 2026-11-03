@@ -1049,6 +1049,10 @@ static void rgd_mark_first_response(uint16_t msgid) {
 
 /* Message handler - incoming 0x5201/0x5202/0x5204 */
 static bool rgd_message_handler(hook_context_t* ctx, const iap2_frame_t* frame) {
+    /* Phone updates only (luka-dev MHI2Q-2026-10-29): the per-call context says which way. */
+    if (!ctx || !frame || ctx->direction != MSG_DIR_INCOMING || !ctx->raw_buf ||
+        ctx->raw_len < frame->frame_len)
+        return false;
     rgd_lazy_init();  /* Ensure bus/session state is ready */
 
     if (frame->msgid == IAP2_MSG_ROUTE_GUIDANCE_UPDATE) {

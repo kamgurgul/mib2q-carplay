@@ -49,7 +49,8 @@ typedef struct {
 /* Returns the newest complete image in this delivery, malloc-owned by caller.
  * Partial successors remain buffered. Completion is the file opcode, never a
  * byte pattern inside the image. Setup may be size-only (8 bytes) or include
- * a type (10+ bytes). Size 0 in Setup means unknown length. */
+ * a type (10+ bytes). Size-only 0 means unknown length; typed artwork size 0
+ * returns a malloc-owned non-NULL pointer with length 0 (clear current art). */
 void coverart_stream_feed(coverart_stream_t *s, const uint8_t *bytes, size_t len,
                          uint8_t **image, size_t *image_len);
 /* Identify resets transfers and sequencing but keeps negotiated session IDs. */

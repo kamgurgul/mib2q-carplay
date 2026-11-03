@@ -79,7 +79,8 @@ public class CoverArt implements CarplayBus.Listener {
         if (type != CarplayBus.EVT_COVERART) return;
 
         CarplayBus.Data d = CarplayBus.parseText(payload, len);
-        publish(d.num64("crc", 0), d.str("path", COVERART_PATH));
+        long crc = d.num64("crc", 0);
+        publish(crc, d.str("path", COVERART_PATH), crc == 0 && d.num64("clear", 0) == 1);
     }
 
     /** Artwork produced inside the HMI (Android Auto, com.luka.carplay.aa.AaCoverArt): the
@@ -99,12 +100,18 @@ public class CoverArt implements CarplayBus.Listener {
     }
 
     private void publish(long crc, String path) {
+        publish(crc, path, false);
+    }
+
+    private void publish(long crc, String path, boolean clear) {
         Callback cb;
         int newArtId;
         String newPath;
         synchronized (this) {
-            if (!running || crc == 0 || crc == lastCrc) return;
-            if (path != null && path.length() > 0) currentPath = path;
+            if (!running || (!clear && (crc == 0 || crc == lastCrc))
+                    || (clear && lastCrc == 0 && currentPath.length() == 0)) return;
+            if (clear) currentPath = "";
+            else if (path != null && path.length() > 0) currentPath = path;
             artId = (int) crc;  /* CRC doubles as picture ID (matches reference impl) */
             /* Publish last: hasCoverArt() seeing the new volatile CRC also sees matching path/id. */
             lastCrc = crc;

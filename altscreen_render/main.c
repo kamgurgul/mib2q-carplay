@@ -45,6 +45,9 @@
  *   ALTR_AA_LIVE_TIMEOUT_MS (default 0 = while connected) — same for Android Auto,
  *                   which sends almost no pictures while its map does not change
  *                   (car log 020: one picture every ~6 s)
+ *   ALTR_AA_DECODE_THREADS (default 2, 1..4) — frame threads of the Android Auto
+ *                   software decoder (fallback when hardware decode is off); 1 = the
+ *                   low-delay single-thread decoder of 1.3.1 (issue #44)
  *   ALTR_HW_MIN_UPTIME_S (default 120) — no hardware decoder before this uptime;
  *                   software decode until then, then one reconnect to hardware.
  *                   Android Auto always; CarPlay only with the marker
@@ -121,7 +124,11 @@ static uint64_t now_ms(void)
  * OFF (GEM CarPlay-RGI -> "HW decoder ON / OFF"); a real hardware failure
  * creates it, so later sessions stay on the software path until switched back
  * on. Read per tee connection. Each source has its own pair, so an Android Auto
- * (1080p) decoder failure never switches CarPlay's proven path off. */
+ * (1080p) decoder failure never switches CarPlay's proven path off. An Android
+ * Auto failure writes only the /tmp twin: software decode cannot keep up with its
+ * 1080p30 stream (no NEON in this FFmpeg build), the tee falls behind and the
+ * cockpit picture freezes until the phone's next key frame (issue #44), so every
+ * boot tries hardware again after the settle time. */
 #define ALTR_HWDEC_OFF_MARKER "/mnt/app/root/altscreen_render.hwdecode.off"
 /* /mnt/app is normally read-only to us; the /tmp twin always works and keeps a
  * failed hardware path off for the rest of this boot either way. */
@@ -137,6 +144,8 @@ struct source {
     const char *hw_off_marker;  /* persistent "hardware decode off" switch */
     const char *hw_off_boot;    /* the same for this boot (/tmp) */
     const char *hw_settle_marker; /* present => wait ALTR_HW_MIN_UPTIME_S before hardware; NULL = always wait */
+    int hw_fail_persists;       /* a hardware failure also writes hw_off_marker (else this boot only) */
+    int sw_threads;             /* software decoder frame threads; 1 = low delay */
 };
 
 /* Delayed hardware start (GEM "HW decoder delayed start"): CarPlay starts on hardware at once
@@ -406,6 +415,7 @@ static void hw_switch_off(const struct source *s)
 {
     int fd = open(s->hw_off_boot, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd >= 0) close(fd);
+    if (!s->hw_fail_persists) return;
     fd = open(s->hw_off_marker, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd >= 0) close(fd);
     else fprintf(stderr, "altscreen_render: %s not writable (errno %d); off for this boot only\n",
@@ -724,6 +734,10 @@ static void sources_init(struct source *src, int *nsrc, int surface_w, int surfa
     src[*nsrc].hw_off_marker = ALTR_HWDEC_OFF_MARKER;
     src[*nsrc].hw_off_boot = ALTR_HWDEC_OFF_BOOT;
     src[*nsrc].hw_settle_marker = ALTR_HW_SETTLE_MARKER;
+    src[*nsrc].hw_fail_persists = 1;
+    /* Apple Maps without a route sends a picture only when the map changes: a frame
+     * threaded decoder would hold the last one back, so CarPlay stays low delay. */
+    src[*nsrc].sw_threads = 1;
     (*nsrc)++;
 
     if (env_i("ALTR_AA_TEE_PORT", 19821) <= 0) return;
@@ -752,6 +766,14 @@ static void sources_init(struct source *src, int *nsrc, int surface_w, int surfa
     src[*nsrc].hw_off_marker = ALTR_AA_HWDEC_OFF_MARKER;
     src[*nsrc].hw_off_boot = ALTR_AA_HWDEC_OFF_BOOT;
     src[*nsrc].hw_settle_marker = NULL;          /* always wait (issue #14) */
+    src[*nsrc].hw_fail_persists = 0;             /* issue #44: this boot only */
+    /* Software fallback only (the hardware decoder is the default). On one core a
+     * 1080p30 drive falls behind and freezes until the next key frame (issue #44).
+     * Frame threads keep up; the cost is one picture of delay, so while the map is
+     * still (a picture every few seconds) the cockpit shows the one before the last. */
+    src[*nsrc].sw_threads = env_i("ALTR_AA_DECODE_THREADS", 2);
+    if (src[*nsrc].sw_threads < 1) src[*nsrc].sw_threads = 1;
+    if (src[*nsrc].sw_threads > 4) src[*nsrc].sw_threads = 4;
     (*nsrc)++;
 }
 
@@ -761,6 +783,7 @@ int main(void)
     struct source src[2];
     int nsrc, k;
     memset(&a, 0, sizeof(a));
+    memset(src, 0, sizeof(src));
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
     signal(SIGPIPE, SIG_IGN);
@@ -816,8 +839,18 @@ int main(void)
     fprintf(stderr, "altscreen_render: host build (headless tee sink, no GL)\n");
 #endif
 
-    altr_decoder_t *dec = altr_decode_create(on_frame, &a);
-    if (!dec) {
+    /* One software decoder per source: each keeps its own threading mode. */
+    altr_decoder_t *decs[2] = { NULL, NULL };
+    int dec_ok = 1;
+    for (k = 0; k < nsrc; k++) {
+        decs[k] = altr_decode_create_threads(on_frame, &a, src[k].sw_threads);
+        if (!decs[k]) dec_ok = 0;
+        else if (src[k].sw_threads > 1)
+            fprintf(stderr, "altscreen_render: %s software decoder: %d frame threads\n",
+                    src[k].name, src[k].sw_threads);
+    }
+    if (!dec_ok) {
+        for (k = 0; k < nsrc; k++) altr_decode_destroy(decs[k]);
         write_status("decoder_error", 0, 0, 0);
         set_live(0);
 #ifdef PLATFORM_QNX
@@ -855,6 +888,11 @@ int main(void)
         a.last_shown_ms = 0;
         g_source_name = s->name;
         fprintf(stderr, "altscreen_render: connected to %s tee %s:%d\n", s->name, host, s->port);
+#ifdef PLATFORM_QNX
+        if (!hw_wanted(s))
+            fprintf(stderr, "altscreen_render: %s hardware decode OFF (%s present); software decode\n",
+                    s->name, access(s->hw_off_boot, F_OK) == 0 ? s->hw_off_boot : s->hw_off_marker);
+#endif
         write_status("connected", a.last_w, a.last_h, a.frames);
 
         /* Recv loop with a poll so we can drop .live when frames stall and exit
@@ -1022,7 +1060,7 @@ int main(void)
                 }
                 if (!a.have_gl && ensure_gl(&a) != 0) continue;
 #endif
-                altr_decode_feed(dec, buf, (size_t)n);
+                altr_decode_feed(decs[s - src], buf, (size_t)n);
             } else if (r < 0 && errno != EINTR) {
                 break;
             }
@@ -1060,7 +1098,7 @@ int main(void)
         a.hw_deferred = 0;
         if (!upgrade) a.live_hold_until_ms = 0;
 #endif
-        altr_decode_flush(dec);
+        altr_decode_flush(decs[s - src]);
         if (!upgrade) set_live(0);
         a.last_shown_ms = 0;
         write_status("tee_closed", a.last_w, a.last_h, a.frames);
@@ -1076,7 +1114,7 @@ done:
 #endif
     set_live(0);
     write_status("stopped", a.last_w, a.last_h, a.frames);
-    altr_decode_destroy(dec);
+    for (k = 0; k < nsrc; k++) altr_decode_destroy(decs[k]);
 #ifdef PLATFORM_QNX
     gl_shutdown(&a);
 #endif

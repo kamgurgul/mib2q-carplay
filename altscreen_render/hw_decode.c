@@ -95,6 +95,14 @@ static OMX_ERRORTYPE on_event(OMX_HANDLETYPE h, void *app, OMX_U32 ev, OMX_U32 d
     if (ev == OMX_EventCmdComplete && d1 == OMX_CommandStateSet) {
         d->state = d2;
     } else if (ev == OMX_EventError) {
+        /* A damaged access unit is recoverable; the next IDR repairs the picture.
+         * Keep the component alive, as in Luka's October 29 release. Hardware and
+         * timeout errors still take the existing guarded fallback path. */
+        if (d->executing && (d1 == OMX_ErrorStreamCorrupt || d1 == OMX_ErrorMbErrorsInFrame)) {
+            fprintf(stderr, "hw_decode: damaged frame (OMX 0x%x), continuing\n", d1);
+            pthread_mutex_unlock(&d->lock);
+            return 0;
+        }
         fprintf(stderr, "hw_decode: OMX error 0x%x data2=0x%x -> software fallback\n", d1, d2);
         d->failed = 1;
         /* Timeout / Hardware: the shared Venus core hung (issue #14: slog

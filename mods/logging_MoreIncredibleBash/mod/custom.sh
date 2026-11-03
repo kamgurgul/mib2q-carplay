@@ -94,6 +94,8 @@ run pfctl_nat.txt pfctl -sn
 run pfctl_info.txt pfctl -si
 run netstat_an.txt netstat -an
 run hooks_ls.txt ls -la /mnt/app/root/hooks /mnt/app/eso/hmi/lsd/jars /mnt/app/eso/bin/apps/smartphone_integrator
+# Setting markers (HW decoder off, cluster map, route guidance, MMI CarPlay settings).
+run markers_ls.txt ls -la /mnt/app /mnt/app/root
 run carplay_stock_ls.txt find /mnt/app /mnt/system -name '*.carplay-stock'
 run tmp_ls.txt ls -la "$SRC/"     # /tmp is a symlink to /dev/shmem: list what it points at
 run cores_ls.txt ls -la /mnt/ota/system/core

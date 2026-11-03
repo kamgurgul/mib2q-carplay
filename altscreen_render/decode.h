@@ -49,6 +49,12 @@ typedef struct altr_decoder altr_decoder_t;
 /* Create a decoder. cb is invoked once per decoded frame. NULL on failure. */
 altr_decoder_t *altr_decode_create(altr_frame_cb cb, void *user);
 
+/* threads <= 1: the low-delay decoder above, every picture out as soon as it decodes.
+ * threads > 1: FFmpeg frame threading for a stream that keeps pictures coming (Android
+ * Auto's 30 FPS), roughly threads times the throughput, each picture one AU later. Not
+ * for a sparse stream: the last picture of a burst waits for the next AU (or a flush). */
+altr_decoder_t *altr_decode_create_threads(altr_frame_cb cb, void *user, int threads);
+
 /* Feed Annex-B H.264 bytes (any chunking). Emits frames via the callback.
  * Returns 0 on success, <0 on a fatal decoder error. */
 int altr_decode_feed(altr_decoder_t *d, const uint8_t *data, size_t len);

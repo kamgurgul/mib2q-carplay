@@ -77,6 +77,14 @@ public final class FollowStreetTest {
         RouteGuidance.State arrive = route(ManeuverMapper.MT_ARRIVE_AT_DESTINATION, 900);
         move(bridge, arrive, 5000, icon);
         check(hud.main != ManeuverMapper.FOLLOW_STREET, "arrival replaced by follow road");
+        set(bridge, "followWhenFar", Boolean.FALSE);
+        move(bridge, s, 5000, icon);
+        check(hud.main != ManeuverMapper.FOLLOW_STREET, "always-next preview replaced distant turn");
+        move(bridge, arrive, 5000, icon);
+        check(hud.main != ManeuverMapper.FOLLOW_STREET, "preview lost arrival");
+        set(bridge, "followWhenFar", Boolean.TRUE);
+        move(bridge, s, 5000, icon);
+        check(hud.main == ManeuverMapper.FOLLOW_STREET, "follow-road preview not restored");
         System.out.println("FollowStreetTest: follow road beyond prepare (city/highway), turn inside, arrival kept PASS");
     }
 }

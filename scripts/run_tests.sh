@@ -54,6 +54,13 @@ cc -std=gnu99 -O1 -Wall -Wextra -Werror -Wno-unused-function \
     -DENABLE_LOGGING=0 -Ihook -Ihook/framework tests/inject_generation_test.c -o "$OUT/inject_generation"
 "$OUT/inject_generation"
 
+printf '%-32s ' iap2_dispatch_test
+cc -std=gnu99 -O1 -Wall -Wextra -Werror -Wno-unused-function -Wno-unused-variable \
+    -Wno-unused-but-set-variable -ffunction-sections -fdata-sections -Ihook \
+    tests/iap2_dispatch_test.c hook/framework/iap2_protocol.c "$DEAD_STRIP" \
+    -lpthread -ldl -o "$OUT/iap2_dispatch"
+"$OUT/iap2_dispatch"
+
 printf '%-32s ' state_trace_test
 cc -std=gnu99 -O2 -Wall -Wextra -Werror -Ihook \
     -DENABLE_LOGGING=0 -DENABLE_STATE_TRACE=1 \
@@ -106,6 +113,15 @@ cc -std=gnu99 -O2 -Wall -Wextra -Werror -pedantic -Ialtscreen_render \
     tests/altscreen_view_test.c altscreen_render/view.c -o "$OUT/altscreen_view"
 "$OUT/altscreen_view"
 
+printf '%-32s ' alt111_settings_test
+# The shipping gen2 URL builder: MMI CarPlay settings, guidance edges (needs no jar).
+mkdir -p "$OUT/alt111_settings.d"
+cc -std=gnu99 -O1 -Wall -Wextra -Werror -Wno-unused-function \
+    -Ialtscreen_hook/include tests/alt111_settings_test.c altscreen_hook/src/alt111_profile.c \
+    altscreen_hook/src/alt111_control.c altscreen_hook/src/alt111_video.c \
+    altscreen_hook/src/alt111_resync.c -lpthread -ldl -o "$OUT/alt111_settings"
+"$OUT/alt111_settings" "$OUT/alt111_settings.d"
+
 printf '%-32s ' alt111_control_test
 cc -std=gnu99 -O2 -Wall -Wextra -Werror -pedantic -Ialtscreen_hook/include \
     tests/alt111_control_test.c altscreen_hook/src/alt111_control.c \
@@ -138,6 +154,12 @@ printf '%-32s ' aa_hook_gate_test
 cc -std=gnu99 -O1 -Wall -Wextra -Werror -Wno-unused-function -pthread -D_GNU_SOURCE \
     "-DAA_UNPINNED_PATH=\"$OUT/aa_unpinned\"" tests/aa_hook_gate_test.c -ldl -o "$OUT/aa_hook_gate"
 "$OUT/aa_hook_gate"
+
+printf '%-32s ' maps_profile_test
+cc -std=gnu99 -O1 -Wall -Wextra -Werror -DENABLE_LOGGING=0 -Ihook \
+    "-DMAPS_PROFILE_OFF_PATH=\"$OUT/maps30.off\"" tests/maps_profile_test.c \
+    hook/mapsprofile/maps_profile.c -o "$OUT/maps_profile"
+"$OUT/maps_profile"
 
 printf '%-32s ' tel_hook_test
 cc -std=gnu99 -O1 -Wall -Wextra -Werror -Wno-unused-function \
@@ -179,3 +201,13 @@ echo "Android Auto tee port $hook_port: hook and renderer agree"
 
 printf '%-32s ' aa_startup_test
 sh scripts/test_aa_startup.sh
+
+printf '%-32s ' rgi_persistence_contract
+# RouteManager stores DSIResponseContainer.isRgActive() at standby: phone RGI must use
+# ClusterService.setCarPlayRgiActive(), never forge the navigation-wide flag (stale route resume).
+B=java_patch/com/luka/carplay/rgd/BAPBridge.java
+C=java_patch/de/audi/tghu/navi/app/cluster/ClusterService.java
+if grep -nE '^[^*/]*\.setRgActive\(' "$B"; then echo "FAIL: BAPBridge forges DSIResponseContainer.setRgActive"; exit 1; fi
+grep -q 'csRef.setCarPlayRgiActive(active)' "$B" && grep -q 'this.carplayRgiActive || this.env.getContainer().isRgActive()' "$C" \
+    || { echo "FAIL: CarPlay RGI flag not wired through ClusterService"; exit 1; }
+echo "phone RGI flag stays in ClusterService (no persisted rgActive forge)"

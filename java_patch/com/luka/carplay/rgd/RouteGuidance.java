@@ -22,6 +22,7 @@ import com.luka.carplay.framework.Log;
 public class RouteGuidance implements CarplayBus.Listener {
 
     private static final String TAG = "RouteGuidance";
+    private static volatile RouteGuidance activeInstance;
     private static final int MAX_MANEUVERS = 32;
     /*
      * RouteGuidanceState values verified from MHI3 dio_manager:
@@ -321,6 +322,7 @@ public class RouteGuidance implements CarplayBus.Listener {
             routeWantsActive = false;
             state.reset();
         }
+        activeInstance = this;
         /* stop() clears static listeners so a restarted module never retains a
          * stale RouteGuidance instance. Re-register both session inputs here. */
         com.luka.carplay.core.ScreenModule.setViewAreaModeListener(viewAreaModeListener);
@@ -363,6 +365,7 @@ public class RouteGuidance implements CarplayBus.Listener {
      * Stop route guidance.
      */
     public void stop() {
+        if (activeInstance == this) activeInstance = null;
         if (!running) return;
         CarplayBus.getInstance().off(CarplayBus.EVT_RGD_UPDATE);
         Thread worker;
@@ -568,6 +571,17 @@ public class RouteGuidance implements CarplayBus.Listener {
             if (updatePublished) state.clearDirty();
             if (bap.takePositionScrollChange() || !confirmed) wakePositionScroll();
             if (!confirmed || !updatePublished) requestPresentationCheck("presentation-update-pending");
+        }
+    }
+
+    /** Replay the new preview mode without dropping the active route or renderer. */
+    public static void onPreviewSettingsChanged() {
+        RouteGuidance rg = activeInstance;
+        if (rg == null) return;
+        synchronized (rg) {
+            if (!rg.running || rg.bap == null) return;
+            rg.bap.reloadPreviewSetting();
+            rg.requestPresentationCheck("preview-setting");
         }
     }
 

@@ -140,8 +140,14 @@ public class GatedPhoneService implements CombiBAPServicePhone {
     private int[] favoriteServices = new int[0];
     private boolean muted;
 
-    /* CarPlay calls: slot order follows DSICarplay's array. */
+    /* CarPlay calls: slot order follows DSICarplay's array.
+     * dio_manager keys its call map by uniqueCallID, or by phoneNumber while that is empty,
+     * and erases an entry only on DSI_DISCONNECTED. A call first reported without a CallUUID
+     * and later with one (or the reverse) therefore leaves an orphan under the other key for
+     * the rest of the session; ignoredCallKeys hides those (luka-dev MHI2Q-2026-10-29). */
     private CallState[] calls = new CallState[0];
+    private final java.util.HashSet ignoredCallKeys = new java.util.HashSet();
+    private int hangupSeq;
     private final String[] activeIds = new String[SLOTS];
     private final long[] activeSince = new long[SLOTS];
 
@@ -199,9 +205,15 @@ public class GatedPhoneService implements CombiBAPServicePhone {
                 break;
             case ACT_HANGUP:
                 /* iAP2 EndCall, action 0, no UUID: iOS ends the frontmost call,
-                 * dialing included. */
-                if (liveCalls() > 0 && tel(TEL_CMD_END, false)) result = RESULT_OK;
+                 * dialing included. Always OK, so the VC never stays on "Ending call";
+                 * a 1 s watchdog drops an orphaned entry if no CallStateUpdate follows. */
+                if (liveCalls() > 0) {
+                    tel(TEL_CMD_END, false);
+                    scheduleHangupWatchdog();
+                }
+                result = RESULT_OK;
                 real.hangupCallResult(result);
+                if (liveCalls() == 0) publishCalls();
                 break;
             case ACT_HOLD:
             case ACT_RESUME:
@@ -317,8 +329,114 @@ public class GatedPhoneService implements CombiBAPServicePhone {
     }
 
     private synchronized void setCalls(CallState[] cs) {
-        calls = cs != null ? cs : new CallState[0];
+        hangupSeq++;
+        if (cs == null || cs.length == 0) {
+            ignoredCallKeys.clear();
+            calls = new CallState[0];
+            if (gated) publishCalls();
+            return;
+        }
+        /* 1. A disconnecting entry, or a keyed entry next to a keyless one for the same
+         *    call, marks the copies dio_manager left under the other key. */
+        boolean anyDisconnected = false;
+        for (int i = 0; i < cs.length; i++) {
+            CallState a = cs[i];
+            if (a == null) continue;
+            if (a.status == DSI_DISCONNECTED) {
+                anyDisconnected = true;
+                ignoredCallKeys.remove(callKey(a));
+                for (int j = 0; j < cs.length; j++) {
+                    CallState b = cs[j];
+                    if (b == null || b == a || b.status == DSI_DISCONNECTED) continue;
+                    if (sameOrOrphanedCall(b, a)) ignoredCallKeys.add(callKey(b));
+                }
+            } else if (str(a.uniqueCallID).length() > 0) {
+                for (int j = 0; j < cs.length; j++) {
+                    CallState b = cs[j];
+                    if (b == null || b == a || b.status == DSI_DISCONNECTED) continue;
+                    if (str(b.uniqueCallID).length() == 0 && sameOrOrphanedCall(b, a))
+                        ignoredCallKeys.add(callKey(b));
+                }
+            }
+        }
+        /* 2. Without a disconnect in this update, a keyed call that becomes active again
+         *    is real: show it. */
+        java.util.ArrayList kept = new java.util.ArrayList(cs.length);
+        for (int i = 0; i < cs.length; i++) {
+            CallState c = cs[i];
+            if (c == null || c.status == DSI_DISCONNECTED) continue;
+            String key = callKey(c);
+            if (!anyDisconnected && c.status == DSI_ACTIVE && str(c.uniqueCallID).length() > 0)
+                ignoredCallKeys.remove(key);
+            if (!ignoredCallKeys.contains(key)) kept.add(c);
+        }
+        calls = (CallState[]) kept.toArray(new CallState[kept.size()]);
         if (gated) publishCalls();
+    }
+
+    /* EndCall sent: if no CallStateUpdate arrives within 1 s, the calls that were live are
+     * orphans of dio_manager's map; hide them. Any update in between cancels this. */
+    private void scheduleHangupWatchdog() {
+        final int seq = ++hangupSeq;
+        final java.util.ArrayList snapshot = new java.util.ArrayList(calls.length);
+        for (int i = 0; i < calls.length; i++)
+            if (calls[i] != null && bapState(calls[i]) != 0) snapshot.add(callKey(calls[i]));
+        if (snapshot.isEmpty()) return;
+        Thread t = new Thread(new Runnable() {
+            public void run() {
+                try { Thread.sleep(HANGUP_WATCHDOG_MS); } catch (InterruptedException e) { return; }
+                hangupWatchdog(seq, snapshot);
+            }
+        }, "CPHangupWatchdog");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    static final long HANGUP_WATCHDOG_MS = 1000L;
+
+    synchronized void hangupWatchdog(int seq, java.util.List snapshot) {
+        if (!gated || hangupSeq != seq) return;
+        java.util.ArrayList remaining = new java.util.ArrayList(calls.length);
+        boolean changed = false;
+        for (int i = 0; i < calls.length; i++) {
+            CallState c = calls[i];
+            if (c == null) continue;
+            String k = callKey(c);
+            if (snapshot.contains(k)) { ignoredCallKeys.add(k); changed = true; }
+            else remaining.add(c);
+        }
+        if (!changed) return;
+        calls = (CallState[]) remaining.toArray(new CallState[remaining.size()]);
+        Log.i(TAG, "VC hangup watchdog cleared stale call entry");
+        publishCalls();
+    }
+
+    private static String callKey(CallState c) {
+        String id = str(c.uniqueCallID);
+        if (id.length() > 0) return "id:" + id;
+        return "num:" + str(c.phoneNumber) + ":" + c.direction;
+    }
+
+    /* Last 7 digits: the same number with and without the country prefix. */
+    private static String normDigits(String s) {
+        if (s == null || s.length() == 0) return "";
+        StringBuffer sb = new StringBuffer(s.length());
+        for (int i = 0; i < s.length(); i++) {
+            char ch = s.charAt(i);
+            if (ch >= '0' && ch <= '9') sb.append(ch);
+        }
+        String d = sb.toString();
+        return d.length() > 7 ? d.substring(d.length() - 7) : d;
+    }
+
+    private static boolean sameOrOrphanedCall(CallState candidate, CallState ref) {
+        String d1 = normDigits(candidate.phoneNumber), d2 = normDigits(ref.phoneNumber);
+        if (d1.length() > 0 && d1.equals(d2)) return true;
+        boolean id1Empty = str(candidate.uniqueCallID).length() == 0;
+        boolean id2Empty = str(ref.uniqueCallID).length() == 0;
+        if (id1Empty != id2Empty && candidate.direction == ref.direction) return true;
+        return candidate.status == DSI_CONNECTING && candidate.direction == ref.direction
+            && (d1.length() == 0 || d2.length() == 0);
     }
 
     /* ---------------- gated functions ---------------- */
@@ -331,7 +449,7 @@ public class GatedPhoneService implements CombiBAPServicePhone {
             Log.i(TAG, "cluster phone tab " + (gated ? "-> CarPlay calls" : "-> stock"));
             GatedAddressBook.setCarPlay(gated);                /* Directory: no phonebook */
             if (gated) publishCarPlay();
-            else { calls = new CallState[0]; replayStock(); }  /* no stale call on the next session */
+            else { ignoredCallKeys.clear(); calls = new CallState[0]; replayStock(); }  /* no stale call on the next session */
             return;
         }
         real.updateFsgSetup(gated ? asHfp(f) : forStockCluster(f));
@@ -675,7 +793,8 @@ public class GatedPhoneService implements CombiBAPServicePhone {
     /* ---------------- pass-through ---------------- */
 
     public void updateLockState(int i) { real.updateLockState(i); }
-    public void updateDisconnectReason(int i) { real.updateDisconnectReason(i); }
+    /* With CarPlay calls the stock HFP disconnect reason belongs to no call shown on the VC. */
+    public synchronized void updateDisconnectReason(int i) { if (!gated) real.updateDisconnectReason(i); }
     public void dialNumberResult(int i) { real.dialNumberResult(i); }
     public void dialNumberFromAdbEntryResult(int i) { real.dialNumberFromAdbEntryResult(i); }
     public void dialServiceResult(int i) { real.dialServiceResult(i); }

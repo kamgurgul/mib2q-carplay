@@ -49,10 +49,17 @@ docker run --rm --platform=linux/amd64 \
   mkdir -p "$FF"
   TAR="$FF/ffmpeg-$FFMPEG_VERSION.tar.gz"
   DIR="$FF/ffmpeg-$FFMPEG_VERSION"
+  # The container is thrown away after each build: keep the verified source tarball in
+  # build/ (gitignored) so a rebuild needs no download.
+  CACHE="/src/build/ffmpeg-$FFMPEG_VERSION.tar.gz"
+  if [ ! -f "$TAR" ] && [ -f "$CACHE" ] && echo "$FFMPEG_SHA256  $CACHE" | sha256sum -c - >/dev/null 2>&1; then
+    cp "$CACHE" "$TAR"
+  fi
   if [ ! -f "$TAR" ]; then
     curl -fL --retry 3 "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.gz" -o "$TAR"
   fi
   echo "$FFMPEG_SHA256  $TAR" | sha256sum -c -
+  [ -f "$CACHE" ] || cp "$TAR" "$CACHE"
   if [ ! -f "$DIR/configure" ]; then
     rm -rf "$DIR"; mkdir -p "$DIR"; tar xf "$TAR" -C "$DIR" --strip-components=1
   fi

@@ -100,6 +100,17 @@ static void file_payload(coverart_stream_t *s, uint8_t session,
         }
         f->expected = read_be64(p);
         if (f->expected > COVERART_STREAM_MAX_FILE) return;
+        /* Typed zero-size artwork explicitly clears the current image (Luka's
+         * October 29 fix). Size-only zero remains an unknown-length transfer.
+         * A non-NULL, zero-length result carries the clear through the worker. */
+        if (len >= 10 && f->expected == 0) {
+            uint8_t *clear = malloc(1);
+            if (!clear) return;
+            free(*image); *image = clear; *image_len = 0;
+            s->last_image_order = ++s->order;
+            s->have_image_order = 1;
+            return;
+        }
         f->kind = 1;
         return;
     }

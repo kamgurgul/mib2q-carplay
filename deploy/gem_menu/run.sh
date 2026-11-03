@@ -149,20 +149,24 @@ case $ACT in
         run_action altscreen_grid
         ;;
     hwdec)
-        # Hardware decode is the default; these markers turn it OFF. altscreen_render
-        # writes them itself after a real hardware failure (the /tmp one when /mnt/app
-        # is read-only). Read per CarPlay connection.
+        # Hardware decode is the default; these markers turn it OFF, for CarPlay and
+        # Android Auto alike. altscreen_render writes them itself after a real hardware
+        # failure (Android Auto: the /tmp one only, issue #44). Read per phone connection.
         M=/mnt/app/root/altscreen_render.hwdecode.off
         B=/tmp/altscreen_render.hwdecode.off
+        AM=/mnt/app/root/altscreen_render.aa.hwdecode.off
+        AB=/tmp/altscreen_render.aa.hwdecode.off
         mount -uw /mnt/app 2>/dev/null
         rm -f /mnt/app/root/altscreen_render.hwdecode   # opt-in marker of older builds
-        if [ -e "$M" ] || [ -e "$B" ]; then
-            rm -f "$M" "$B"; sync
-            echo "DONE. Hardware decoder ON (default) from the next CarPlay connection."
+        if [ -e "$M" ] || [ -e "$B" ] || [ -e "$AM" ] || [ -e "$AB" ]; then
+            # The start records too: a fresh try is what ON asks for.
+            rm -f "$M" "$B" "$AM" "$AB" "$B.starts" "$AB.starts"; sync
+            echo "DONE. Hardware decoder ON (default) from the next phone connection."
         else
             : > "$M" || { echo "FAILED: cannot create $M"; exit 1; }
+            : > "$AM" || { echo "FAILED: cannot create $AM"; exit 1; }
             sync
-            echo "DONE. Hardware decoder OFF (software decode) from the next CarPlay connection."
+            echo "DONE. Hardware decoder OFF (software decode) from the next phone connection."
         fi
         ;;
     hwdelay)

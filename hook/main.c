@@ -16,6 +16,7 @@
 #include "altzoom/altzoom_hook.h"
 #include "telephony/tel_hook.h"
 #include "vehicle/vehicle_hook.h"
+#include "mapsprofile/maps_profile.h"
 
 const hook_module_def_t* const hook_module_table[] = {
     &rgd_module_def,
@@ -23,6 +24,7 @@ const hook_module_def_t* const hook_module_table[] = {
     &altzoom_module_def,
     &tel_module_def,
     &vehicle_module_def,
+    &maps_profile_module_def,
 };
 
 const size_t hook_module_table_count =

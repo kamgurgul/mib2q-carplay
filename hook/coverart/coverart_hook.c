@@ -632,7 +632,22 @@ static void* coverart_worker_main(void* arg) {
         pthread_mutex_unlock(&worker_mutex);
 
         if (data) {
-            (void)maybe_handle_image(data, len, generation);
+            if (len) (void)maybe_handle_image(data, len, generation);
+            else {
+                pthread_mutex_lock(&worker_mutex);
+                if (generation == worker_generation) {
+                    bus_text_builder_t event;
+                    uint8_t scratch[128];
+                    g_coverart.last_crc = 0;
+                    unlink(COVERART_FILE);
+                    bus_text_begin_with(&event, "coverart", scratch, sizeof(scratch));
+                    bus_text_uint(&event, "crc", 0);
+                    bus_text_uint(&event, "clear", 1);
+                    bus_text_str(&event, "path", "");
+                    bus_send_text(EVT_COVERART, BUS_FLAG_STICKY, &event);
+                }
+                pthread_mutex_unlock(&worker_mutex);
+            }
             free(data);
         }
     }
@@ -700,6 +715,13 @@ static void handle_recv_stream(const uint8_t* buf, size_t len) {
     size_t process_len = 0;
     coverart_stream_stats_t previous = g_recv_stream.stats;
     coverart_stream_feed(&g_recv_stream, buf, len, &process_buf, &process_len);
+    if (process_buf && process_len == 0) {
+        /* Invalidate an old JPEG already decoding before enqueueing the clear. */
+        ++recv_generation;
+        pthread_mutex_lock(&worker_mutex);
+        worker_generation = recv_generation;
+        pthread_mutex_unlock(&worker_mutex);
+    }
     int confirmed = g_recv_stream.confirmed;
     uint32_t generation = recv_generation;
 

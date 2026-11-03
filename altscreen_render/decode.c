@@ -90,6 +90,11 @@ static void emit(altr_decoder_t *d)
 
 altr_decoder_t *altr_decode_create(altr_frame_cb cb, void *user)
 {
+    return altr_decode_create_threads(cb, user, 1);
+}
+
+altr_decoder_t *altr_decode_create_threads(altr_frame_cb cb, void *user, int threads)
+{
     altr_decoder_t *d = (altr_decoder_t *)calloc(1, sizeof(*d));
     if (!d) return NULL;
     d->cb = cb; d->user = user;
@@ -100,8 +105,15 @@ altr_decoder_t *altr_decode_create(altr_frame_cb cb, void *user)
     if (!d->parser) { fprintf(stderr, "decode: parser init failed\n"); goto fail; }
     d->ctx = avcodec_alloc_context3(d->codec);
     if (!d->ctx) goto fail;
-    /* Low-latency: emit each frame as soon as it decodes. */
-    d->ctx->flags |= AV_CODEC_FLAG_LOW_DELAY;
+    if (threads > 1) {
+        /* Frame threads: FFmpeg turns them off under AV_CODEC_FLAG_LOW_DELAY. */
+        d->ctx->thread_count = threads;
+        d->ctx->thread_type = FF_THREAD_FRAME;
+    } else {
+        /* Low-latency: emit each frame as soon as it decodes. */
+        d->ctx->flags |= AV_CODEC_FLAG_LOW_DELAY;
+        d->ctx->thread_count = 1;
+    }
     if (avcodec_open2(d->ctx, d->codec, NULL) < 0) {
         fprintf(stderr, "decode: avcodec_open2 failed\n"); goto fail;
     }

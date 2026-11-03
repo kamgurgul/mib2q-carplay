@@ -34,6 +34,12 @@ trap 'rm -rf "$TEST_DIR"' EXIT
 "$TEST_JDK/bin/java" -cp "$TEST_DIR:$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR" \
     com.luka.carplay.telephony.GatedPhoneDialTest
 
+# Cluster phone tab: dio_manager's orphaned call entries hidden, hang-up never stuck.
+"$TEST_JDK/bin/javac" -encoding UTF-8 -cp "$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR" \
+    -d "$TEST_DIR" "$PROJECT_DIR/tests/GatedPhoneCallsTest.java"
+"$TEST_JDK/bin/java" -cp "$TEST_DIR:$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR" \
+    com.luka.carplay.telephony.GatedPhoneCallsTest
+
 # Power-on: a startDomain the target app dropped is re-sent, against the real stock DomainHandler.
 "$TEST_JDK/bin/javac" -encoding UTF-8 -cp "$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR" \
     -d "$TEST_DIR" "$PROJECT_DIR/tests/DomainStartRescueTest.java"
