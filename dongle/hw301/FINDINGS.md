@@ -459,8 +459,8 @@ of frames, `nal_ok=1 bad=0`):
 | 1168-1171 | private `hw301Cluster` `/info` extension, HELLO/KEY1 rekey and URL1 back-channel (release, optA and Input-key variants) | superseded by 1172, not shipped |
 | **1172** | native proxy: car display and commands passed through, own 111 ID/port/AES, `model=HW301` with stock `18D70` (`build_dual.sh release`, `v1172-20261027093548`). First car pass 2026-10-27 (as 1173) | last car-tested image, `fw/hw301_v1172.tar` |
 | 1173 | **same version as v1172**, also contains enabled logging (`build_dual.sh optA`, `v1173-20261027093537`). First car pass 2026-10-27 | `fw/hw301_v1173.tar` |
-| **1176** | v1172 + route guidance bridge (`build_dual.sh release`, `v1176-20261028100645`). First car pass 2026-10-28 | **newest image**, `fw/hw301_v1176.tar` |
-| 1177 | **same version as v1176**, also contains enabled logging (`build_dual.sh optA`, `v1177-20261028100705`) | `fw/hw301_v1177.tar` |
+| **1176** | v1172 + route guidance bridge (`build_dual.sh release`, `v1176-20261104084344`). First car pass 2026-10-28 with build `v1176-20261028100645` of the same source (not committed; release image rebuilt 2026-11-04) | **newest image**, `fw/hw301_v1176.tar` |
+| 1177 | **same version as v1176**, also contains enabled logging (`build_dual.sh optA`, `v1177-20261104084350`) | `fw/hw301_v1177.tar` |
 
 ## Open items
 

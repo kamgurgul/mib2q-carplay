@@ -116,7 +116,7 @@ without any of these.
 | --- | --- | --- | --- |
 | Baseus Safe Journey Series Wireless CarPlay Adapter | build `26031311.2705.1` | fast | yes, no custom firmware, [report](https://github.com/kamgurgul/mib2q-carplay/issues/5) |
 | Carlinkit 5.0 / 2Air | software `2025.12.29.1746`, hardware `U2AC822C0` | slow, then stable | yes, no custom firmware, [report](https://github.com/kamgurgul/mib2q-carplay/issues/5) |
-| HW301 (Allwinner, setup Wi-Fi `smartBox`, web UI `192.168.5.1`) | custom app image **v1176** (`v1176-20261028100645`); previous v1172, v1167 | same as stock HW301 | yes, **from release 1.3**, only with a custom image plus the head-unit install (1.4 for v1172 and newer). The menu's cluster map switches reach it from v1172; route guidance (HUD and cluster maneuvers) works from v1176. Stock v1.26 / v1.29 stay on the main screen. [How to flash](docs/deploy/hw301-dongle.md) |
+| HW301 (Allwinner, setup Wi-Fi `smartBox`, web UI `192.168.5.1`) | custom app image **v1176** (`v1176-20261104084344`); previous v1172, v1167 | same as stock HW301 | yes, **from release 1.3**, only with a custom image plus the head-unit install (1.4 for v1172 and newer). The menu's cluster map switches reach it from v1172; route guidance (HUD and cluster maneuvers) works from v1176. Stock v1.26 / v1.29 stay on the main screen. [How to flash](docs/deploy/hw301-dongle.md) |
 | AAWireless TWO+ | manufacturer custom test build; public firmware pending | fast | yes, CarPlay AltScreen and Android Auto, tested on P5092 / MU1329; current public firmware has no cluster map until the fix ships, [report](https://github.com/kamgurgul/mib2q-carplay/issues/26) |
 
 An HW301 on stock firmware tells the head unit it is an iPhone 7 (`iPhone9,1` / `18D70`)

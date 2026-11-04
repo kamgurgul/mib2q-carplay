@@ -60,11 +60,13 @@ Changes since [1.3.1](CHANGELOG-1.3.1.md).
   to the iPhone and relays the start/stop requests and the iPhone's maneuver, lane and route
   updates. If the iPhone ever refuses the announcement, the dongle drops it until the next
   restart, so CarPlay keeps working as before.
-  - Image `dongle/hw301/fw/hw301_v1176.tar` (marker `v1176-20261028100645`), now the newest
-    HW301 image; `dongle/hw301/fw/hw301_v1177.tar` (marker `v1177-20261028100705`) is the same
+  - Image `dongle/hw301/fw/hw301_v1176.tar` (marker `v1176-20261104084344`), now the newest
+    HW301 image; `dongle/hw301/fw/hw301_v1177.tar` (marker `v1177-20261104084350`) is the same
     version with diagnostic logging. Otherwise identical to v1172.
   - First car test on 2026-10-28: Apple Maps maneuvers, lane guidance and route updates
-    reached the car; the cluster map kept running (no bad or dropped frames).
+    reached the car; the cluster map kept running (no bad or dropped frames). That test ran
+    build `v1176-20261028100645`, which was never committed; the release images were rebuilt
+    on 2026-11-04 from the same source (`2a1f022`, unchanged since).
 
 - **Android Auto cluster map on Korean firmware `MHI2Q_KR_AUG22_P1201` (MU1201, issue #33).**
   The unit's `libautoreceiver.so` is byte-identical to the MU0918 one; its `gal` is a later

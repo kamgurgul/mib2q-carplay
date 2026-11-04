@@ -48,7 +48,8 @@ cluster kept running while the MMI took the screen twice. Not tested yet: layout
 the menu switches, unplug/replug and phone Wi-Fi loss. Known issue: the start of Siri's
 answer can be cut, because the car takes up to 2 s to open the Siri audio stream.
 
-First car test of v1176 on 2026-10-28: the phone accepted the dongle's route guidance
+First car test of v1176 on 2026-10-28 (build `v1176-20261028100645`; the released image is a
+rebuild of the same source): the phone accepted the dongle's route guidance
 announcement and Apple Maps maneuvers, lane guidance and route updates reached the car; the
 cluster map kept running.
 
@@ -62,8 +63,8 @@ cluster map kept running.
 
 | File | What it is |
 | --- | --- |
-| `dongle/hw301/fw/hw301_v1176.tar` | **the custom image you flash** (marker `v1176-20261028100645`) |
-| `dongle/hw301/fw/hw301_v1177.tar` | the same version as v1176, but it also contains enabled logging. Flash it only to collect logs for a bug report (`--version 1177`, marker `v1177-20261028100705`) |
+| `dongle/hw301/fw/hw301_v1176.tar` | **the custom image you flash** (marker `v1176-20261104084344`) |
+| `dongle/hw301/fw/hw301_v1177.tar` | the same version as v1176, but it also contains enabled logging. Flash it only to collect logs for a bug report (`--version 1177`, marker `v1177-20261104084350`) |
 | `dongle/hw301/fw/hw301_v1172.tar` | the previous custom image (marker `v1172-20261027093548`), no route guidance |
 | `dongle/hw301/fw/hw301_v1167.tar` | the previous custom image (marker `v1167-20261025192423`), URLs and SafeAreas built in |
 | `dongle/hw301/fw/hw301_v1162.tar` | an older custom image (marker `v1162-20261020152434`), no Sport-skin layout |
@@ -99,7 +100,7 @@ cluster map kept running.
    ```
 
    Wait until both the upload bar and the flash percent finish.
-6. Optional check: `curl http://192.168.5.1/clbuild.txt` prints `v1176-20261028100645`.
+6. Optional check: `curl http://192.168.5.1/clbuild.txt` prints `v1176-20261104084344`.
 7. Unplug the dongle and plug it back into the charger once. Then install it in the car.
 8. Connect the phone through the dongle. The Virtual Cockpit shows the phone's map. A long
    press of the left steering-wheel roller switches between that map and the Audi map. A short
