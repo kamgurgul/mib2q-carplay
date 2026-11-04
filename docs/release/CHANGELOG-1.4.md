@@ -114,7 +114,8 @@ Changes since [1.3.1](CHANGELOG-1.3.1.md).
   cluster picture or a normal `gal` exit. If an unpinned `gal` crashes before either, the next
   start finds the marker and keeps Android Auto stock (`init disabled
   reason=unpinned_failed_before`) until a reboot. This covers units with the MU0918 receiver and
-  any `gal`; a different receiver still needs a profile
+  any `gal`, such as MU0917 / `MHI2Q_ER_AUG22_P3638` (issue #28: same receiver, other `gal`); a
+  different receiver still needs a profile
   ([firmware-porting](../android-auto/firmware-porting.md)). *Car test pending.*
 
 - **CarPlay cluster map at 30 FPS.** The hook adds the accessory PPID `bf889dfdaea54096` to the
@@ -148,6 +149,13 @@ Changes since [1.3.1](CHANGELOG-1.3.1.md).
   pictures.
 - **Save logs also lists `/mnt/app` and `/mnt/app/root`** (`markers_ls.txt`), so a report shows
   every setting marker.
+- **A crash of `dio_manager` now shows in Save logs** (issue #43). The hook's fatal signal
+  handler wrote its `[hook] FATAL SIG…` line only to `dio_manager`'s stderr, which no saved log
+  receives, so a report showed a core in `cores_ls.txt` but not when it happened. It now also
+  appends `t=<uptime s.ms> [hook] FATAL SIGSEGV in dio_manager pid=<pid>` to
+  `/tmp/carplay_crash.log` (the clock of `altscreen111.log` and `aa_cluster_hook.log`), one line
+  per crash this boot, using only async-signal-safe calls. The signal is then re-raised as before,
+  so the core is still written. No file = no crash.
 - **Phone route guidance no longer sets the Audi navigation's "route guidance active" flag.**
   The cockpit accepts CarPlay / Android Auto guidance through a flag of its own in the patched
   `ClusterService` (`setCarPlayRgiActive`). See the stale-route fix below.
@@ -266,6 +274,12 @@ Changes since [1.3.1](CHANGELOG-1.3.1.md).
   CarPlay screens: the cluster map stops and the first switch closed the app on the MMI (the
   iPhone gave the main screen back to the car 0.15 s after `showUI`). Workaround: switch *all
   features on wide view* OFF, so a layout switch sends only `updateViewArea`.
+- **Android Auto: the phone's turn / ETA card can be cut off in the Sport layout** (issue #41).
+  The built-in Sport insets (`78 146 484 394`, top bottom left right: a 562 x 316 window left of
+  the centre dial) are unchanged in 1.4. Workaround: own values in
+  `/mnt/app/root/aa_cluster.insets`, 12 numbers read at phone connect, full then classic then
+  Sport; `97 167 350 370 97 167 510 510` first keeps full and classic as built in
+  ([Android Auto overview](../android-auto/overview.md)).
 
 ## Documentation
 

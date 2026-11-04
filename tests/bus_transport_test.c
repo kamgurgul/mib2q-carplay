@@ -1,8 +1,15 @@
 /* Real bus cache/wire paths with deterministic allocation and send failures. */
 #define ENABLE_LOGGING 0
 #include <assert.h>
+#include <fcntl.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
+static char g_crash_note_path[64];
+#define BUS_CRASH_NOTE_PATH g_crash_note_path
 static void *test_malloc(size_t);
 static ssize_t test_send(int, const void *, size_t, int);
 #define malloc test_malloc
@@ -161,6 +168,45 @@ static void reused_descriptor(void) {
     close(pair[1]);
 }
 
+/* The real fatal handler leaves one line in the crash note and the process still dies by the
+ * signal, so dio_manager keeps its core dump (issue #43). */
+static void crash_note(void) {
+    char buf[256], want[40];
+    struct rlimit noCore = { 0, 0 };
+    ssize_t n;
+    pid_t child;
+    int status, fd;
+
+    snprintf(g_crash_note_path, sizeof(g_crash_note_path), "/tmp/bus_crash_note.%ld",
+             (long)getpid());
+    unlink(g_crash_note_path);
+    child = fork();
+    assert(child >= 0);
+    if (child == 0) {
+        int devnull = open("/dev/null", O_WRONLY);
+        if (devnull >= 0) dup2(devnull, STDERR_FILENO);   /* keep the suite output clean */
+        (void)setrlimit(RLIMIT_CORE, &noCore);          /* no core file on the test host */
+        if (bus_install_signal_policy() != 0) _exit(90);
+        raise(SIGSEGV);
+        _exit(91);
+    }
+    assert(waitpid(child, &status, 0) == child);
+    assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGSEGV);
+
+    fd = open(g_crash_note_path, O_RDONLY);
+    assert(fd >= 0);
+    n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    unlink(g_crash_note_path);
+    assert(n > 0);
+    buf[n] = '\0';
+    snprintf(want, sizeof(want), " pid=%ld\n", (long)child);
+    assert(strncmp(buf, "t=", 2) == 0);
+    assert(strstr(buf, " [hook] FATAL SIGSEGV in dio_manager pid=") != NULL);
+    assert(strstr(buf, want) != NULL && buf[n - 1] == '\n');
+    assert(strchr(buf, '\n') == buf + n - 1);                      /* exactly one line */
+}
+
 int main(void) {
     alarm(15); /* fail a stuck reconnect test instead of hanging the suite */
     signal(SIGPIPE, SIG_IGN);
@@ -169,7 +215,8 @@ int main(void) {
     reused_descriptor();
     frame_dispose(&g_types[EVT_COVERART].last);
     g_types[EVT_COVERART].has_last = false;
+    crash_note();
     alarm(0);
-    puts("bus_transport_test: cache OOM, short writes, failed replay, recv wakeup and reused fd PASS");
+    puts("bus_transport_test: cache OOM, short writes, failed replay, recv wakeup, reused fd and crash note PASS");
     return 0;
 }

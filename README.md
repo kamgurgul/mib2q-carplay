@@ -351,6 +351,7 @@ before restarting.
 | `/tmp/carplay_java.log` | Java patch |
 | `/tmp/maneuver_render.log` | maneuver renderer |
 | `/tmp/carplay_wrapper.log` | startup wrapper and supervisor |
+| `/tmp/carplay_crash.log` | one line per fatal signal in `dio_manager` this boot (`t=<uptime> [hook] FATAL SIGSEGV in dio_manager pid=…`); absent = no crash |
 | `/tmp/altscreen111.log`, `/tmp/altscreen_render.log` | AltScreen hook and renderer (both phone types) |
 | `/tmp/aa_cluster_hook.log`, `/tmp/aa_wrapper.log` | Android Auto hook in `gal` and its launcher |
 

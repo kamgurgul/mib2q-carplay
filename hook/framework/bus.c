@@ -766,23 +766,36 @@ static void* timer_main(void* arg) {
  * handler.  If the fault landed while any thread held g_log.lock (we log
  * constantly), the handler DEADLOCKED — the process hung instead of
  * dumping a core, which an external watchdog then SIGKILLs, masking the
- * very crash we were chasing.  Now: one write(2) of a fixed string, then
- * restore and re-raise into dio_manager's exact previous disposition. */
+ * very crash we were chasing.  Now: one fixed line, built without stdio, to
+ * stderr and appended to BUS_CRASH_NOTE_PATH, then restore and re-raise into
+ * dio_manager's exact previous disposition.  dio_manager's stderr reaches no
+ * saved log, so the file is what Save logs shows (issue #43); it lives in
+ * /tmp, so it keeps every crash of this boot across CarPlay generations. */
+#ifndef BUS_CRASH_NOTE_PATH                  /* tests point it elsewhere */
+#define BUS_CRASH_NOTE_PATH "/tmp/carplay_crash.log"
+#endif
+
 static spa_signal_guard_t g_signal_guard;
 
 static void bus_crash_handler(int sig) {
     const char* msg;
+    char line[SPA_SIGNAL_NOTE_MAX];
+    size_t n;
+    int savedErrno = errno;
     switch (sig) {
-        case SIGSEGV: msg = "[hook] FATAL SIGSEGV in dio_manager\n"; break;
-        case SIGBUS:  msg = "[hook] FATAL SIGBUS in dio_manager\n";  break;
-        case SIGILL:  msg = "[hook] FATAL SIGILL in dio_manager\n";  break;
-        case SIGFPE:  msg = "[hook] FATAL SIGFPE in dio_manager\n";  break;
-        case SIGABRT: msg = "[hook] FATAL SIGABRT in dio_manager\n"; break;
-        default:      msg = "[hook] FATAL signal in dio_manager\n";  break;
+        case SIGSEGV: msg = "[hook] FATAL SIGSEGV in dio_manager"; break;
+        case SIGBUS:  msg = "[hook] FATAL SIGBUS in dio_manager";  break;
+        case SIGILL:  msg = "[hook] FATAL SIGILL in dio_manager";  break;
+        case SIGFPE:  msg = "[hook] FATAL SIGFPE in dio_manager";  break;
+        case SIGABRT: msg = "[hook] FATAL SIGABRT in dio_manager"; break;
+        default:      msg = "[hook] FATAL signal in dio_manager";  break;
     }
-    size_t n = 0;                       /* inline (strlen is not async-signal-safe) */
-    while (msg[n]) n++;
-    if (write(STDERR_FILENO, msg, n) < 0) { /* nothing more a signal handler can do */ }
+    n = spa_signal_format_note(line, sizeof(line), msg);
+    if (n != 0) {
+        if (write(STDERR_FILENO, line, n) < 0) { /* nothing more a signal handler can do */ }
+        (void)spa_signal_append_note(BUS_CRASH_NOTE_PATH, line, n);
+    }
+    errno = savedErrno;
     spa_signal_guard_chain(&g_signal_guard, sig);
 }
 

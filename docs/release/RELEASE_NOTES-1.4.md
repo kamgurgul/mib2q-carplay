@@ -59,7 +59,8 @@ through the HW301 and a fix for the freezing Android Auto cluster map.
   and **HW decoder ON / OFF** switches Android Auto as well as CarPlay. **If your Android Auto
   map freezes: press HW decoder ON once** (if it says OFF, press it again).
 - **Cluster map on more firmware.** The map needs a known Android Auto receiver
-  (`libautoreceiver.so`); the `gal` program next to it no longer has to be a known build. An
+  (`libautoreceiver.so`); the `gal` program next to it no longer has to be a known build
+  ([#28](https://github.com/kamgurgul/mib2q-carplay/issues/28)). An
   untested `gal` runs with a crash guard: if it crashes before the first cluster picture, the next
   Android Auto start stays stock until a reboot.
 - Korean firmware `MHI2Q_KR_AUG22_P1201` is built in
