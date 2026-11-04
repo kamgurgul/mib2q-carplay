@@ -94,6 +94,9 @@ built against your own unit's HMI, but cluster geometry may need calibration.
 | `MHI2Q_ER_AUG22_P5092` | Audi A4 (B9, 2019), MU1329 | wireless CarPlay and Android Auto via AAWireless TWO+, AltScreen and Android Auto cluster maps, wide/classic layouts, wheel map zoom, [report](https://github.com/kamgurgul/mib2q-carplay/issues/26) |
 | `MHI2Q_US_AUG22_P5087` | Audi A5 Sportback (B9, US, 2018), MU1316 | release 1.1, wired CarPlay, Apple Maps on the Virtual Cockpit, [report](https://github.com/kamgurgul/mib2q-carplay/issues/21) |
 | `MHI2Q_US_AUG22_P5087` | Audi Q7 (4M, US, 2018), MU1316 | release 1.2, wired CarPlay, Siri on short press, Waze guidance on the cluster (Waze map zoom does not resize), [report](https://github.com/kamgurgul/mib2q-carplay/issues/27) |
+| `MHI2Q_US_AUG22_P5087` | Audi Q7 (4M, US, 2018), MU1316 | release 1.3.1, wired CarPlay and Android Auto, AltScreen (Google Maps, wide layout fits the cluster), Android Auto cluster map with turn card, CarPlay-RGI menu, [report](https://github.com/kamgurgul/mib2q-carplay/issues/43) |
+| `MHI2Q_US_AUG22_P5087` | Audi S5 Sportback (B9, US, 2019), MU1316 | release 1.3, wired CarPlay and Android Auto, cluster maps for both (Google Maps, Waze), HUD arrows, [report](https://github.com/kamgurgul/mib2q-carplay/issues/41) |
+| `MHI2Q_US_AUG22_P5087` | Audi RS5 Sportback (B9, Canada, 2019), MU1316 | wired Android Auto, cluster map (Google Maps, Waze), VC and HUD arrows, [report](https://github.com/kamgurgul/mib2q-carplay/issues/34) |
 
 ## Tested wireless adapters
 

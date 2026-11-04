@@ -79,7 +79,8 @@ static const struct aa_profile profiles[] = {
       0x2544a0, 0x24dfb8 },
     /* MHI2Q_ER_AUG22_P5152: libautoreceiver.so byte-identical to MU0918 (sha256 6ef4abea...),
      * so every object layout above applies; only gal is a different build (sha256 a659a955...,
-     * read from the unit, carplay_logs/aa). */
+     * read from the unit, carplay_logs/aa). MHI2Q_US_AUG22_P5087 MU1316 matches it pinned: its
+     * gal is another build (sha256 cd00d89d...) at these two addresses (issues #34, #41, #43). */
     { "P5152", 0xe4928, 0x102b90, 0x102af0, 0xfafc4, 0xec748, 0xfa978, 0xec294,
       0x258580, 0x251b28 },
     /* MHI2Q_KR_AUG22_P1201 MU1201 (issue #33): libautoreceiver.so byte-identical to MU0918 as

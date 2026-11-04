@@ -8,9 +8,11 @@ The logging M.I.B. mod copies both files from the unit once per card. This scrip
   1. compares them with the receiver pair validated on the car (MU0918) and the gal
      builds that have their own entry. A match means a built-in profile already
      applies: nothing to port;
-  2. otherwise reads the symbols the hook checks from the ELF dynamic symbol tables and
-     prints a profile entry for aa_hook.c, plus the matching abi.fingerprint values
-     that /tmp/aa_cluster_hook.log shows on the unit.
+  2. otherwise reads the symbols the hook checks from the ELF dynamic symbol tables. A
+     gal of another build whose two addresses equal a built-in profile's is pinned by
+     the hook like that profile's own build (MU1316's gal runs as P5152): nothing to
+     port either. Anything else gets a profile entry for aa_hook.c, plus the matching
+     abi.fingerprint values that /tmp/aa_cluster_hook.log shows on the unit.
 
 A different receiver may also have different object layouts, which symbols cannot show.
 Treat a new entry as a trial until its layouts were checked against the disassembly
@@ -58,6 +60,24 @@ GAL = [
     ("gal_controller", "_ZN3gal14CGALController10s_instanceE"),
     ("gal_vsink_vt", "_ZTVN3gal14CVideoSinkImplE"),
 ]
+# profiles[] of aa_hook/aa_hook.c: name, receiver offsets (RECEIVER order), gal addresses
+# (GAL order). tests/test_aa_receiver_profile.py keeps the two tables equal.
+_MU0918_RECEIVER = (0xe4928, 0x102b90, 0x102af0, 0xfafc4, 0xec748, 0xfa978, 0xec294)
+PROFILES = [
+    ("MU0918", _MU0918_RECEIVER, (0x2544a0, 0x24dfb8)),
+    ("P5152", _MU0918_RECEIVER, (0x258580, 0x251b28)),
+    ("P1201", _MU0918_RECEIVER, (0x259598, 0x252b40)),
+]
+
+
+def pinned_profile(v):
+    """The profile match_profile() in aa_hook.c pins these offsets to, or None."""
+    receiver = tuple(v[k] for k, _ in RECEIVER)
+    gal = tuple(v[k] for k, _ in GAL)
+    for name, r, g in PROFILES:
+        if r == receiver and g == gal:
+            return name
+    return None
 
 
 def dynsyms(path):
@@ -95,14 +115,11 @@ def main():
         print("\nIdentical to the receiver validated on the car (MU0918): the built-in profile applies.")
         return 0
 
-    if hashes["libautoreceiver.so"] == MU0918["libautoreceiver.so"] and hashes["gal"] in BUILT_IN_GAL:
+    same_receiver = hashes["libautoreceiver.so"] == MU0918["libautoreceiver.so"]
+    if same_receiver and hashes["gal"] in BUILT_IN_GAL:
         print("\nThe receiver is identical to MU0918 and this gal is built in (profile %s): nothing to port."
               % BUILT_IN_GAL[hashes["gal"]])
         return 0
-    if hashes["libautoreceiver.so"] == MU0918["libautoreceiver.so"]:
-        print("\nThe receiver is identical to MU0918, so its object layouts are the validated ones;"
-              "\nonly gal differs. The hook already runs here unpinned (log: gal=unpinned); add the"
-              "\nentry below (gal addresses from this gal) once the cluster map worked on the car.")
     g, r = dynsyms(gal), dynsyms(recv)
     missing = [s for s in REQUIRED if s not in r]
     if missing:
@@ -116,6 +133,16 @@ def main():
         print("\ngal lacks %s: a profile can only run unpinned." % ", ".join(no_gal))
     v = dict((k, r[s]) for k, s in RECEIVER)
     v.update((k, g.get(s, 0)) for k, s in GAL)
+    pinned = pinned_profile(v)
+    if same_receiver and pinned:
+        print("\nThe receiver is identical to MU0918. This gal is another build, but its addresses equal"
+              "\nprofile %s's, so the hook pins it under that profile (log: init enabled profile=%s"
+              "\ngal=pinned): nothing to port." % (pinned, pinned))
+        return 0
+    if same_receiver:
+        print("\nThe receiver is identical to MU0918, so its object layouts are the validated ones;"
+              "\nonly gal differs. The hook already runs here unpinned (log: gal=unpinned); add the"
+              "\nentry below (gal addresses from this gal) once the cluster map worked on the car.")
     print("\nSymbol offsets (compare with abi.fingerprint in /tmp/aa_cluster_hook.log):")
     print("  " + " ".join("%s=0x%x" % (k, v[k]) for k, _ in RECEIVER + GAL))
     print("\nCandidate aa_hook.c profile entry (UNVERIFIED object layouts, see firmware-porting.md):")

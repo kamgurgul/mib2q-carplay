@@ -155,6 +155,9 @@ cc -std=gnu99 -O1 -Wall -Wextra -Werror -Wno-unused-function -pthread -D_GNU_SOU
     "-DAA_UNPINNED_PATH=\"$OUT/aa_unpinned\"" tests/aa_hook_gate_test.c -ldl -o "$OUT/aa_hook_gate"
 "$OUT/aa_hook_gate"
 
+printf '%-32s ' aa_receiver_profile_test
+python3 -I tests/test_aa_receiver_profile.py
+
 printf '%-32s ' maps_profile_test
 cc -std=gnu99 -O1 -Wall -Wextra -Werror -DENABLE_LOGGING=0 -Ihook \
     "-DMAPS_PROFILE_OFF_PATH=\"$OUT/maps30.off\"" tests/maps_profile_test.c \

@@ -28,6 +28,7 @@ another try without a reboot.
 |---|---|---|
 | `MHI2Q_US_AUG22_P3639` MU0918 | sha256 `6ef4abea…` (gal `6fffb360…`) | built in, validated on the car upstream |
 | `MHI2Q_ER_AUG22_P5152` MU1329 | identical to MU0918 (gal `a659a955…` differs) | built in from the unit's files (`P5152`), validated on the car (Audi A5 F5) |
+| `MHI2Q_US_AUG22_P5087` MU1316 | identical to MU0918 (gal `cd00d89d…` differs, at P5152's two addresses) | runs as `P5152`, pinned by those addresses; validated on the car ([#34](https://github.com/kamgurgul/mib2q-carplay/issues/34) RS5, [#41](https://github.com/kamgurgul/mib2q-carplay/issues/41) S5, [#43](https://github.com/kamgurgul/mib2q-carplay/issues/43) Q7) |
 | `MHI2Q_KR_AUG22_P1201` MU1201 | identical to MU0918 (gal `e35627a0…` differs) | built in from the unit's files (`P1201`, [issue #33](https://github.com/kamgurgul/mib2q-carplay/issues/33)); car test pending |
 
 ## 1. Get the files and the fingerprint
@@ -47,6 +48,9 @@ another try without a reboot.
 
 - **`Identical to the receiver validated on the car (MU0918)`** or **`this gal is built in
   (profile …)`**: nothing to port. The log already says `init enabled profile=<that name>`.
+- **`This gal is another build, but its addresses equal profile …'s`**: nothing to port either.
+  The hook checks the two `gal` addresses, not the file, so it pins this build under that
+  profile (`init enabled profile=<that name> gal=pinned`). MU1316's `gal` runs as `P5152` this way.
 - **`The receiver is identical to MU0918 … only gal differs`**: the hook already runs unpinned.
   Once the cluster map worked on the car, add the printed entry to pin that `gal` build.
 - **Missing symbols**: this receiver cannot run the hook. Use the cluster guidance without the

@@ -276,8 +276,15 @@ Changes since [1.3.1](CHANGELOG-1.3.1.md).
   guidance bridge.
 - [hw-decoder](../altscreen/hw-decoder.md) and [Android Auto overview](../android-auto/overview.md):
   the Android Auto decoder markers and issue #44.
-- [firmware-porting](../android-auto/firmware-porting.md): unpinned `gal` mode and its marker.
-- README: the MMI CarPlay settings, the release layout and the 1.4 known issues.
+- [firmware-porting](../android-auto/firmware-porting.md): unpinned `gal` mode and its marker;
+  `MHI2Q_US_AUG22_P5087` (MU1316) added: the MU0918 receiver and a `gal` of another build at
+  P5152's addresses, so it runs as `P5152`, pinned (issues #34, #41, #43).
+  `scripts/aa_receiver_profile.py` now reports such a `gal` as pinned, "nothing to port",
+  instead of "runs unpinned" with a duplicate entry; new `tests/test_aa_receiver_profile.py`
+  keeps its profile table equal to `aa_hook.c`.
+- README: the MMI CarPlay settings, the release layout and the 1.4 known issues; supported
+  units add the Audi Q7 4M on 1.3.1 (issue #43), S5 Sportback (#41) and RS5 Sportback (#34),
+  all `MHI2Q_US_AUG22_P5087` / MU1316.
 - Tests: GitHub Actions runs `scripts/run_tests.sh` on every push and pull request (Ubuntu,
   clang); the Java suites need the proprietary stock jar and stay local
   (`test_route_info.sh`, `test_java_transports.sh`, new `test_mmi_settings.sh`).
