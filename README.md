@@ -84,19 +84,28 @@ your own unit's HMI (see [Build](#build)), but cluster geometry may need calibra
 
 ## Supported units
 
-Units the mod has been run on. Other MHI2Q firmware may work too; the Java patch is
-built against your own unit's HMI, but cluster geometry may need calibration.
+Units the mod has been run on, one row per firmware train with every car reported on it.
+Other MHI2Q firmware may work too; the Java patch is built against your own unit's HMI,
+but cluster geometry may need calibration.
 
-| Firmware train | Vehicle | Notes |
-| --- | --- | --- |
-| `MHI2Q_ER_AUG22_P5152` | Audi A5 (F5), MU1329 | development unit; all features tested |
-| `MHI2Q_ER_AUG22_P5092` | MU1329 | wireless CarPlay tested, [report](https://github.com/kamgurgul/mib2q-carplay/issues/5) |
-| `MHI2Q_ER_AUG22_P5092` | Audi A4 (B9, 2019), MU1329 | wireless CarPlay and Android Auto via AAWireless TWO+, AltScreen and Android Auto cluster maps, wide/classic layouts, wheel map zoom, [report](https://github.com/kamgurgul/mib2q-carplay/issues/26) |
-| `MHI2Q_US_AUG22_P5087` | Audi A5 Sportback (B9, US, 2018), MU1316 | release 1.1, wired CarPlay, Apple Maps on the Virtual Cockpit, [report](https://github.com/kamgurgul/mib2q-carplay/issues/21) |
-| `MHI2Q_US_AUG22_P5087` | Audi Q7 (4M, US, 2018), MU1316 | release 1.2, wired CarPlay, Siri on short press, Waze guidance on the cluster (Waze map zoom does not resize), [report](https://github.com/kamgurgul/mib2q-carplay/issues/27) |
-| `MHI2Q_US_AUG22_P5087` | Audi Q7 (4M, US, 2018), MU1316 | release 1.3.1, wired CarPlay and Android Auto, AltScreen (Google Maps, wide layout fits the cluster), Android Auto cluster map with turn card, CarPlay-RGI menu, [report](https://github.com/kamgurgul/mib2q-carplay/issues/43) |
-| `MHI2Q_US_AUG22_P5087` | Audi S5 Sportback (B9, US, 2019), MU1316 | release 1.3, wired CarPlay and Android Auto, cluster maps for both (Google Maps, Waze), HUD arrows, [report](https://github.com/kamgurgul/mib2q-carplay/issues/41) |
-| `MHI2Q_US_AUG22_P5087` | Audi RS5 Sportback (B9, Canada, 2019), MU1316 | wired Android Auto, cluster map (Google Maps, Waze), VC and HUD arrows, [report](https://github.com/kamgurgul/mib2q-carplay/issues/34) |
+| Firmware train | Main unit | Vehicles (reports) | Tested |
+| --- | --- | --- | --- |
+| `MHI2Q_ER_AUG22_P5152` | MU1329 | Audi A5 (F5), the development unit | all features |
+| `MHI2Q_ER_AUG22_P5092` | MU1329 | Audi A4 (B9) 2017 [#35][#35-a4], 2018 [#44], 2019 [#26]; Audi A5 (F5/B9, 2017) [#35]; model not given [#5] | releases 1.1 to 1.3.1; CarPlay wired and wireless (Baseus, Carlinkit, AAWireless TWO+), Android Auto wired and via AAWireless TWO+, both with the cluster map (Google Maps, Waze); wide and classic layouts, wheel map zoom, Waze ETA. On 1.3.1 the Android Auto cluster map freezes for about 90 s at a time ([#44]) and Waze ETA needs the switch toggled after a reconnect ([#35]); 1.4 fixes both |
+| `MHI2Q_US_AUG22_P5087` | MU1316 | Audi A5 Sportback (B9, US, 2018) [#21], [#39]; Audi Q7 (4M, US, 2018) [#27], [#43]; Audi S5 Sportback (B9, US, 2019) [#41]; Audi RS5 Sportback (B9, Canada, 2019) [#34], [#45] | releases 1.1 to 1.3.1; wired CarPlay and Android Auto, both with the cluster map (Apple Maps, Google Maps, Waze; the wide layout fits the cluster), turn card, VC, Sport layout and HUD arrows, Siri on short press, CarPlay-RGI menu. Waze map zoom does not resize the map. On 1.3.1 Apple Maps without a route keeps falling back to the Audi map ([#39]); 1.4 fixes it |
+
+[#5]: https://github.com/kamgurgul/mib2q-carplay/issues/5
+[#21]: https://github.com/kamgurgul/mib2q-carplay/issues/21
+[#26]: https://github.com/kamgurgul/mib2q-carplay/issues/26
+[#27]: https://github.com/kamgurgul/mib2q-carplay/issues/27
+[#34]: https://github.com/kamgurgul/mib2q-carplay/issues/34
+[#35]: https://github.com/kamgurgul/mib2q-carplay/issues/35
+[#35-a4]: https://github.com/kamgurgul/mib2q-carplay/issues/35#issuecomment-6491870508
+[#39]: https://github.com/kamgurgul/mib2q-carplay/issues/39
+[#41]: https://github.com/kamgurgul/mib2q-carplay/issues/41
+[#43]: https://github.com/kamgurgul/mib2q-carplay/issues/43
+[#44]: https://github.com/kamgurgul/mib2q-carplay/issues/44
+[#45]: https://github.com/kamgurgul/mib2q-carplay/issues/45
 
 ## Tested wireless adapters
 
