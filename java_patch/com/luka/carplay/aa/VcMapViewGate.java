@@ -12,8 +12,10 @@
  *   which hides plane 99 (the phone's own cluster map).
  *
  * This gate replaces exactly that one input (true -> false) while terminal 1 physically
- * carries a cluster-video context (81/82).  Everything else in the InfoStates computation
- * stays stock, and outside the video contexts stock behaviour is unchanged.
+ * carries a cluster-video context (81/82), and while the driver switched to the Audi map
+ * with a long roller press during the session (ctx 80): there the "mobile device" layout
+ * would blank the Audi map and leave plane 99 hidden.  Everything else in the InfoStates
+ * computation stays stock, and outside these contexts stock behaviour is unchanged.
  *
  * Threading: the stock path runs on the caller's thread exactly as stock does (only the value
  * changes).  Video-context edges come from ScreenModule's switch worker; the re-forward goes

@@ -470,9 +470,14 @@ public final class ScreenModule implements Module {
             /* Context composition is now final: replay the last KDK popup geometry so a
              * navActive edge cannot leave planes 98/101/102 at their previous opacity. */
             com.luka.carplay.cluster.ClusterLayerController.reapply();
-            /* Android Auto: keep the VC in its map view while plane 99 is on terminal 1. */
+            /* Android Auto: keep the VC in its map view while plane 99 is on terminal 1, and
+             * while the driver picked the Audi map with a long press (ctx 80). Forwarding
+             * setGALState(true) there showed the Audi map for a moment, then the empty
+             * "navigation on mobile device" layout, which also hid plane 99 after the next
+             * long press (car logs 2026-11-03, saves 001/002). */
             com.luka.carplay.aa.VcMapViewGate.onClusterVideoShown(
-                ctx == CTX_CLUSTER_VIDEO || ctx == CTX_CLUSTER_VIDEO_NAV);
+                ctx == CTX_CLUSTER_VIDEO || ctx == CTX_CLUSTER_VIDEO_NAV
+                || (userStockMap && ctx != CTX_STOCK_CLUSTER));
             Log.i(TAG, "cluster -> ctx " + ctx + " (active=" + clusterActive + ")");
         } catch (Throwable t) {
             Log.w(TAG, "switch(" + ctx + ") failed: " + t);

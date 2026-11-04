@@ -241,6 +241,13 @@ Changes since [1.3.1](CHANGELOG-1.3.1.md).
 - **Dialling from the VC while CarPlay was in the background did nothing.** iOS ignores the call
   request unless CarPlay owns the screen. The patch now switches the MMI to CarPlay and dials once
   the iPhone has the screen (5 s window). From luka-dev MHI2Q-2026-10-29.
+- **Android Auto: the left roller press did not toggle the route-info line** (arrival time and
+  time left), as it does with CarPlay. The roller-press module was CarPlay-only, because the same
+  press also reaches the phone as Select and only the CarPlay key controller dropped that copy.
+  The patch now also replaces Android Auto's `AndroidAuto2KeyEventsController` (identical to
+  stock, checked bytecode against bytecode, plus the same drop), and the module runs for both phone types. The
+  centre-console knob stays Select. A long press switches between the phone map and the Audi
+  map, as with CarPlay.
 - **Touchpad: a vertical swipe could jump left or right at the end of a list.** Each touch sample
   now counts only on the axis that moved more. From luka-dev MHI2Q-2026-10-29.
 

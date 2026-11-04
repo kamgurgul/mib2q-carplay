@@ -49,12 +49,12 @@ public final class CarPlayApp {
         new ScreenModule(), new AltScreenModule(), new RgdModule(), new SteeringWheelInputModule(),
         new VehicleDataModule()
     };
-    /* Sessions each module runs for, parallel to MODULES.  The roller-press module is
-     * CarPlay-only: the patched CarPlay key controller swallows the collapsed DDS_SELECT
-     * that the same press also produces, Android Auto's controller does not.  Vehicle data
-     * goes to the iPhone through the CarPlay hook (iAP2), so it is CarPlay-only too. */
+    /* Sessions each module runs for, parallel to MODULES.  The roller-press module runs for
+     * both: the patched CarPlay and Android Auto key controllers swallow the collapsed
+     * DDS_SELECT that the same press also produces.  Vehicle data goes to the iPhone through
+     * the CarPlay hook (iAP2), so it is CarPlay-only. */
     private static final int[] MODULE_OWNERS = new int[] {
-        OWNER_ANY, OWNER_ANY, OWNER_ANY, OWNER_CARPLAY, OWNER_CARPLAY
+        OWNER_ANY, OWNER_ANY, OWNER_ANY, OWNER_ANY, OWNER_CARPLAY
     };
 
     private static final Object lock = new Object();

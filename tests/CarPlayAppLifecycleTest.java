@@ -105,22 +105,23 @@ public final class CarPlayAppLifecycleTest {
             CarPlayApp.onActivate(context); settled();
             check(LifecycleTestModule.count(1) == 1, "worker failed to recover after exception");
         } else if (scenario.equals("owners")) {
-            /* CarPlay session: every module, CarPlay-only input included. */
+            /* CarPlay session: every module, CarPlay-only vehicle data included. */
             CarPlayApp.onActivate(context); settled();
             check(CarPlayApp.isActive() && !CarPlayApp.isAndroidAutoActive(), "CarPlay owner");
             check(CarPlayApp.sessionOwner() == CarPlayApp.OWNER_CARPLAY, "CarPlay owner id");
             check(LifecycleTestModule.count(0) == 1 && LifecycleTestModule.count(2) == 1
                 && LifecycleTestModule.count(4) == 1, "CarPlay modules");
-            /* Phone swap straight to Android Auto: shared modules restart, the CarPlay-only
-             * input does not, CarPlay callers see no CarPlay session, and CarPlay's OPS
-             * presentation is released although no deactivate came in between. */
+            /* Phone swap straight to Android Auto: shared modules restart (the wheel-roller
+             * input included: Android Auto's patched key controller drops its collapsed Select
+             * too), CarPlay-only vehicle data does not, CarPlay callers see no CarPlay session,
+             * and CarPlay's OPS presentation is released although no deactivate came in between. */
             IContext aa = new IContext() { };
             CarPlayApp.onActivateAndroidAuto(aa); settled();
             check(!CarPlayApp.isActive() && CarPlayApp.isAndroidAutoActive() && CarPlayApp.isSessionActive(),
                 "Android Auto owner");
             check(LifecycleTestModule.count(0) == 2 && LifecycleTestModule.count(1) == 2
                 && LifecycleTestModule.count(3) == 2, "shared modules not restarted for Android Auto");
-            check(LifecycleTestModule.count(2) == 1, "CarPlay-only input started for Android Auto");
+            check(LifecycleTestModule.count(2) == 2, "wheel-roller input not started for Android Auto");
             check(LifecycleTestModule.count(4) == 1, "CarPlay-only vehicle data started for Android Auto");
             check(com.luka.carplay.pdc.PdcSmallStageGuard.disconnects == 1, "OPS not released on hand-over");
             /* A late CarPlay disconnect must not end the Android Auto session. */

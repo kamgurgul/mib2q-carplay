@@ -92,6 +92,9 @@ and a fix for the freezing Android Auto cluster map.
 - **Dialling a favourite or recent from the cockpit** did nothing while CarPlay was in the
   background on the MMI; it now opens CarPlay and starts the call.
 - **Touchpad:** a vertical swipe no longer jumps sideways at the end of a list.
+- **Android Auto: the left roller press** now toggles arrival time / time left on the
+  cockpit's route line, and a long press switches between the phone map and the Audi map, as
+  with CarPlay. The press no longer also acts as Select on the phone.
 - **Android Auto without the hardware decoder** decodes on two threads, so the map keeps up.
 
 ## Not yet tested in a car
