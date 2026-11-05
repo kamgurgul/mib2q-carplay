@@ -54,8 +54,8 @@ partition is writable) and stays on software decode. Read per phone connection; 
 is created on the first stream bytes.
 
 Android Auto has its own pair, `altscreen_render.aa.hwdecode.off`. After an Android Auto
-hardware failure the renderer writes only the `/tmp` one, so the next boot tries hardware again
-(after the boot settle time). Software decode cannot keep up with the 1080p30 Android Auto stream
+hardware failure the renderer writes only the `/tmp` one, so the next boot tries hardware again.
+Software decode cannot keep up with the 1080p30 Android Auto stream
 (this FFmpeg build has no NEON). The tee then falls behind and waits for a key frame, and
 Google Maps sends one only every minute or two, so the cockpit picture froze for about 90 s at
 a time while the main screen kept moving (issue #44). The GEM *HW decoder ON / OFF* switch sets
@@ -90,12 +90,15 @@ and `carplay_monitor.sh` restarts a clean one.
 
 Hung video hardware (issue #14):
 
-- **Boot settle time.** No hardware decoder before 120 s of uptime (`ALTR_HW_MIN_UPTIME_S`).
-  A session that starts earlier decodes in software, then reconnects to the tee once at 120 s
-  and switches to hardware. Always for **Android Auto** (#14). **CarPlay** starts on hardware at
-  once, like upstream mib2q-carplay-rgi (no switch, so no blink); the marker
-  `/mnt/app/root/altscreen_render.hwdecode.delayed` (GEM *HW decoder 2-min delayed start*) gives
-  it the wait, for units that freeze when the decoder opens early (#10, cause not proven). `.live` is refreshed for up to 3 s until the first hardware picture,
+- **Boot settle time (opt-in).** Both sources start on hardware at once (CarPlay like upstream
+  mib2q-carplay-rgi, no switch, so no blink). The marker
+  `/mnt/app/root/altscreen_render.hwdecode.delayed` (GEM *HW decoder 2-min delayed start*)
+  brings back the wait, for CarPlay and Android Auto, for units that still freeze when the
+  decoder opens early (#10, #14): no hardware decoder before 120 s of uptime
+  (`ALTR_HW_MIN_UPTIME_S`), software until then, then one reconnect to the tee and hardware.
+  Until 1.4 **Android Auto** always waited (#14). That wait's reconnect killed gal (issue #48:
+  SIGPIPE in the tee writer, fixed), and the gal hook's main-screen yield below now does the
+  wait's job. `.live` is refreshed for up to 3 s until the first hardware picture,
   also while the decoder setup blocks (from the watchdog thread), so the cockpit does not flip
   back to the Audi map (issue #9: it showed for ~0.3 s while `.live` aged past Java's 1 s limit).
 - **Wedged decoder.** A state change that times out, or an OMX `Timeout` / `Hardware` error,
@@ -123,6 +126,19 @@ Hung video hardware (issue #14):
   yield waits the same way before its first decoder. Ordering: the renderer writes the active
   file before it reads the yield file, and the hook does the reverse, so a hardware start cannot
   slip past a yield.
+- **Main-screen yield, Android Auto (issue #48).** The gal hook (`aa_hook/aa_yield.c`) uses the
+  same two files for gal's own main-screen decoder, whose renderer jobs (init, config, shutdown)
+  follow the stock `VideoSink` callbacks. It yields before the main sink's `handleSetup`,
+  `handleCodecConfig`, `playbackStart` and `playbackStop`, and before
+  `GalReceiver::prepareShutdown` (a session end without a Stop, e.g. USB gone). Issue #14 was
+  this collision: with a route running, the cluster stream starts with the session, so the
+  cluster decoder opened together with gal's main-screen decoder. Now the first cluster picture
+  of a session meets the yield and the cluster decoder opens 3 s after gal's last main-sink
+  change. Nothing is announced on video focus changes: gal's decoder runs for the whole session
+  (slog `VideoRenderer stopped (elapsedTime=…)`), and a mid-session reconnect would wait for
+  Android Auto's next key frame, which can be a minute or two away. `aa_cluster_hook.log`:
+  `hw.yield why=setup renderer=no_hw_decoder`, `hw.yield why=session-teardown renderer released
+  the decoder in N ms`.
 - **Bounded starts (cooldown).** The checks above only catch failures the renderer lives to see.
   A renderer that crashes inside the decoder start, or before the first picture, would be
   restarted by `carplay_monitor.sh` and try hardware again, and each failed `OMX_GetHandle` can

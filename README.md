@@ -327,7 +327,7 @@ Its buttons run byte-identical copies of the M.I.B. mods, stored on the unit in
 | Small-map SafeAreas ON / OFF | toggle between three ViewAreas (wide + classic + sport) and a single wide one (next CarPlay connect) | no |
 | Re-request cluster map | re-send the cluster request in the running session so iOS picks the map app again (test) | no |
 | HW decoder ON / OFF | toggle hardware H.264 decode for the cluster video, CarPlay and Android Auto (default ON; next phone connect) | no |
-| HW decoder 2-min delayed start ON / OFF | CarPlay decodes in software for the first 2 minutes after an MMI start, then switches to hardware (default OFF: hardware at once). Turn on if the MMI freezes when CarPlay connects right after a start | no |
+| HW decoder 2-min delayed start ON / OFF | CarPlay and Android Auto decode in software for the first 2 minutes after an MMI start, then switch to hardware (default OFF: hardware at once). Turn on if the MMI freezes when the phone connects right after a start | no |
 | Android Auto cluster map ON / OFF | Android Auto cluster map on/off (next phone connect) | no |
 | Android Auto cluster day/night ON / OFF | opt-in, experimental: the Android Auto cluster map follows the MMI day/night design instead of always dark (picked at each phone connect) | no |
 | Siri on short voice-key press ON / OFF | opt-in: with CarPlay connected a short press of the wheel voice key opens Siri instead of the car's voice control (default OFF; applies at once) | no |

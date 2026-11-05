@@ -39,7 +39,7 @@ cluster_compass|cluster_compass|Cluster map compass ON / OFF (toggle, CarPlay, d
 cluster_wide_all|cluster_wide_all|Cluster map all features on wide view ON / OFF (toggle, CarPlay, default OFF)
 reacquire|reacquire|Re-request cluster map (test app switching)
 hwdec|hwdec|HW decoder ON / OFF (toggle, default ON)
-hwdelay|hwdelay|HW decoder 2-min delayed start ON / OFF (toggle, CarPlay, default OFF)
+hwdelay|hwdelay|HW decoder 2-min delayed start ON / OFF (toggle, CarPlay + Android Auto, default OFF)
 aa_cluster_on|aa_cluster_on|Android Auto cluster map ON
 aa_cluster_off|aa_cluster_off|Android Auto cluster map OFF
 aa_daynight|aa_daynight|Android Auto cluster day/night ON / OFF (toggle, opt-in, test)

@@ -48,14 +48,15 @@
  *   ALTR_AA_DECODE_THREADS (default 2, 1..4) — frame threads of the Android Auto
  *                   software decoder (fallback when hardware decode is off); 1 = the
  *                   low-delay single-thread decoder of 1.3.1 (issue #44)
- *   ALTR_HW_MIN_UPTIME_S (default 120) — no hardware decoder before this uptime;
- *                   software decode until then, then one reconnect to hardware.
- *                   Android Auto always; CarPlay only with the marker
- *                   /mnt/app/root/altscreen_render.hwdecode.delayed (GEM toggle)
- *   ALTR_HW_YIELD_HOLD_S (default 3, min 1) — after the CarPlay hook announces a
- *                   main-screen video setup/teardown (/tmp/altscreen_render.hw_yield)
- *                   the hardware decoder is suspended (last picture kept on the
- *                   cockpit) and reopened this long after the last one
+ *   ALTR_HW_MIN_UPTIME_S (default 120) — with the marker
+ *                   /mnt/app/root/altscreen_render.hwdecode.delayed (GEM toggle) only:
+ *                   no hardware decoder before this uptime, software decode until then,
+ *                   then one reconnect to hardware. CarPlay and Android Auto alike
+ *   ALTR_HW_YIELD_HOLD_S (default 3, min 1) — after a hook announces a main-screen
+ *                   video change (/tmp/altscreen_render.hw_yield: the CarPlay hook for
+ *                   stock's stream 110, the Android Auto hook for gal's main sink) the
+ *                   hardware decoder is suspended (last picture kept on the cockpit) and
+ *                   none is opened until this long after the last one
  *
  * Copyright (c) 2026
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -128,7 +129,7 @@ static uint64_t now_ms(void)
  * Auto failure writes only the /tmp twin: software decode cannot keep up with its
  * 1080p30 stream (no NEON in this FFmpeg build), the tee falls behind and the
  * cockpit picture freezes until the phone's next key frame (issue #44), so every
- * boot tries hardware again after the settle time. */
+ * boot tries hardware again. */
 #define ALTR_HWDEC_OFF_MARKER "/mnt/app/root/altscreen_render.hwdecode.off"
 /* /mnt/app is normally read-only to us; the /tmp twin always works and keeps a
  * failed hardware path off for the rest of this boot either way. */
@@ -143,14 +144,17 @@ struct source {
     int live_timeout_ms;        /* .live removed this long after the last shown picture; 0 = never while connected */
     const char *hw_off_marker;  /* persistent "hardware decode off" switch */
     const char *hw_off_boot;    /* the same for this boot (/tmp) */
-    const char *hw_settle_marker; /* present => wait ALTR_HW_MIN_UPTIME_S before hardware; NULL = always wait */
+    const char *hw_settle_marker; /* present => wait ALTR_HW_MIN_UPTIME_S before hardware (NULL = always) */
     int hw_fail_persists;       /* a hardware failure also writes hw_off_marker (else this boot only) */
     int sw_threads;             /* software decoder frame threads; 1 = low delay */
 };
 
-/* Delayed hardware start (GEM "HW decoder delayed start"): CarPlay starts on hardware at once
- * (as upstream mib2q-carplay-rgi), the marker brings back the boot settle time (issue #10).
- * Android Auto always waits: its 1080p decoder hung the video core 64 s after boot (#14). */
+/* Delayed hardware start (GEM "HW decoder delayed start"): both sources start on hardware at
+ * once (CarPlay as upstream mib2q-carplay-rgi), the marker brings back the boot settle time for
+ * units that still freeze when the decoder opens early (issues #10, #14). Android Auto waited
+ * always until 1.4: its 1080p decoder, opened together with gal's main-screen decoder at a
+ * session start, hung the video core (#14). The gal hook's main-screen yield now keeps the two
+ * apart, and the settle time's reconnect cost the whole session (#48). */
 #define ALTR_HW_SETTLE_MARKER "/mnt/app/root/altscreen_render.hwdecode.delayed"
 
 /* ---- liveness / status files (read by the Java cluster context module) ---- */
@@ -428,8 +432,10 @@ static void hw_switch_off(const struct source *s)
  * (VCD_HWTimeoutHandler, MMKIVdecDriver_Start TimeOut): black main screen, then
  * the issue #14 freeze and watchdog reboot. The CarPlay hook in dio_manager
  * stamps ALTR_HW_YIELD_FILE with the uptime before stock sets up or tears down
- * the main screen stream and waits (bounded) while ALTR_HW_ACTIVE_FILE names a
- * live renderer. We suspend the hardware decoder at once (window 99 keeps the
+ * the main screen stream, the Android Auto hook in gal before gal's main sink is
+ * set up, configured, started or stopped and before the session shuts down; both
+ * wait (bounded) while ALTR_HW_ACTIVE_FILE names a live renderer. We suspend the
+ * hardware decoder at once (window 99 keeps the
  * last picture, so nothing blinks), drop the stream until the main screen has
  * been quiet for ALTR_HW_YIELD_HOLD_S (stock's decoder is up ~0.5 s after its
  * SETUP), then reconnect for a key frame and resume. Order: we write the active file before reading the yield file, the
@@ -765,7 +771,7 @@ static void sources_init(struct source *src, int *nsrc, int surface_w, int surfa
     src[*nsrc].live_timeout_ms = env_i("ALTR_AA_LIVE_TIMEOUT_MS", 0);
     src[*nsrc].hw_off_marker = ALTR_AA_HWDEC_OFF_MARKER;
     src[*nsrc].hw_off_boot = ALTR_AA_HWDEC_OFF_BOOT;
-    src[*nsrc].hw_settle_marker = NULL;          /* always wait (issue #14) */
+    src[*nsrc].hw_settle_marker = ALTR_HW_SETTLE_MARKER;   /* issue #48; the yield covers #14 */
     src[*nsrc].hw_fail_persists = 0;             /* issue #44: this boot only */
     /* Software fallback only (the hardware decoder is the default). On one core a
      * 1080p30 drive falls behind and freezes until the next key frame (issue #44).
@@ -977,7 +983,7 @@ int main(void)
                 if (!a.hw && !a.hw_tried && !a.hw_deferred && hw_wanted(s)) {
                     int hw_gate;
                     uint64_t hw_defer_until = 0;
-                    /* CarPlay waits only with the GEM "delayed start" marker; Android Auto always. */
+                    /* Only with the GEM "delayed start" marker (CarPlay and Android Auto). */
                     int settle = !s->hw_settle_marker || access(s->hw_settle_marker, F_OK) == 0;
                     if (settle && now_ms() < a.hw_min_uptime_ms) {
                         /* Issue #14: a 1080p Android Auto decoder opened ~64 s after
@@ -985,7 +991,9 @@ int main(void)
                          * starts with the session) hung the shared Venus core
                          * (VCD_HWTimeoutHandler) while stock was still bringing up
                          * its own video sessions. Car logs 020/021 opened it at
-                         * ~100 s without trouble. */
+                         * ~100 s without trouble. The main-screen yield below now
+                         * keeps it apart from gal's decoder; this wait remains for
+                         * units that still freeze. */
                         fprintf(stderr, "altscreen_render: uptime %llu s < %llu s: %s on software "
                                 "decode until the video hardware has settled\n",
                                 (unsigned long long)(now_ms() / 1000u),

@@ -170,19 +170,20 @@ case $ACT in
         fi
         ;;
     hwdelay)
-        # CarPlay starts on the hardware decoder at once (no switch, no blink). This marker
-        # brings back the 2-minute wait after an MMI start (software decode until then),
-        # for units that freeze when the decoder opens early (issue #10). Android Auto always
-        # waits (issue #14). Read per CarPlay connection.
+        # The cluster map starts on the hardware decoder at once, CarPlay and Android Auto (no
+        # switch, no blink); the hooks keep it off the video core while the main screen's own
+        # decoder changes state. This marker brings back the 2-minute wait after an MMI start
+        # (software decode until then) for units that still freeze when the decoder opens early
+        # (issues #10, #14). Read per phone connection.
         M=/mnt/app/root/altscreen_render.hwdecode.delayed
         mount -uw /mnt/app 2>/dev/null
         if [ -e "$M" ]; then
             rm -f "$M"; sync
-            echo "DONE. CarPlay hardware decoder starts at once (default) from the next connection."
+            echo "DONE. Cluster map hardware decoder starts at once (default) from the next connection."
         else
             : > "$M" || { echo "FAILED: cannot create $M"; exit 1; }
             sync
-            echo "DONE. CarPlay hardware decoder waits 2 minutes after an MMI start (software until then)."
+            echo "DONE. Cluster map hardware decoder waits 2 minutes after an MMI start (software until then), CarPlay and Android Auto."
         fi
         ;;
     verbose)

@@ -109,7 +109,12 @@ flowchart LR
   "unexpected message" reply, translates the new navigation messages to the legacy pair, and
   sends the dark theme and the view's safe area (0x8009 on every view change). Frames go to a
   loopback tee that keeps the AUs since the last keyframe, so a renderer that connects late
-  starts on a keyframe.
+  starts on a keyframe. The tee's writer thread blocks SIGPIPE, so a renderer that closes its
+  end costs only that connection, never `gal` (issue #48). Before `gal`'s own main-screen
+  decoder is set up, configured, started or stopped, and before the session shuts down, the
+  hook tells the renderer through `/tmp/altscreen_render.hw_yield` and waits until it has
+  released the video core (`aa_yield.c`, the CarPlay hook's protocol), so the two decoders never
+  change state together (issue #14).
 - `aa_trip.c`: reads `0x8006.destinations` and `0x8007.destination_distances` **before**
   translation discards them. Both use the last entry (final destination, not the next stop).
   Missing fields clear their values; changing destination clears old estimates. Native
@@ -122,7 +127,10 @@ flowchart LR
   rectangle. For Android Auto, liveness lasts for the whole tee connection after the first
   picture: the phone sends about one picture every 6 s while its map is still, and a timeout
   made the cockpit blink between the phone map and the Audi map (car log 020). A failed
-  Android Auto hardware decode switches off only its own marker.
+  Android Auto hardware decode switches off only its own marker. The hardware decoder opens at
+  once, also right after boot; until 1.4 Android Auto decoded in software for the first 2
+  minutes and then reconnected, which cost the whole session (issue #48). GEM *HW decoder 2-min
+  delayed start* brings that wait back for units that need it.
 - `aa_startup.sh`: `children.gal` wrapper. It always ends in the stock `gal`, starts the shared
   monitor with the renderers' tested library path, and preloads the hook only if it is
   installed and `aa_cluster.off` is absent.
@@ -170,6 +178,7 @@ They apply on the next phone connection, except the first row, which needs a reb
 | `/mnt/app/root/aa_cluster.dpi` | density, one number 80..400 (default 125 = 1:1 on the 125 PPI panel) |
 | `/mnt/app/root/aa_cluster.insets` | 12 numbers: top bottom left right for full, classic, sport |
 | `/mnt/app/root/altscreen_render.aa.hwdecode.off` | Android Auto software decode (GEM *HW decoder ON / OFF* switches it with CarPlay's; a hardware failure writes only `/tmp/altscreen_render.aa.hwdecode.off`, issue #44) |
+| `/mnt/app/root/altscreen_render.hwdecode.delayed` | software decode for the first 2 minutes after an MMI start, then hardware, CarPlay and Android Auto (GEM *HW decoder 2-min delayed start*; default off) |
 | `/mnt/app/carplay_rgd.disabled` | route guidance off for both phone types |
 
 ## 📜 Logs

@@ -1,8 +1,9 @@
 /*
  * Host test for the aa_hook.c load-time gate: receiver profile match with and without the
  * validated gal build, and the unpinned safety marker (armed at start-up, cleared by the first
- * cluster frame or a clean exit, a leftover keeps Android Auto stock).
- * Build with -DAA_UNPINNED_PATH pointing at a temp file.
+ * cluster frame or a clean exit, a leftover keeps Android Auto stock), and the main-screen yield
+ * interposers (only the main sink, only with the hook enabled, always forwarded with the callee's
+ * return value). Build with -DAA_UNPINNED_PATH pointing at a temp file.
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
@@ -23,6 +24,15 @@ int aa_dpi(void) { return AA_DPI_DEFAULT; }
 void aa_uiconfig_sink(void *sink) { (void)sink; }
 void aa_uiconfig_media(void *media) { (void)media; }
 void aa_relayout_tick(void *sink) { (void)sink; }
+
+static int yields;
+static const char *last_yield = "";
+int aa_hw_yield(const char *why) { yields++; last_yield = why; return AA_YIELD_NONE; }
+
+static int forwarded;
+static int fake_sink_int(void *s, int v) { (void)s; forwarded++; return v + 100; }
+static int fake_codec(void *s, void *d, unsigned n) { (void)s; (void)d; forwarded++; return (int)n + 200; }
+static int fake_shutdown(void *r) { (void)r; forwarded++; return 7; }
 
 static int acked;
 static int fake_ack(void *sink, int session, unsigned n) { (void)sink; (void)session; (void)n; return ++acked; }
@@ -93,7 +103,43 @@ int main(void)
     aa_hook_fini();
     assert(!unpinned && !exists(AA_UNPINNED_PATH));
 
+    /* Main-screen yield (issue #48): before every main-sink lifecycle callback and the session
+     * shutdown, never for another sink or with the hook disabled; always forwarded. */
+    {
+        unsigned char main_sink[0x50] = {0}, other_sink[0x50] = {0}, receiver[16] = {0};
+        unsigned char codec[4] = {0};
+        real_setup = real_start = real_stop = fake_sink_int;
+        real_codec = fake_codec;
+        real_prepare_shutdown = fake_shutdown;
+        primary = main_sink;
+
+        enabled = 0;
+        assert(_ZN9VideoSink11handleSetupEi(main_sink, 3) == 103);
+        assert(_ZN11GalReceiver15prepareShutdownEv(receiver) == 7);
+        assert(yields == 0 && forwarded == 2);
+
+        enabled = 1;
+        assert(_ZN9VideoSink11handleSetupEi(main_sink, 3) == 103 && yields == 1 && !strcmp(last_yield, "setup"));
+        assert(_ZN9VideoSink17handleCodecConfigEPvj(main_sink, codec, 4) == 204 && yields == 2 &&
+               !strcmp(last_yield, "codec"));
+        assert(_ZN9VideoSink13playbackStartEi(main_sink, 5) == 105 && yields == 3 && !strcmp(last_yield, "start"));
+        assert(_ZN9VideoSink12playbackStopEi(main_sink, 5) == 105 && yields == 4 && !strcmp(last_yield, "stop"));
+        assert(_ZN11GalReceiver15prepareShutdownEv(receiver) == 7 && yields == 5 &&
+               !strcmp(last_yield, "session-teardown"));
+        /* Another stock sink (or none known yet): forwarded, no yield. */
+        assert(_ZN9VideoSink11handleSetupEi(other_sink, 3) == 103 && yields == 5);
+        assert(_ZN9VideoSink12playbackStopEi(other_sink, 1) == 101 && yields == 5);
+        primary = NULL;
+        assert(_ZN9VideoSink13playbackStartEi(main_sink, 1) == 101 && yields == 5);
+        assert(forwarded == 2 + 8);
+        /* Unresolved callee (a receiver without the symbol never calls ours): no crash. */
+        real_stop = NULL;
+        assert(_ZN9VideoSink12playbackStopEi(main_sink, 1) == 0);
+        enabled = 0;
+    }
+
     puts("aa_hook_gate_test: pinned/unpinned receiver match, receiver mismatch, unpinned marker "
-         "(arm, leftover refuses, unwritable, first frame, clean exit) PASS");
+         "(arm, leftover refuses, unwritable, first frame, clean exit), main-screen yield "
+         "interposers PASS");
     return 0;
 }

@@ -15,6 +15,9 @@
  * aa_tee_reset() (new playback session, sink gone) drops the list and closes the
  * client, so the renderer reconnects with a fresh decoder for the next stream.
  *
+ * The writer thread blocks SIGPIPE: the renderer closing its end must cost only the
+ * client, never gal (issue #48, see writer()).
+ *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "aa_hook.h"
@@ -24,6 +27,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/select.h>
@@ -211,6 +215,18 @@ static void *writer(void *arg)
     uint64_t cursor = 0, client_epoch = 0;
     unsigned char *buf = NULL;
     size_t cap = 0;
+    sigset_t pipe_sig;
+
+    /* send() to a peer that closed or reset its end fails with EPIPE and generates SIGPIPE
+     * for the calling thread (POSIX). QNX io-pkt does that on the first send after the
+     * renderer let go (planned reconnect, restart, crash) and has no MSG_NOSIGNAL (it fails
+     * with ENOSYS). gal leaves SIGPIPE at its default, so it killed gal and the whole Android
+     * Auto session with it (issue #48: the 120 s software -> hardware reconnect). Blocked in
+     * this thread only: send() returns EPIPE, the client is dropped below, gal's own signal
+     * dispositions stay untouched. */
+    sigemptyset(&pipe_sig);
+    sigaddset(&pipe_sig, SIGPIPE);
+    pthread_sigmask(SIG_BLOCK, &pipe_sig, NULL);
     for (;;) {
         fd_set rd;
         struct timeval tv;

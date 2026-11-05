@@ -2,7 +2,9 @@
  * Host test for aa_hook/aa_tee.c over real loopback sockets: nothing before the first
  * keyframe, SPS/PPS prepended to it, live delivery, a client joining mid-stream starts on
  * the cached keyframe, a newer client replaces the old one, reset closes the client, and an
- * overflowed cache makes a new client wait for the next keyframe.
+ * overflowed cache makes a new client wait for the next keyframe. Issue #48: a SIGPIPE raised
+ * at the writer thread (QNX io-pkt does that when the renderer closed its end) must not end
+ * the process, and a client that resets mid-stream costs only that client.
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
@@ -14,14 +16,36 @@
 #include <errno.h>
 #include <netinet/in.h>
 #include <poll.h>
+#include <pthread.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
-void aa_log(const char *fmt, ...) { (void)fmt; }
+/* The writer logs from its own thread: remember which thread that is, and count lost clients. */
+static pthread_mutex_t seen_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_t writer_thread;
+static int writer_seen, clients_lost;
+
+void aa_log(const char *fmt, ...)
+{
+    pthread_mutex_lock(&seen_lock);
+    if (!strncmp(fmt, "tee.client connected", 20)) { writer_thread = pthread_self(); writer_seen = 1; }
+    if (!strncmp(fmt, "tee.client lost", 15)) clients_lost++;
+    pthread_mutex_unlock(&seen_lock);
+}
 int aa_marker(const char *path) { (void)path; return 0; }
+
+static int lost(void)
+{
+    int n;
+    pthread_mutex_lock(&seen_lock);
+    n = clients_lost;
+    pthread_mutex_unlock(&seen_lock);
+    return n;
+}
 
 static int port;
 
@@ -88,8 +112,12 @@ static void expect(int fd, const unsigned char *a, size_t an, const unsigned cha
 
 int main(void)
 {
-    int a, b, c, i;
+    int a, b, c, d, e, i;
+    pthread_t writer;
+    struct linger rst = { 1, 0 };
     static unsigned char big[300 * 1024];
+
+    signal(SIGPIPE, SIG_DFL);           /* gal's disposition: the default ends the process */
 
     for (i = 0; i < 50; i++) {
         port = 41000 + (int)(getpid() % 9000) + i;
@@ -137,11 +165,37 @@ int main(void)
     expect(c, P3, sizeof(P3), NULL, 0, "after overflow: live");
     close(c);
 
+    /* Issue #48. QNX io-pkt generates SIGPIPE for the writer thread on its first send after
+     * the renderer closed its end (the 120 s reconnect), and gal keeps the default action, so
+     * that ended gal and the Android Auto session. Deliver it the same way: the writer must
+     * have it blocked, and it must go on serving. Without the fix this process dies here. */
+    d = client();
+    expect(d, SPS_PPS, sizeof(SPS_PPS), IDR, sizeof(IDR), "sigpipe: join on the cached keyframe");
+    expect(d, P3, sizeof(P3), NULL, 0, "sigpipe: cached P frame");
+    pthread_mutex_lock(&seen_lock);
+    assert(writer_seen && !pthread_equal(writer_thread, pthread_self()));
+    writer = writer_thread;
+    pthread_mutex_unlock(&seen_lock);
+    assert(pthread_kill(writer, SIGPIPE) == 0);
+    usleep(200000);
+    aa_tee_frame(P1, sizeof(P1));
+    expect(d, P1, sizeof(P1), NULL, 0, "sigpipe: the writer still serves after SIGPIPE");
+
+    /* A renderer that resets mid-stream (crash, close with unread data) costs only that client:
+     * the writer drops it and the next one starts on the cached keyframe. */
+    assert(setsockopt(d, SOL_SOCKET, SO_LINGER, &rst, sizeof(rst)) == 0);
+    close(d);
+    for (i = 0; i < 50 && !lost(); i++) { aa_tee_frame(P2, sizeof(P2)); usleep(20000); }
+    assert(lost() >= 1);
+    e = client();
+    expect(e, SPS_PPS, sizeof(SPS_PPS), IDR, sizeof(IDR), "after a reset client: cached keyframe");
+    close(e);
+
     /* NAL scan used by the producer. */
     assert(aa_nal_types(IDR, sizeof(IDR)) == (1u << 5));
     assert(aa_nal_types(SPS_PPS, sizeof(SPS_PPS)) == ((1u << 7) | (1u << 8)));
 
     printf("aa_tee_test: keyframe gating, SPS/PPS prefix, live, mid-stream join, client replace, "
-           "reset, overflow PASS\n");
+           "reset, overflow, SIGPIPE at the writer, client reset PASS\n");
     return 0;
 }

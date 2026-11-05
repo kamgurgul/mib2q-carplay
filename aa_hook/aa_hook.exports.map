@@ -2,12 +2,17 @@
     global:
         _ZN10Controller18sendVersionRequestEv;
         _ZN10Controller21handleVersionResponseEPvj;
+        _ZN11GalReceiver15prepareShutdownEv;
         _ZN11GalReceiver15registerServiceEP20ProtocolEndpointBase;
         _ZN11InputSource16addDiscoveryInfoEP24ServiceDiscoveryResponse;
         _ZN13MessageRouter12routeMessageEhRK10shared_ptrI8IoBufferE;
         _ZN13MessageRouter20handleChannelOpenReqEhRK18ChannelOpenRequest;
         _ZN13MessageRouter21sendUnexpectedMessageEh;
+        _ZN9VideoSink11handleSetupEi;
+        _ZN9VideoSink12playbackStopEi;
+        _ZN9VideoSink13playbackStartEi;
         _ZN9VideoSink16addDiscoveryInfoEP24ServiceDiscoveryResponse;
+        _ZN9VideoSink17handleCodecConfigEPvj;
         _ZN9VideoSink25addSupportedConfigurationEiiiiiii;
     local:
         *;

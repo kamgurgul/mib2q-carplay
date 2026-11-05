@@ -219,7 +219,7 @@ Renderer (`altscreen_render`):
 | `ALTR_LIVE_TIMEOUT_MS` | 0 | heartbeat removed if no frame within this; 0 = kept while the tee is connected (the hook closes it when stream 111 ends) |
 | `ALTR_STATUS_FILE` | `/tmp/altscreen_render.status` | `state=`, size, `frames=` |
 | `/mnt/app/root/altscreen_render.hwdecode.off` | absent | software decode (GEM *HW decoder ON / OFF*); `/tmp/…` for this boot only |
-| `/mnt/app/root/altscreen_render.hwdecode.delayed` | absent | CarPlay waits `ALTR_HW_MIN_UPTIME_S` (120 s) before hardware decode (GEM *HW decoder 2-min delayed start*); Android Auto always waits |
+| `/mnt/app/root/altscreen_render.hwdecode.delayed` | absent | CarPlay and Android Auto wait `ALTR_HW_MIN_UPTIME_S` (120 s) after boot before hardware decode, software until then (GEM *HW decoder 2-min delayed start*); absent = hardware at once, kept apart from the main screen's decoder by the main-screen yield |
 
 The renderer runs at QNX priority 15 (like `maneuver_render`): at the default 10 the compositor's
 workers can stall every renderer thread for 300-650 ms at once (measured upstream, 2026-10-09).

@@ -194,6 +194,24 @@ cc -std=gnu99 -O1 -Wall -Wextra -Werror -Iaa_hook \
     tests/aa_tee_test.c aa_hook/aa_tee.c -lpthread -o "$OUT/aa_tee"
 "$OUT/aa_tee"
 
+printf '%-32s ' aa_yield_test
+cc -std=gnu99 -O1 -Wall -Wextra -Werror -Iaa_hook \
+    "-DAA_HW_YIELD_PATH=\"$OUT/hw_yield\"" "-DAA_HW_ACTIVE_PATH=\"$OUT/hw_active\"" \
+    -DAA_HW_YIELD_WAIT_MS=400u tests/aa_yield_test.c aa_hook/aa_yield.c -lpthread -o "$OUT/aa_yield"
+"$OUT/aa_yield"
+
+printf '%-32s ' hw_yield_files
+# The main-screen yield: both hooks write the files altscreen_render reads.
+for f in yield active; do
+    F=$(echo "$f" | tr a-z A-Z)
+    aa=$(sed -n "s/^#define AA_HW_${F}_PATH *\"\([^\"]*\)\".*/\1/p" aa_hook/aa_hook.h)
+    cp=$(sed -n "s/^#define ALTR_HW_${F}_PATH *\"\([^\"]*\)\".*/\1/p" altscreen_hook/libaltscreen111_gen2.c)
+    rd=$(sed -n "s/^#define ALTR_HW_${F}_FILE *\"\([^\"]*\)\".*/\1/p" altscreen_render/main.c)
+    [ -n "$aa" ] && [ "$aa" = "$cp" ] && [ "$aa" = "$rd" ] \
+        || { echo "FAIL: hw_$f file: AA hook '$aa', CarPlay hook '$cp', renderer '$rd'"; exit 1; }
+done
+echo "hw_yield / hw_active: both hooks and the renderer agree"
+
 printf '%-32s ' aa_tee_port
 # The gal hook's tee and altscreen_render's Android Auto source must agree.
 hook_port=$(sed -n 's/^#define AA_TEE_PORT_DEFAULT *\([0-9]*\).*/\1/p' aa_hook/aa_hook.h)

@@ -40,6 +40,16 @@
 #define AA_THEME_PATH          "/tmp/aa_cluster_theme"
 #endif
 #define AA_TEE_PORT_DEFAULT    19821
+/* Main-screen video yield to altscreen_render: the same files as the CarPlay hook's. */
+#ifndef AA_HW_YIELD_PATH
+#define AA_HW_YIELD_PATH       "/tmp/altscreen_render.hw_yield"         /* uptime ms of the last change */
+#endif
+#ifndef AA_HW_ACTIVE_PATH
+#define AA_HW_ACTIVE_PATH      "/tmp/altscreen_render.hw_active"        /* pid=<renderer> while it holds a decoder */
+#endif
+#ifndef AA_HW_YIELD_WAIT_MS
+#define AA_HW_YIELD_WAIT_MS    1500u                                    /* longest wait for the renderer */
+#endif
 
 /* Cluster stream: 1920x1080 (codec resolution 3) with width/height margins 480 x 540,
  * so the phone lays its UI out in the centred 1440x540 viewport = the cockpit terminal. */
@@ -62,6 +72,11 @@ void aa_tee_codec(const void *data, size_t size);
 void aa_tee_frame(const void *data, size_t size);
 void aa_tee_reset(const char *reason);
 unsigned aa_nal_types(const void *data, size_t size);
+
+/* aa_yield.c: tell altscreen_render before gal's main-screen decoder changes state, wait
+ * (bounded) until it has released the video core. */
+enum { AA_YIELD_NONE = 0, AA_YIELD_RELEASED = 1, AA_YIELD_TIMEOUT = 2 };
+int aa_hw_yield(const char *why);
 
 /* aa_navxlate.c */
 void aa_nav_translate(unsigned char channel, const void *shared);

@@ -19,7 +19,9 @@
  *     which made the phone reset the link;
  *   - translates the new navigation messages to the legacy pair (aa_navxlate.c) and writes
  *     the current step's lanes for Java;
- *   - sends the cockpit view's safe area at connect and on every view change (aa_uiconfig.c).
+ *   - sends the cockpit view's safe area at connect and on every view change (aa_uiconfig.c);
+ *   - tells altscreen_render before gal's main-screen decoder changes state, so the two decoders
+ *     on the one video core never do so together (aa_yield.c; replaces the 120 s boot wait).
  *
  * ABI safety: the hook relies on object layouts inside libautoreceiver. It runs only when the
  * receiver matches a known profile (below), checked by symbol offsets at load time. Any other
@@ -61,6 +63,11 @@ typedef void (*route_fn)(void *, unsigned char, const void *);
 typedef int (*open_fn)(void *, unsigned char, const void *);
 typedef int (*version_resp_fn)(void *, void *, unsigned);
 typedef void (*unexpected_fn)(void *, unsigned char);
+/* Main-screen sink and receiver calls that are only forwarded. The return value is passed
+ * through whatever it is (r0), so a void callee costs nothing and an int one keeps its result. */
+typedef int (*sink_int_fn)(void *, int);
+typedef int (*sink_codec_fn)(void *, void *, unsigned);
+typedef int (*receiver_fn)(void *);
 
 /* ---- receiver profiles -------------------------------------------------------------- */
 
@@ -104,6 +111,9 @@ static open_fn real_open;
 static void (*real_version)(void *);
 static version_resp_fn real_version_response;
 static unexpected_fn real_unexpected;
+static sink_int_fn real_setup, real_start, real_stop;
+static sink_codec_fn real_codec;
+static receiver_fn real_prepare_shutdown;
 static void *primary, *secondary, *pending, *sink_vtable, *input_endpoint, *base_vtable;
 static uint32_t private_vtable[18];   /* 8-byte header, sixteen method pointers */
 static uint32_t input_vtable[10];
@@ -482,6 +492,49 @@ EXPORT int _ZN13MessageRouter20handleChannelOpenReqEhRK18ChannelOpenRequest(void
     return rc;
 }
 
+/* ---- main-screen video yield (aa_yield.c) ------------------------------------------- */
+
+/* gal's main-screen renderer is set up, configured, started and shut down from these stock
+ * VideoSink callbacks (its CVideoRendererJob_* queue), so the yield comes before them. Only the
+ * main sink: the cluster sink has its own vtable and never reaches these. Each yield returns at
+ * once unless the renderer holds a hardware decoder, and then waits at most 1.5 s. */
+static void main_video_change(void *sink, const char *why)
+{
+    if (enabled && sink && sink == primary) aa_hw_yield(why);
+}
+
+EXPORT int _ZN9VideoSink11handleSetupEi(void *sink, int type)
+{
+    main_video_change(sink, "setup");
+    return real_setup ? real_setup(sink, type) : 0;
+}
+
+EXPORT int _ZN9VideoSink17handleCodecConfigEPvj(void *sink, void *data, unsigned size)
+{
+    main_video_change(sink, "codec");
+    return real_codec ? real_codec(sink, data, size) : 0;
+}
+
+EXPORT int _ZN9VideoSink13playbackStartEi(void *sink, int session)
+{
+    main_video_change(sink, "start");
+    return real_start ? real_start(sink, session) : 0;
+}
+
+EXPORT int _ZN9VideoSink12playbackStopEi(void *sink, int session)
+{
+    main_video_change(sink, "stop");
+    return real_stop ? real_stop(sink, session) : 0;
+}
+
+/* gal's first call when a session ends (USB gone, bye-bye), before its renderer shuts down;
+ * the phone sends no Stop then. */
+EXPORT int _ZN11GalReceiver15prepareShutdownEv(void *receiver)
+{
+    if (enabled) aa_hw_yield("session-teardown");
+    return real_prepare_shutdown ? real_prepare_shutdown(receiver) : 0;
+}
+
 EXPORT void _ZN13MessageRouter12routeMessageEhRK10shared_ptrI8IoBufferE(void *r, unsigned char ch, const void *shared)
 {
     if (enabled && registered) {
@@ -562,6 +615,12 @@ __attribute__((constructor)) static void aa_hook_init(void)
     RES(real_version, "_ZN10Controller18sendVersionRequestEv");
     RES(real_version_response, "_ZN10Controller21handleVersionResponseEPvj");
     RES(real_unexpected, "_ZN13MessageRouter21sendUnexpectedMessageEh");
+    /* Main-screen yield: optional, a receiver without them simply never calls ours. */
+    RES(real_setup, "_ZN9VideoSink11handleSetupEi");
+    RES(real_codec, "_ZN9VideoSink17handleCodecConfigEPvj");
+    RES(real_start, "_ZN9VideoSink13playbackStartEi");
+    RES(real_stop, "_ZN9VideoSink12playbackStopEi");
+    RES(real_prepare_shutdown, "_ZN11GalReceiver15prepareShutdownEv");
     RES(sink_vtable, "_ZTV9VideoSink");
     RES(base_vtable, "_ZTV20ProtocolEndpointBase");
 #undef RES
