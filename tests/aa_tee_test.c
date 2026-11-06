@@ -183,6 +183,16 @@ int main(void)
 
     /* A renderer that resets mid-stream (crash, close with unread data) costs only that client:
      * the writer drops it and the next one starts on the cached keyframe. */
+#ifdef __APPLE__
+    {   /* XNU sends a socket's SIGPIPE to the process, not to the sending thread as POSIX
+         * (and QNX) do, so this thread's default action would end the test. The per-thread
+         * case is covered by the pthread_kill() above. */
+        sigset_t pipe_sig;
+        sigemptyset(&pipe_sig);
+        sigaddset(&pipe_sig, SIGPIPE);
+        pthread_sigmask(SIG_BLOCK, &pipe_sig, NULL);
+    }
+#endif
     assert(setsockopt(d, SOL_SOCKET, SO_LINGER, &rst, sizeof(rst)) == 0);
     close(d);
     for (i = 0; i < 50 && !lost(); i++) { aa_tee_frame(P2, sizeof(P2)); usleep(20000); }
