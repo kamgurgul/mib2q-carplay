@@ -201,7 +201,7 @@ This runs every build below in order, then replaces
 To package a versioned release (the layout of the GitHub release zips) instead:
 
 ```sh
-./scripts/build_release.sh              # full build, then release/mib2q-carplay-1.4/ and .zip
+./scripts/build_release.sh              # full build, then release/mib2q-carplay-1.4.1/ and .zip
 NO_BUILD=1 ./scripts/build_release.sh   # package the build that is already staged
 ```
 

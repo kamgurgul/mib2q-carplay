@@ -1,8 +1,8 @@
 #!/bin/bash
 # Build a complete, versioned release: release/mib2q-carplay-<version>/ and its .zip.
 #
-#   ./scripts/build_release.sh              # version 1.4, full build first
-#   VERSION=1.4 ./scripts/build_release.sh
+#   ./scripts/build_release.sh              # version 1.4.1, full build first
+#   VERSION=1.4.1 ./scripts/build_release.sh
 #   NO_BUILD=1 ./scripts/build_release.sh   # reuse the current staged build
 #
 # Layout:
@@ -17,7 +17,7 @@ set -euo pipefail
 [ "$#" -eq 0 ] || { echo "usage: [VERSION=x.y] [NO_BUILD=1] ./scripts/build_release.sh"; exit 2; }
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="${VERSION:-1.4}"
+VERSION="${VERSION:-1.4.1}"
 NAME="mib2q-carplay-$VERSION"
 OUT="$PROJECT_DIR/release/$NAME"
 MODS="$PROJECT_DIR/mods"
