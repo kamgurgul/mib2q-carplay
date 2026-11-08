@@ -227,6 +227,7 @@ struct app {
     uint64_t hw_min_uptime_ms;    /* configured boot settle time (ALTR_HW_MIN_UPTIME_S) */
     uint64_t hw_upgrade_at_ms;    /* deferred: reconnect to hardware at this uptime */
     uint64_t live_hold_until_ms;  /* planned switch to hardware: keep .live fresh until the first picture */
+    uint64_t freeze_until_ms;     /* session over: decoder suspended, window 99 keeps the last picture until then */
 #endif
 };
 
@@ -661,6 +662,38 @@ static void wd_disarm(void)
 /* Planned software -> hardware reconnect: .live stays fresh this long without a picture. */
 #define ALTR_UPGRADE_LIVE_HOLD_MS 3000u
 
+/* Disconnect freeze. Window 99 is on the cockpit until Java has switched back to the
+ * stock context, which it does only after .live has been missing for three 250 ms polls
+ * (AltScreenModule MISS_DEBOUNCE). Closing the hardware decoder destroys its window, so
+ * the cockpit went black for up to ~1 s at every session end. Now the decoder is
+ * suspended (the video core is free for stock at once, as before), .live is dropped,
+ * and the window with the last picture is destroyed only after this hold. The software
+ * path keeps its GL window anyway. */
+#define ALTR_DISCONNECT_FREEZE_MS 1500u
+
+static void hw_close(struct app *a);
+static void hw_suspend(struct app *a);
+
+/* Session over on the hardware path: free the video core, keep the last picture. */
+static void hw_freeze(struct app *a)
+{
+    if (!a->hw || a->freeze_until_ms) return;
+    hw_suspend(a);
+    a->hw_waiting = 0;
+    a->freeze_until_ms = now_ms() + ALTR_DISCONNECT_FREEZE_MS;
+    fprintf(stderr, "altscreen_render: session over; last picture kept %u ms while the cockpit "
+            "returns to the stock map\n", ALTR_DISCONNECT_FREEZE_MS);
+}
+
+/* End a disconnect freeze: now (a new session) or once the hold is over (idle). */
+static void hw_unfreeze(struct app *a, int force)
+{
+    if (!a->freeze_until_ms) return;
+    if (!force && now_ms() < a->freeze_until_ms) return;
+    hw_close(a);
+    a->freeze_until_ms = 0;
+}
+
 /* Close the hardware session. A decoder stuck in Executing keeps our buffers:
  * switch hardware decode OFF and exit, so carplay_monitor.sh restarts a clean
  * renderer (software path) instead of this one hanging or reusing them. */
@@ -881,8 +914,10 @@ int main(void)
         }
         if (fd < 0) {
 #ifdef PLATFORM_QNX
-            hw_close(&a);               /* a suspended decoder: the session is gone */
-            a.hw_waiting = 0;
+            /* The session is gone (a decoder suspended for the main screen included):
+             * keep its last picture until the cockpit is back on the stock map. */
+            hw_freeze(&a);
+            hw_unfreeze(&a, 0);
 #endif
             set_live(0);
             g_source_name = "none";
@@ -890,6 +925,9 @@ int main(void)
             sleep(1);
             continue;
         }
+#ifdef PLATFORM_QNX
+        hw_unfreeze(&a, 1);         /* a new session: drop the previous one's frozen window */
+#endif
         a.src = s;
         a.last_shown_ms = 0;
         g_source_name = s->name;
@@ -1098,6 +1136,8 @@ int main(void)
              * cluster config right after a main-screen change). */
             upgrade = 1;
             a.live_hold_until_ms = now_ms() + ALTR_UPGRADE_LIVE_HOLD_MS;
+        } else if (a.hw && !upgrade) {
+            hw_freeze(&a);          /* stream over: last picture kept, see ALTR_DISCONNECT_FREEZE_MS */
         } else {
             hw_close(&a);
             a.hw_waiting = 0;

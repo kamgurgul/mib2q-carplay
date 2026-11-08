@@ -366,6 +366,7 @@ These run on the host and need no unit:
 
 ```sh
 ./scripts/run_tests.sh                 # C + shell: parser, bus, cover art, installer, supervisor
+SANITIZE=1 ./scripts/run_tests.sh      # the same, every C test built with ASan + UBSan
 bash scripts/test_route_info.sh        # Java route guidance / BAP bridge against the stock jar
 bash scripts/test_java_transports.sh   # Java bus, renderer sockets, touchpad, PDC
 bash scripts/test_mmi_settings.sh      # MMI CarPlay settings, translations, cover-art clear

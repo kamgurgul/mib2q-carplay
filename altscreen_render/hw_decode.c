@@ -23,6 +23,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "hw_decode.h"
+#include "nal.h"
 
 #ifdef PLATFORM_QNX
 
@@ -312,28 +313,6 @@ static int map_screen_buffers(altr_hwdec_t *d)
     return 0;
 }
 
-/* Leading SPS/PPS (and AUD/SEI before them) of an Annex-B AU: bytes to send as
- * CODECCONFIG. 0 when the AU starts with a picture. */
-static size_t config_prefix(const uint8_t *p, size_t n)
-{
-    size_t i = 0;
-    int have_cfg = 0;
-    while (i + 3 < n) {
-        size_t sc = 0;
-        if (p[i] == 0 && p[i + 1] == 0 && p[i + 2] == 1) sc = 3;
-        else if (i + 4 < n && p[i] == 0 && p[i + 1] == 0 && p[i + 2] == 0 && p[i + 3] == 1) sc = 4;
-        if (!sc) { ++i; continue; }
-        {
-            unsigned type = p[i + sc] & 31u;
-            if (type == 7 || type == 8) { have_cfg = 1; }
-            else if (type == 9 || type == 6) { /* AUD / SEI ahead of the parameter sets */ }
-            else return have_cfg ? i : 0;   /* first picture NAL */
-        }
-        i += sc + 1;
-    }
-    return have_cfg ? n : 0;
-}
-
 static int send_input(altr_hwdec_t *d, const uint8_t *p, size_t n, OMX_U32 flags)
 {
     struct timespec t;
@@ -386,7 +365,7 @@ static int send_input(altr_hwdec_t *d, const uint8_t *p, size_t n, OMX_U32 flags
 
 static int submit_au(altr_hwdec_t *d, const uint8_t *p, size_t n)
 {
-    size_t cfg = config_prefix(p, n);
+    size_t cfg = altr_config_prefix(p, n);
     if (cfg && send_input(d, p, cfg, OMX_BUFFERFLAG_CODECCONFIG) < 0) return -1;
     if (n > cfg && send_input(d, p + cfg, n - cfg, OMX_BUFFERFLAG_ENDOFFRAME) < 0) return -1;
     return 0;

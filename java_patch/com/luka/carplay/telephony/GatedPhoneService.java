@@ -28,6 +28,7 @@ package com.luka.carplay.telephony;
 
 import com.luka.carplay.bus.CarplayBus;
 import com.luka.carplay.framework.Log;
+import com.luka.carplay.framework.HuTime;
 import de.audi.atip.interapp.combi.bap.phone.CombiBAPServicePhone;
 import de.audi.atip.interapp.combi.bap.phone.data.CallStartTime;
 import de.audi.atip.interapp.combi.bap.phone.data.CombiBAPCallInfo;
@@ -177,6 +178,17 @@ public class GatedPhoneService implements CombiBAPServicePhone {
         GatedPhoneService g;
         synchronized (GatedPhoneService.class) { g = instance; }
         if (g != null) g.setCalls(cs);
+    }
+
+    /** True while at least one CarPlay call is ringing, dialing, active, or held. */
+    public static boolean hasActiveCalls() {
+        GatedPhoneService g;
+        synchronized (GatedPhoneService.class) { g = instance; }
+        return g != null && g.hasLiveCallsSync();
+    }
+
+    private synchronized boolean hasLiveCallsSync() {
+        return gated && liveCalls() > 0;
     }
 
     /** A VC telephone action. Returns false when the gate is off, so stock handles it. */
@@ -625,8 +637,11 @@ public class GatedPhoneService implements CombiBAPServicePhone {
 
     private static boolean isNumber(String s) {
         if (s == null || s.length() == 0) return false;
-        for (int i = 0; i < s.length(); i++)
-            if ("0123456789+*#-() ".indexOf(s.charAt(i)) < 0) return false;
+        for (int i = 0; i < s.length(); i++) {
+            char ch = s.charAt(i);
+            if ("0123456789+*#-(). /\u00a0\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069".indexOf(ch) < 0)
+                return false;
+        }
         return true;
     }
 
@@ -644,7 +659,7 @@ public class GatedPhoneService implements CombiBAPServicePhone {
     private static CombiBAPCallStackEntry recent(int pos, String name, String num, int mode, long ts) {
         if (ts <= 0) return new CombiBAPCallStackEntry(pos, name, num, 0, mode);
         Calendar c = Calendar.getInstance();
-        c.setTime(new java.util.Date(ts > 100000000000L ? ts : ts * 1000L));  /* s or ms */
+        c.setTime(new java.util.Date(HuTime.convertUtcToLocalMs(ts > 100000000000L ? ts : ts * 1000L)));  /* s or ms */
         return new CombiBAPCallStackEntry(pos, name, num, 0, mode,
             (short)c.get(Calendar.DAY_OF_MONTH), (short)(c.get(Calendar.MONTH) + 1),
             (short)c.get(Calendar.YEAR), (short)c.get(Calendar.HOUR_OF_DAY),

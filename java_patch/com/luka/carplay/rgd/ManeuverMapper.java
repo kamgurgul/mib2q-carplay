@@ -72,6 +72,8 @@ public class ManeuverMapper {
      */
     public static final int JUNCTION_SINGLE_INTERSECTION = 0;
     public static final int JUNCTION_ROUNDABOUT = 1;
+    /* Local absence sentinel; not an iAP2 junction type. */
+    public static final int JUNCTION_NOT_SET = -1;
     public static final int DRIVING_SIDE_RIGHT = 0;
     public static final int DRIVING_SIDE_LEFT = 1;
 
@@ -162,6 +164,10 @@ public class ManeuverMapper {
     public static int[] map(int maneuverType, int turnAngle, int junctionType, int drivingSide,
                             boolean anglePresent) {
         if (!anglePresent) turnAngle = 1000;
+        /* Apps may supply a maneuver type without optional junction metadata.
+         * Use ordinary mapping for absence only; preserve explicit junctions and
+         * unknown values. This does not change the raw RouteGuidance state. */
+        if (junctionType == JUNCTION_NOT_SET) junctionType = JUNCTION_SINGLE_INTERSECTION;
         int mainElement;
         int direction;
 

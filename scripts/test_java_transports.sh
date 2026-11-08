@@ -16,6 +16,15 @@ trap 'rm -rf "$TEST_DIR"' EXIT
 "$TEST_JDK/bin/java" -cp "$TEST_DIR:$PROJECT_DIR/build/carplay_hook.jar" com.luka.carplay.bus.CarplayBusTransportTest
 "$TEST_JDK/bin/java" -cp "$TEST_DIR:$PROJECT_DIR/build/carplay_hook.jar" com.luka.carplay.rgd.RendererServerTransportTest
 
+# Cluster now playing: metadata / artwork clears, YouTube Music track-skip guard, call/speech
+# audio focus (luka-dev 2026-11). Recents and ETA in the HU's local time.
+"$TEST_JDK/bin/javac" -encoding UTF-8 -cp "$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR:$OSGI_LIBS" \
+    -d "$TEST_DIR" "$PROJECT_DIR/tests/NowPlayingClearTest.java" "$PROJECT_DIR/tests/HuTimePresentationTest.java"
+"$TEST_JDK/bin/java" -Xverify:none -cp "$TEST_DIR:$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR:$OSGI_LIBS" \
+    NowPlayingClearTest
+"$TEST_JDK/bin/java" -cp "$TEST_DIR:$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR:$OSGI_LIBS" \
+    HuTimePresentationTest
+
 # Vehicle data -> CMD_VEHICLE wire layout (hook/vehicle reads the same 14 bytes).
 "$TEST_JDK/bin/javac" -encoding UTF-8 -cp "$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR" \
     -d "$TEST_DIR" "$PROJECT_DIR/tests/VehicleDataEncodingTest.java"

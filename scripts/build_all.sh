@@ -44,6 +44,7 @@ FILES=(
     "$B/carplay_hook.jar"
     "$B/nav_boost"
     "$PROJECT_DIR/maneuver_render/resources/flag_atlas.rgba"
+    "$PROJECT_DIR/deploy/hmi/HMIEarlyAppsEvoHigh/2199999.png"
     "$PROJECT_DIR/deploy/smartphone_integrator/carplay_startup.sh"
     "$PROJECT_DIR/deploy/smartphone_integrator/carplay_monitor.sh"
     "$PROJECT_DIR/deploy/smartphone_integrator/carplay_processes.sh"

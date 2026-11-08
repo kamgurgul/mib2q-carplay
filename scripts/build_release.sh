@@ -34,7 +34,7 @@ fi
 RELEASE_FILES="libcarplay_hook.so maneuver_render flag_atlas.rgba carplay_startup.sh
 carplay_monitor.sh carplay_processes.sh carplay_cleanup.sh carplay_hook.jar
 carplay_child.json altscreen_render libaltscreen111_mhi2q.so
-libaa_cluster_hook.so aa_startup.sh aa_child.json nav_boost"
+libaa_cluster_hook.so aa_startup.sh aa_child.json nav_boost 2199999.png"
 for f in $RELEASE_FILES; do
     [ -s "$STAGED/$f" ] || { echo "ERROR: $STAGED/$f missing - run without NO_BUILD=1"; exit 1; }
 done

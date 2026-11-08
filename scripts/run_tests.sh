@@ -9,6 +9,19 @@ OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
 if [ "$(uname)" = Darwin ]; then DEAD_STRIP=-Wl,-dead_strip; else DEAD_STRIP=-Wl,--gc-sections; fi
 
+# SANITIZE=1: every C test below is built with ASan + UBSan (any finding fails the run),
+# and so are the HW301 bridge tests (test_hw301.sh). Other shell-script suites are not.
+if [ "${SANITIZE:-0}" = 1 ]; then
+    SAN_FLAGS="-g -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined"
+    cc() { command cc "$@" $SAN_FLAGS; }
+    export SANITIZE="$SAN_FLAGS"     # test_hw301.sh takes SANITIZE as compiler flags
+    # handle_segv=0: tests that crash a child on purpose keep their own handlers;
+    # out-of-bounds accesses are still caught by the instrumentation.
+    export ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0:abort_on_error=1:handle_segv=0:handle_sigbus=0:allow_user_segv_handler=1}"
+    export UBSAN_OPTIONS="${UBSAN_OPTIONS:-print_stacktrace=1:halt_on_error=1}"
+    echo "SANITIZE=1: C tests built with ASan + UBSan"
+fi
+
 printf '%-32s ' maneuver_surface_test
 cc -std=gnu99 -O1 -Wall -Wextra -Werror -Wno-unused-function \
     -ffunction-sections -fdata-sections -Imaneuver_render/hostcheck -Icommon \
@@ -48,6 +61,15 @@ cc -std=gnu99 -O1 -Wall -Wextra -Werror -Wno-unused-variable -Wno-unused-functio
     -DENABLE_LOGGING=0 -Ihook tests/rgd_tlv_test.c hook/routeguidance/rgd_tlv.c \
     -o "$OUT/rgd_tlv"
 "$OUT/rgd_tlv"
+
+printf '%-32s ' rgd_timeout_race_test
+# Real RGI handler and timer: route end serialized against an active update (luka-dev e9e1291).
+cc -std=gnu99 -O1 -DENABLE_LOGGING=0 -Ihook -Dbus_send_text=bus_send_text_unused \
+    -c hook/framework/bus.c -o "$OUT/rgd_race_bus.o"
+cc -std=gnu99 -O1 -DENABLE_LOGGING=0 -Ihook tests/rgd_timeout_race_test.c "$OUT/rgd_race_bus.o" \
+    hook/routeguidance/rgd_tlv.c hook/framework/iap2_protocol.c hook/framework/signal_guard.c \
+    -lpthread -o "$OUT/rgd_timeout_race"
+"$OUT/rgd_timeout_race"
 
 printf '%-32s ' inject_generation_test
 cc -std=gnu99 -O1 -Wall -Wextra -Werror -Wno-unused-function \
@@ -200,6 +222,13 @@ cc -std=gnu99 -O1 -Wall -Wextra -Werror -Iaa_hook \
     -DAA_HW_YIELD_WAIT_MS=400u tests/aa_yield_test.c aa_hook/aa_yield.c -lpthread -o "$OUT/aa_yield"
 "$OUT/aa_yield"
 
+printf '%-32s ' altscreen_nal_fuzz
+# Annex-B scanners on every phone byte: the hardware decoder's SPS/PPS split and the
+# Android Auto tee's key-frame gate (structured + random, exact-size buffers).
+cc -std=gnu99 -O1 -Wall -Wextra -Werror -Ialtscreen_render -Iaa_hook \
+    tests/altscreen_nal_fuzz.c aa_hook/aa_tee.c -lpthread -o "$OUT/altscreen_nal_fuzz"
+"$OUT/altscreen_nal_fuzz"
+
 printf '%-32s ' hw_yield_files
 # The main-screen yield: both hooks write the files altscreen_render reads.
 for f in yield active; do
@@ -211,6 +240,18 @@ for f in yield active; do
         || { echo "FAIL: hw_$f file: AA hook '$aa', CarPlay hook '$cp', renderer '$rd'"; exit 1; }
 done
 echo "hw_yield / hw_active: both hooks and the renderer agree"
+
+printf '%-32s ' disconnect_freeze_contract
+# altscreen_render keeps window 99's last picture after a session ends until Java has
+# switched the cockpit back to the stock context: longer than Java's worst case.
+J=java_patch/com/luka/carplay/core/AltScreenModule.java
+freeze=$(sed -n 's/^#define ALTR_DISCONNECT_FREEZE_MS *\([0-9]*\)u.*/\1/p' altscreen_render/main.c)
+poll=$(sed -n 's/.*long POLL_MS = \([0-9]*\)L;.*/\1/p' "$J")
+miss=$(sed -n 's/.*int MISS_DEBOUNCE = \([0-9]*\);.*/\1/p' "$J")
+[ -n "$freeze" ] && [ -n "$poll" ] && [ -n "$miss" ] \
+    && [ "$freeze" -gt $(( poll * (miss + 1) + 250 )) ] \
+    || { echo "FAIL: freeze ${freeze:-?} ms vs Java ${poll:-?} ms x (${miss:-?}+1) + 250 ms switch"; exit 1; }
+echo "last picture held ${freeze} ms > Java's $(( poll * (miss + 1) )) ms to restore the stock map"
 
 printf '%-32s ' aa_tee_port
 # The gal hook's tee and altscreen_render's Android Auto source must agree.

@@ -105,6 +105,7 @@ public class TerminalModeBapCombi implements ITerminalModeComponent {
                 if (tmdevice.isCarplayDevice()) {
                     try {
                         com.luka.carplay.coverart.CoverArt.getInstance().resetSession();
+                        this.this$0.cachingEventListener.clearCachedEvents();
                         this.this$0.eventListener.resetCoverMerge();
                         com.luka.carplay.core.CarPlayApp.onActivate(this.this$0.context);
                     } catch (Throwable t) { /* never crash the stock flow */ }
@@ -126,6 +127,7 @@ public class TerminalModeBapCombi implements ITerminalModeComponent {
                     && !com.luka.carplay.core.CarPlayApp.isActive()) {
                 try {
                     com.luka.carplay.coverart.CoverArt.getInstance().resetSession();
+                    this.this$0.cachingEventListener.clearCachedEvents();
                     this.this$0.eventListener.resetCoverMerge();
                     com.luka.carplay.core.CarPlayApp.onActivate(this.this$0.context);
                 } catch (Throwable t) { /* never crash the stock flow */ }
@@ -143,6 +145,7 @@ public class TerminalModeBapCombi implements ITerminalModeComponent {
                 try {
                     com.luka.carplay.core.CarPlayApp.onDeactivate();
                     com.luka.carplay.coverart.CoverArt.getInstance().resetSession();
+                    this.this$0.cachingEventListener.clearCachedEvents();
                     this.this$0.eventListener.resetCoverMerge();
                 } catch (Throwable t) { /* never crash the stock flow */ }
             }
@@ -272,9 +275,12 @@ public class TerminalModeBapCombi implements ITerminalModeComponent {
         private synchronized void applyCoverArt(String path, int artId) {
             if (!com.luka.carplay.core.CarPlayApp.isSessionActive() || !metadataFromCarPlay) return;
             if (currentTitle.length() > 0 || currentArtist.length() > 0 || currentAlbum.length() > 0) {
-                int effId = artId;
-                if (sentWithoutCover) { effId = artId + 1; sentWithoutCover = false; }  /* new id forces VC refresh */
-                sendNowPlaying(currentTitle, currentArtist, currentAlbum, path, effId);
+                boolean hasCover = path != null && path.length() > 0 && artId != 0;
+                int effId = hasCover ? artId : 0;
+                if (hasCover && sentWithoutCover) effId = artId + 1;  /* force VC refresh */
+                sentWithoutCover = !hasCover;
+                /* An explicit artwork clear must also reach the cluster. */
+                sendNowPlaying(currentTitle, currentArtist, currentAlbum, hasCover ? path : null, effId);
             }
         }
 
