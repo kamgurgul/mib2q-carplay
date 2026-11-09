@@ -1,6 +1,9 @@
-# mib2q-carplay 1.4.2 (unreleased) - changelog
+# mib2q-carplay 1.5 (in development) - changelog
 
-Changes since [1.4.1](CHANGELOG-1.4.1.md). Ported from
+Changes since [1.4.1](CHANGELOG-1.4.1.md). Entries marked *car test pending* passed the bench
+tests but have not been driven yet.
+
+First change for 1.5: ported from
 [luka-dev/mib2q-carplay-rgi](https://github.com/luka-dev/mib2q-carplay-rgi) `main` as of
 2026-11-06 (`21f5016`, after the `MHI2Q-2026-11-04` tag), on top of the `MHI2Q-2026-10-29` port in 1.4.
 
