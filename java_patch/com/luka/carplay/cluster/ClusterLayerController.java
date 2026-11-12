@@ -225,6 +225,7 @@ public final class ClusterLayerController {
         synchronized (LOCK) {
             vcVisible = visible;
             haveVcVisibility = true;
+            com.luka.carplay.aa.AaNativeTurnCard.publish(visible);
         }
         Log.i("ClusterLayers", "VC Fct44 KDK visible=" + visible);
         reapply();

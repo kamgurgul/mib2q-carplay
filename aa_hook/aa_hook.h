@@ -39,6 +39,9 @@
 #ifndef AA_THEME_PATH
 #define AA_THEME_PATH          "/tmp/aa_cluster_theme"
 #endif
+#ifndef AA_NATIVE_CARD_PATH
+#define AA_NATIVE_CARD_PATH    "/tmp/aa_cluster_native_card"
+#endif
 #define AA_TEE_PORT_DEFAULT    19821
 /* Main-screen video yield to altscreen_render: the same files as the CarPlay hook's. */
 #ifndef AA_HW_YIELD_PATH
