@@ -58,6 +58,7 @@ static const uint32_t preset_default[3][4] = PRESET_DEFAULT;
 static uint32_t preset[3][4] = PRESET_DEFAULT;   /* aa_cluster.insets replaces it at connect */
 static int conn_view;        /* layout sent at connect */
 static unsigned conn_theme = UI_THEME_DARK;   /* theme sent at connect */
+static int native_card_visible = -1, conn_native_card = -1;
 
 static uint32_t rd(const void *p, unsigned off) { uint32_t v; memcpy(&v, (const char *)p + off, 4); return v; }
 static void wr(void *p, unsigned off, uint32_t v) { memcpy((char *)p + off, &v, 4); }
@@ -121,6 +122,21 @@ unsigned aa_theme_state(void)
 
 static const char *theme_name(unsigned theme) { return theme == UI_THEME_LIGHT ? "light" : "dark"; }
 
+/* Accepted Fct44 from Java; missing or incomplete records leave the state unknown. */
+static int native_card_state(void)
+{
+    unsigned char record[3];
+    size_t n;
+    int error;
+    FILE *f = fopen(AA_NATIVE_CARD_PATH, "r");
+    if (!f) return -1;
+    n = fread(record, 1, sizeof(record), f);
+    error = ferror(f);
+    fclose(f);
+    return !error && n == 2u && record[1] == '\n' && (record[0] == '0' || record[0] == '1')
+        ? record[0] - '0' : -1;
+}
+
 /* UiConfig body: 0x12 len {insets 0x08 top, 0x10 bottom, 0x18 left, 0x20 right}, 0x20 theme. */
 static unsigned uiconfig_body(unsigned char *ui, unsigned max, int view, unsigned theme)
 {
@@ -132,10 +148,15 @@ static unsigned uiconfig_body(unsigned char *ui, unsigned max, int view, unsigne
     in[ni++] = 0x10; ni += varint(in + ni, b);
     in[ni++] = 0x18; ni += varint(in + ni, l);
     in[ni++] = 0x20; ni += varint(in + ni, r);
-    if (max < ni + 4u) return 0;
+    if (max < ni + 4u + (native_card_visible >= 0 ? 2u : 0u)) return 0;
     ui[nu++] = 0x12; nu += varint(ui + nu, ni);
     memcpy(ui + nu, in, ni); nu += ni;
     ui[nu++] = 0x20; ui[nu++] = (unsigned char)theme;
+    if (native_card_visible >= 0) {
+        /* UiConfig field 5: NAVIGATION_TURN_DATA_AVAILABLE=5; empty list clears it. */
+        ui[nu++] = native_card_visible ? 0x28 : 0x2a;
+        ui[nu++] = native_card_visible ? 5u : 0u;
+    }
     return nu;
 }
 
@@ -187,6 +208,7 @@ static void apply(void *vconf, const char *where)
     if (view < 0) view = VIEW_FULL;
     conn_view = view;
     conn_theme = aa_theme_state();
+    native_card_visible = conn_native_card = native_card_state();
     nu = uiconfig_body(ui, sizeof(ui), view, conn_theme);
     if (!nu) return;
     p[n++] = 0x5a;                      /* VideoConfiguration field 11 = UiConfig */
@@ -265,16 +287,17 @@ void aa_relayout_tick(void *sink)
 {
     static void *cur_sink;
     static uint64_t next_check;
-    static int sent_view, pending_view = -1, off;
+    static int sent_view, sent_native_card, pending_view = -1, off;
     static unsigned deferred_theme;
     uint64_t now;
-    int view;
+    int view, native_card;
     unsigned theme;
     if (!sink) return;
     if (sink != cur_sink || !((const unsigned char *)sink)[4]) {   /* new session or channel closed */
         cur_sink = ((const unsigned char *)sink)[4] ? sink : NULL;
         next_check = 0;
         sent_view = conn_view;
+        sent_native_card = conn_native_card;
         deferred_theme = conn_theme;
         pending_view = -1;
         off = aa_marker(AA_MARKER_RELAYOUT_OFF);
@@ -284,7 +307,10 @@ void aa_relayout_tick(void *sink)
     if (pending_view >= 0) {
         int v = pending_view;
         pending_view = -1;
-        if (relayout_send(sink, v, conn_theme)) sent_view = v;
+        if (relayout_send(sink, v, conn_theme)) {
+            sent_view = v;
+            sent_native_card = native_card_visible;
+        }
         return;
     }
     now = mono_ms();
@@ -292,7 +318,9 @@ void aa_relayout_tick(void *sink)
     next_check = now + 300u;
     view = aa_view_state();
     if (view < 0) view = sent_view;                     /* mid-write / no record: keep */
-    if (view != sent_view) pending_view = view;
+    native_card = native_card_state();
+    if (native_card >= 0) native_card_visible = native_card;
+    if (view != sent_view || native_card_visible != sent_native_card) pending_view = view;
     theme = aa_theme_state();
     if (theme != deferred_theme) {
         deferred_theme = theme;
