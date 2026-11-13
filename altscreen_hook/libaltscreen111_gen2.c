@@ -413,6 +413,16 @@ static const char *g_nav_hide_guidance_path = "/mnt/app/root/mibr-carplay111-nav
 static const char *g_nav_maneuver_path = "/mnt/app/root/mibr-carplay111-nav.maneuverLayout";
 static const char *g_nav_show_maneuver_path = "/mnt/app/root/mibr-carplay111-nav.showManeuver";
 static const char *g_nav_wide_all_path = "/mnt/app/root/mibr-carplay111-nav.wideAll";
+/* updateViewArea animationDurationMillis, 0..1000 (absent = 0, the car-tested value). */
+static const char *g_view_animation_path = "/mnt/app/root/mibr-carplay111-view.animation";
+/* Opt-in (GEM "Pause cluster video while the map is hidden"): stopUI while the cockpit shows
+ * no phone map (another VC tab, or the Audi map picked with a long roller press), showUI when
+ * it is back. Java reports the state with CMD_ALT_HIDDEN. Shared with the Android Auto hook. */
+static const char *g_pause_hidden_marker = "/mnt/app/root/cluster_video.pause_hidden";
+static volatile int g2_cluster_hidden;
+/* The pause option took the map down (stopUI), not a teardown: only then does "shown" bring
+ * it back. Under g2_core_lock. */
+static int g2_hidden_paused;
 /* Defined with the ViewAreas below; the URL policy and the back-channel read it. */
 static volatile int g_desired_view;
 /* Present => historic bare URL instead of the guidance-source URLs (rollback). */
@@ -537,6 +547,7 @@ static void gen2_set_command_ready(unsigned ready);
 static void gen2_video_begin_current(void);
 static void gen2_video_end_current(void);
 static void gen2_close_consumer(void);
+static void gen2_keyframe_intent(void);
 static void gen2_resync_poll(void);
 static void gen2_d2_schedule(unsigned source, const char *label);
 static void tee_drop_client_locked(void);
@@ -678,10 +689,22 @@ static void renderer_hw_yield(const char *why)
                 (unsigned long long)(monotonic_ms() - t0));
 }
 
+/* Marker files are read at most every 250 ms: the control worker runs every 10 ms and each
+ * access() is a round trip to the file system (it made ~1000 a second during a session). A
+ * stale value for that long is harmless for these operator switches. */
+#define G2_MARKER_POLL_MS 250u
+
 static unsigned gen2_d2_enabled(void)
 {
-    return (access(g2_d2_enable_marker,F_OK)==0 ||
-            access(g2_d2_persist_marker,F_OK)==0) ? 1u : 0u;
+    static uint64_t checked_ms;
+    static unsigned on;
+    uint64_t now = monotonic_ms();
+    if (!checked_ms || now - checked_ms >= G2_MARKER_POLL_MS) {
+        on = (access(g2_d2_enable_marker,F_OK)==0 ||
+              access(g2_d2_persist_marker,F_OK)==0) ? 1u : 0u;
+        checked_ms = now;
+    }
+    return on;
 }
 
 static void gen2_d2_schedule(unsigned source, const char *label)
@@ -1056,7 +1079,13 @@ static void active_alt_url_copy(char *out, size_t cap)
             }
         }
         if (strcmp(card, "no") == 0 || strcmp(card, "0") == 0) {
-            snprintf(out, cap, "%s?showETA=%s&maneuverLayout=no&showSpeedLimit=%s&showCompass=%s",
+            /* Explicit topAligned, not "no": "no" (like an omitted layout) selects automatic
+             * layout, and a side layout still reserves the platter width as a SafeArea inset
+             * even with the cards hidden (ETA hiding targets the parent view, the inset gate
+             * checks its child contentView, which trip updates can unhide). With cards and
+             * ETA off, top layout adds no inset. luka-dev 1299619, iOS 26.6/27.0 static
+             * analysis; the visible-card default stays without a layout (issue #20). */
+            snprintf(out, cap, "%s?showETA=%s&maneuverLayout=topAligned&showSpeedLimit=%s&showCompass=%s",
                      ALT_URL_MAP, eta, speed, compass);
             return;
         }
@@ -1833,6 +1862,10 @@ static int gen2_video_submit_au(const uint8_t *p, size_t n, int *accepted, int *
     if (rc == ALT111_RESTART_CONSUMER || rc < 0) {
         logf_u2("gen2 video AU rc=%d body=%zu -> consumer reset", rc, n);
         gen2_close_consumer();
+    } else if (rc == ALT111_RESYNC) {
+        /* Renderer behind: backlog dropped, the same connection continues at the next IDR. */
+        logf_u2("gen2 video AU queue full body=%zu -> backlog dropped, key frame requested", n);
+        gen2_keyframe_intent();
     }
     return rc;
 }
@@ -1876,6 +1909,50 @@ static void gen2_consumer_attach(void)
     gen2_publish_status();
 }
 
+/* Renderer -> hook back-channel on the tee socket: one byte 'K' asks for a key frame
+ * (altscreen_render sends it when its decoder reports a damaged picture). The socket is
+ * nonblocking; read at most every 50 ms. A closed socket drops the consumer at once
+ * instead of at the next failed send. Caller holds no lock. */
+static void gen2_tee_backchannel_poll(void)
+{
+    static uint64_t last_ms;
+    uint8_t b[16];
+    ssize_t n = -1;
+    int want = 0, closed = 0;
+    uint64_t generation = 0;
+    uint64_t now = monotonic_ms();
+    if (last_ms && now - last_ms < 50u) return;
+    last_ms = now;
+    pthread_mutex_lock(&g_lock);
+    if (g_tee_client >= 0) {
+        n = recv(g_tee_client, b, sizeof(b), 0);   /* O_NONBLOCK socket (tee_accept_thread) */
+        if (n > 0) want = memchr(b, 'K', (size_t)n) != NULL;
+        else if (n == 0) {
+            /* Dropped in this lock hold, and only this client's consumer is detached below:
+             * the accept thread may install the renderer's next connection (and attach its
+             * consumer) the moment the lock is released. */
+            generation = g_tee_consumer_generation;
+            tee_drop_client_locked();
+            closed = 1;
+        }
+    }
+    pthread_mutex_unlock(&g_lock);
+    if (closed) {
+        pthread_mutex_lock(&g2_core_lock);
+        if (generation && g2_video.attached && g2_video.consumer == generation) {
+            alt111_video_detach(&g2_video);
+            alt111_resync_cancel(&g2_resync, ALT111_RESYNC_CANCEL_CONSUMER);
+        }
+        pthread_cond_broadcast(&g2_core_cv);
+        pthread_mutex_unlock(&g2_core_lock);
+        logf_u2("gen2 renderer closed the tee; consumer detached");
+        gen2_publish_status();
+    } else if (want) {
+        logf_u2("gen2 renderer asked for a key frame (damaged picture)");
+        gen2_keyframe_intent();
+    }
+}
+
 static void *gen2_output_worker(void *arg)
 {
     uint8_t *copy = NULL;
@@ -1901,11 +1978,19 @@ static void *gen2_output_worker(void *arg)
          * paths release g_lock before acquiring g2_core_lock, so there is no
          * reverse nested order.
          */
+        gen2_tee_backchannel_poll();
         pthread_mutex_lock(&g2_core_lock);
         prc = alt111_video_peek(&g2_video, &p, &n, &ticket);
         if (prc != ALT111_OK || !n) {
+            /* Idle: every submit/attach broadcasts g2_core_cv, so wait for it instead of
+             * waking dio_manager every 5 ms for nothing. The timeout only paces the
+             * back-channel poll (a wall-clock step just delays that). */
+            struct timespec until;
+            clock_gettime(CLOCK_REALTIME, &until);
+            until.tv_nsec += 100000000L;
+            if (until.tv_nsec >= 1000000000L) { until.tv_sec++; until.tv_nsec -= 1000000000L; }
+            (void)pthread_cond_timedwait(&g2_core_cv, &g2_core_lock, &until);
             pthread_mutex_unlock(&g2_core_lock);
-            usleep(5000);
             continue;
         }
 
@@ -3196,7 +3281,18 @@ static CFMutableDictionaryRef command_update_view(unsigned view)
     set_str(req,"type","updateViewArea");
     set_str(params,"uuid",g_alt_uuid);
     set_i64(params,"viewAreaIndex",(int64_t)view);
-    set_i64(params,"animationDurationMillis",0);
+    {
+        /* 0 in every car test so far; with adjacentViewAreas (added after the trace that
+         * found animation inert) a duration may now make the switch follow the VC's own
+         * animation. Re-test: echo 300 > /mnt/app/root/mibr-carplay111-view.animation */
+        char v[16];
+        int ms = 0;
+        if (read_trimmed_value(g_view_animation_path, v, sizeof(v)) == 0) ms = atoi(v);
+        if (ms < 0) ms = 0;
+        if (ms > 1000) ms = 1000;
+        set_i64(params,"animationDurationMillis",(int64_t)ms);
+        if (ms) logf_u2("GEN2 updateViewArea animationDurationMillis=%d", ms);
+    }
     /*
      * adjacentViewAreas = every other advertised view. Without it iOS acknowledges
      * updateViewArea (status 0) but keeps the first layout (our log sets 013/015;
@@ -3329,6 +3425,41 @@ int altscreen111_set_rgi(int on)
     return 0;
 }
 
+/*
+ * Exported for libcarplay_hook's CMD_ALT_HIDDEN handler: the cockpit does (1) or does not
+ * (0) show the phone's map right now. Only with the opt-in marker does it change anything:
+ * hidden -> stopUI (the phone stops drawing and encoding the cluster map), shown -> showUI,
+ * then updateViewArea and forceKeyFrame as after any SHOW. Without the marker a hidden map
+ * keeps streaming, as before.
+ */
+int altscreen111_set_hidden(int hidden)
+{
+    int rc = 0, applied = 0, pause;
+    hidden = hidden ? 1 : 0;
+    if (g2_cluster_hidden == hidden) return 0;
+    g2_cluster_hidden = hidden;
+    pause = access(g_pause_hidden_marker, F_OK) == 0;
+    pthread_mutex_lock(&g2_core_lock);
+    if (g2_control_session) {
+        /* A stop this function did not ask for (session teardown, gen2_control_release) is
+         * left alone: "shown" arriving while the session closes must not queue a showUI. */
+        if (hidden && pause && g2_control.desired) {
+            applied = g2_hidden_paused = 1;
+            rc = alt111_control_intent(&g2_control, 0u, g2_control.desired_view);
+        } else if (!hidden && g2_hidden_paused) {
+            applied = 1;
+            g2_hidden_paused = 0;       /* also when the option was switched off meanwhile */
+            rc = alt111_control_intent(&g2_control, 1u, g2_control.desired_view);
+        }
+    }
+    pthread_cond_broadcast(&g2_core_cv);
+    pthread_mutex_unlock(&g2_core_lock);
+    logf_u2("gen2 cluster map %s%s rc=%d", hidden ? "hidden" : "shown",
+            !applied ? " (no change: pause option off, not paused or no session)"
+                     : hidden ? " -> stopUI (pause option)" : " -> showUI", rc);
+    return rc;
+}
+
 /* One queued step per worker pass, so a fast roller spin cannot burst the phone. */
 static void gen2_process_map_zoom(void)
 {
@@ -3407,7 +3538,7 @@ static void gen2_publish_status(void)
         "nav_query_enabled=%u\nnav_url=%s\n"
         "stream_gen=%llu\ncodec_gen=%llu\nconsumer_gen=%llu\nconfig_valid=%u\n"
         "source_aus=%llu\nsource_idrs=%llu\nconsumer_primed=%u\ndelivered_aus=%llu\n"
-        "dropped_aus=%llu\nqueue_count=%u\nqueue_bytes=%zu\n"
+        "dropped_aus=%llu\nresyncs=%llu\nqueue_count=%u\nqueue_bytes=%zu\n"
         "resync_enabled=%u\nresync_state=%u\nresync_reason=%u\nresync_cancel_reason=%u\n"
         "resync_epoch=%llu\nresync_stream_at_arm=%llu\nresync_codec_at_arm=%llu\n"
         "resync_consumer_at_arm=%llu\nresync_au_at_arm=%llu\nresync_idr_at_arm=%llu\n"
@@ -3426,7 +3557,7 @@ static void gen2_publish_status(void)
         (unsigned long long)vs.consumer,vs.config_valid,
         (unsigned long long)vs.source_aus,(unsigned long long)vs.source_idrs,
         vs.consumer_primed,(unsigned long long)vs.delivered_aus,
-        (unsigned long long)vs.dropped_aus,vs.count,vs.queued_bytes,
+        (unsigned long long)vs.dropped_aus,(unsigned long long)vs.resyncs,vs.count,vs.queued_bytes,
         rs.enabled,rs.state,rs.reason,rs.cancel_reason,
         (unsigned long long)rs.epoch,(unsigned long long)rs.stream_at_arm,
         (unsigned long long)rs.codec_at_arm,(unsigned long long)rs.consumer_at_arm,
@@ -3462,14 +3593,17 @@ static void gen2_set_command_ready(unsigned ready)
 static void gen2_control_projection_on(void)
 {
     int repeated = 0, rrc = ALT111_OK;
+    /* The marker is read before the core lock, which the video path takes per picture. */
+    unsigned visible = (g2_cluster_hidden && access(g_pause_hidden_marker,F_OK)==0) ? 0u : 1u;
     pthread_mutex_lock(&g2_core_lock);
     if (!g2_control_session) {
         g2_control_session = alt111_control_begin(&g2_control);
     } else {
         repeated = 1;
     }
-    (void)alt111_control_intent(&g2_control,1,
+    (void)alt111_control_intent(&g2_control, visible,
         (g_desired_view>=0 && g_desired_view<g_view_count) ? (unsigned)g_desired_view : 0u);
+    g2_hidden_paused = !visible;        /* a session that starts hidden resumes on "shown" */
     if (repeated)
         rrc = alt111_control_reacquire(&g2_control,g2_control_session);
     pthread_cond_broadcast(&g2_core_cv);
@@ -3487,6 +3621,7 @@ static void gen2_control_release(void)
     s=g2_control_session;
     alt111_resync_cancel(&g2_resync, ALT111_RESYNC_CANCEL_PROJECTION);
     if(s)(void)alt111_control_intent(&g2_control,0,0);
+    g2_hidden_paused = 0;               /* this stop is the session's end, not a pause */
     pthread_cond_broadcast(&g2_core_cv);
     pthread_mutex_unlock(&g2_core_lock);
 
@@ -3619,10 +3754,17 @@ static void gen2_resync_poll(void)
     uint64_t now = monotonic_ms();
     uint64_t epoch = 0, idr_at_arm = 0, source_idrs = 0;
     uint64_t requests = 0, retries = 0, completions = 0, cancels = 0;
-    unsigned manual_enabled = access(g2_resync_enable_marker,F_OK)==0 ? 1u : 0u;
+    static uint64_t markers_ms;
+    static unsigned manual_enabled;
     unsigned d2_enabled = gen2_d2_enabled();
-    unsigned enabled = (manual_enabled || d2_enabled) ? 1u : 0u;
-    unsigned arm = access(g2_resync_arm_marker,F_OK)==0 ? 1u : 0u;
+    unsigned enabled;
+    unsigned arm = 0;
+    if (!markers_ms || now - markers_ms >= G2_MARKER_POLL_MS) {
+        markers_ms = now;
+        manual_enabled = access(g2_resync_enable_marker,F_OK)==0 ? 1u : 0u;
+        arm = access(g2_resync_arm_marker,F_OK)==0 ? 1u : 0u;
+    }
+    enabled = (manual_enabled || d2_enabled) ? 1u : 0u;
     unsigned before_enabled, before_state, before_cancel;
     unsigned auto_reason = ALT111_RESYNC_REASON_NONE;
     unsigned auto_sources = 0;
@@ -3826,7 +3968,7 @@ static void *gen2_control_worker(void *arg)
     for (;;) {
         struct alt111_command cmd;
         struct gen2_command_context *ctx=NULL;
-        int nrc, queued=0;
+        int nrc, queued=0, markers_due;
         CFMutableDictionaryRef req=NULL;
         AirPlayReceiverSessionRef s=NULL;
         OSStatus e=-1;
@@ -3840,11 +3982,18 @@ static void *gen2_control_worker(void *arg)
         pthread_mutex_unlock(&g2_core_lock);
 
         gen2_resync_poll();
-        gen2_process_diag_markers();
+        {
+            /* One-shot operator markers (GEM buttons): 250 ms is fast enough. */
+            static uint64_t marker_ms;
+            uint64_t now = monotonic_ms();
+            markers_due = !marker_ms || now - marker_ms >= G2_MARKER_POLL_MS;
+            if (markers_due) marker_ms = now;
+        }
+        if(markers_due) gen2_process_diag_markers();
         gen2_process_map_zoom();
         gen2_process_reshow();
 
-        if(access(g2_reacquire_marker,F_OK)==0){
+        if(markers_due && access(g2_reacquire_marker,F_OK)==0){
             unlink(g2_reacquire_marker);
             pthread_mutex_lock(&g2_core_lock);
             if(g2_control_session){

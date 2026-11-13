@@ -39,6 +39,13 @@ for sh in $shells; do
     mkdir -p "$T/sd"; echo h > "$T/src/carplay_hook.log"
     CP_GEM_DIR=$G CP_CARDS="$T/nocard $T/sd" CP_LOG_SRC=$T/src "$sh" "$R" logs > "$T/out" 2>&1; rc=$?
     [ $rc -eq 0 ] && [ -f "$T/sd/carplay_logs/001/tmp/carplay_hook.log" ] || { cat "$T/out"; fail "$sh" "logs not saved to card rc=$rc"; }
+    # status page: read-only, from fake /tmp and /mnt/app/root files
+    mkdir -p "$T/st/tmp" "$T/st/root"
+    printf 'state=decoding\nsource=carplay\ndecoder=hardware\nhw_off=none\nframes=42\n' > "$T/st/tmp/altscreen_render.status"
+    : > "$T/st/root/cluster_video.pause_hidden"
+    CP_GEM_DIR=$G CP_TMP=$T/st/tmp CP_ROOT=$T/st/root "$sh" "$R" status > "$T/out" 2>&1; rc=$?
+    [ $rc -eq 0 ] && grep -q '^decoder=hardware' "$T/out" && grep -q 'no CarPlay cluster session' "$T/out" \
+        && grep -q 'set: .*cluster_video.pause_hidden' "$T/out" || { cat "$T/out"; fail "$sh" "status page rc=$rc"; }
     CP_GEM_DIR=$G "$sh" "$R" remove_menu > /dev/null 2>&1; rc=$?
     set -e
     [ $rc -eq 0 ] && [ ! -e "$G/mib2q-carplay.esd" ] && [ ! -d "$G/scripts/carplay" ] || fail "$sh" "remove_menu rc=$rc"

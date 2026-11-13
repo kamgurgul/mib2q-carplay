@@ -37,6 +37,8 @@ CarPlay or Android Auto automatically.
 - **Route text in the Virtual Cockpit.** Shows the next road or exit sign. Press **OK**
   on the steering wheel to toggle arrival time and time left.
 - **Head-up display.** The same maneuver icons, lanes and distance.
+  Keep *Dual Navi* off in the Green Engineering Menu: with it on, the maneuver arrows
+  disappear from the VC and the HUD with Android Auto ([#54]; CarPlay not tested).
 - **CarPlay calls on the cluster phone tab.** Caller, call state and timer, accept / hang up,
   hold, mute and dialling (tab or steering wheel), recents, favorites, missed calls, signal
   and carrier, instead of the stock "Your iPhone is in Apple CarPlay mode" note. The HU phone
@@ -60,7 +62,9 @@ CarPlay or Android Auto automatically.
   (left / center / right), Route Guidance, Map Cards during Guidance (hide the phone's turn
   card and ETA while the cockpit shows native guidance), Guidance Maneuver Preview (always the
   next maneuver, or follow road while it is far away), plus the GEM map switches (turn card,
-  ETA, speed limit, compass, all features in wide view). They write the same files as the GEM
+  ETA, speed limit, compass, all features in wide view) and, from 1.5, the Android Auto cluster
+  map and day/night switches, *Pause Hidden Cluster Map*, *Hardware Video Decoder* (hardware or
+  software decoding of the cluster map) and *Cluster Map Frame Rate* (30 or 60). They write the same files as the GEM
   buttons, so both menus always agree. Host-tested; car validation pending.
   Status and open issues are in
   [`docs/deploy/altscreen-mhi2q.md`](docs/deploy/altscreen-mhi2q.md).
@@ -91,7 +95,7 @@ but cluster geometry may need calibration.
 | Firmware train | Main unit | Vehicles (reports) | Tested |
 | --- | --- | --- | --- |
 | `MHI2Q_ER_AUG22_P5152` | MU1329 | Audi A5 (F5), the development unit | all features |
-| `MHI2Q_ER_AUG22_P5092` | MU1329 | Audi A4 (B9) 2017 [#35][#35-a4], 2018 [#44], 2019 [#26]; Audi A5 (F5/B9, 2017) [#35]; model not given [#5] | releases 1.1 to 1.3.1; CarPlay wired and wireless (Baseus, Carlinkit, AAWireless TWO+), Android Auto wired and via AAWireless TWO+, both with the cluster map (Google Maps, Waze); wide and classic layouts, wheel map zoom, Waze ETA. On 1.3.1 the Android Auto cluster map freezes for about 90 s at a time ([#44]) and Waze ETA needs the switch toggled after a reconnect ([#35]); 1.4 fixes both |
+| `MHI2Q_ER_AUG22_P5092` | MU1329 | Audi A4 (B9) 2017 [#35][#35-a4], 2018 [#44], 2019 [#26]; Audi A5 (F5/B9, 2017) [#35]; Audi Q5 (FY, 2018) [#54]; model not given [#5] | releases 1.1 to 1.4.1; CarPlay wired and wireless (Baseus, Carlinkit, AAWireless TWO+, Ottocast Mini), Android Auto wired and via AAWireless TWO+ or Ottocast Mini, both with the cluster map (Google Maps, Waze); wide and classic layouts, wheel map zoom, Waze ETA. On 1.3.1 the Android Auto cluster map freezes for about 90 s at a time ([#44]) and Waze ETA needs the switch toggled after a reconnect ([#35]); 1.4 fixes both |
 | `MHI2Q_US_AUG22_P5087` | MU1316 | Audi A5 Sportback (B9, US, 2018) [#21], [#39]; Audi Q7 (4M, US, 2018) [#27], [#43]; Audi S5 Sportback (B9, US, 2019) [#41]; Audi RS5 Sportback (B9, Canada, 2019) [#34], [#45] | releases 1.1 to 1.3.1; wired CarPlay and Android Auto, both with the cluster map (Apple Maps, Google Maps, Waze; the wide layout fits the cluster), turn card, VC, Sport layout and HUD arrows, Siri on short press, CarPlay-RGI menu. Waze map zoom does not resize the map. On 1.3.1 Apple Maps without a route keeps falling back to the Audi map ([#39]); 1.4 fixes it |
 
 [#5]: https://github.com/kamgurgul/mib2q-carplay/issues/5
@@ -106,6 +110,7 @@ but cluster geometry may need calibration.
 [#43]: https://github.com/kamgurgul/mib2q-carplay/issues/43
 [#44]: https://github.com/kamgurgul/mib2q-carplay/issues/44
 [#45]: https://github.com/kamgurgul/mib2q-carplay/issues/45
+[#54]: https://github.com/kamgurgul/mib2q-carplay/issues/54
 
 ## Tested wireless adapters
 
@@ -118,6 +123,7 @@ without any of these.
 | Carlinkit 5.0 / 2Air | software `2025.12.29.1746`, hardware `U2AC822C0` | slow, then stable | yes, no custom firmware, [report](https://github.com/kamgurgul/mib2q-carplay/issues/5) |
 | HW301 (Allwinner, setup Wi-Fi `smartBox`, web UI `192.168.5.1`) | custom app image **v1176** (`v1176-20261104084344`); previous v1172, v1167 | same as stock HW301 | yes, **from release 1.3**, only with a custom image plus the head-unit install (1.4 for v1172 and newer). The menu's cluster map switches reach it from v1172; route guidance (HUD and cluster maneuvers) works from v1176. Stock v1.26 / v1.29 stay on the main screen. [How to flash](docs/deploy/hw301-dongle.md) |
 | AAWireless TWO+ | manufacturer custom test build; public firmware pending | fast | yes, CarPlay AltScreen and Android Auto, tested on P5092 / MU1329; current public firmware has no cluster map until the fix ships, [report](https://github.com/kamgurgul/mib2q-carplay/issues/26) |
+| Ottocast Mini (manufacturer's own shop, not a clone) | build `26043009.3072.2` | not reported | yes, no custom firmware: CarPlay and Android Auto cluster map, Android Auto maneuver arrows on VC and HUD (Waze), tested with 1.4.1 on P5092 / MU1329, [report](https://github.com/kamgurgul/mib2q-carplay/issues/54) |
 
 An HW301 on stock firmware tells the head unit it is an iPhone 7 (`iPhone9,1` / `18D70`)
 and never opens the cluster stream, so the cockpit keeps the Audi map. The custom image
@@ -326,10 +332,14 @@ Its buttons run byte-identical copies of the M.I.B. mods, stored on the unit in
 | Reset SafeArea to built-in | drop both custom SafeAreas | no |
 | Small-map SafeAreas ON / OFF | toggle between three ViewAreas (wide + classic + sport) and a single wide one (next CarPlay connect) | no |
 | Re-request cluster map | re-send the cluster request in the running session so iOS picks the map app again (test) | no |
+| Cluster video status | show what the cluster video renderer and the hooks report now: hardware or software decode and why hardware is off, frame and key-frame counters, the stream-111 counters, the last Android Auto events, the opt-in switches set (read-only) | no |
+| Pause cluster map while hidden ON / OFF | opt-in, experimental, CarPlay and Android Auto: the phone stops the cluster stream while the cockpit shows another tab or the Audi map, and resumes when the phone map is back (applies at the next view change) | no |
 | HW decoder ON / OFF | toggle hardware H.264 decode for the cluster video, CarPlay and Android Auto (default ON; next phone connect) | no |
 | HW decoder 2-min delayed start ON / OFF | CarPlay and Android Auto decode in software for the first 2 minutes after an MMI start, then switch to hardware (default OFF: hardware at once). Turn on if the MMI freezes when the phone connects right after a start | no |
+| Software decoder plain C (no NEON) ON / OFF | the software fallback decoder uses FFmpeg's C code instead of its ARM/NEON assembly (default OFF = NEON; after the next reboot). For a unit where the 1.5 software decoder misbehaves | no |
 | Android Auto cluster map ON / OFF | Android Auto cluster map on/off (next phone connect) | no |
 | Android Auto cluster day/night ON / OFF | opt-in, experimental: the Android Auto cluster map follows the MMI day/night design instead of always dark (picked at each phone connect) | no |
+| Android Auto cluster key frame on demand ON / OFF | opt-in, experimental: when the cluster map needs a key frame, ask the phone for one (video focus bounce, at most every 10 s) instead of waiting up to a minute or two for its next one | no |
 | Siri on short voice-key press ON / OFF | opt-in: with CarPlay connected a short press of the wheel voice key opens Siri instead of the car's voice control (default OFF; applies at once) | no |
 | Touchpad as D-pad ON / OFF | MMI touchpad as CarPlay D-pad, or stock touchpad input (next CarPlay connect) | no |
 | HW decoder probe (OMX) | log the OMX decoder's requirements to `/tmp/altscreen_render.log` (diagnostics only) | no |
@@ -354,6 +364,7 @@ before restarting.
 | `/tmp/carplay_crash.log` | one line per fatal signal in `dio_manager` this boot (`t=<uptime> [hook] FATAL SIGSEGV in dio_manager pid=…`); absent = no crash |
 | `/tmp/altscreen111.log`, `/tmp/altscreen_render.log` | AltScreen hook and renderer (both phone types) |
 | `/tmp/aa_cluster_hook.log`, `/tmp/aa_wrapper.log` | Android Auto hook in `gal` and its launcher |
+| `/tmp/altscreen_render.status`, `/tmp/mibr-alt111-gen2.status` | cluster video renderer and CarPlay stream-111 state, shown by GEM *Cluster video status* |
 
 By default only warnings and errors are logged. `touch /mnt/app/carplay_verbose`
 enables full logging from the next phone connect. Without a shell, run

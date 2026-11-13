@@ -49,14 +49,22 @@ extensions: SyntaxHdr = 0x7F100001, DisplayPictureBuffer = 0x7F100008
 
 **Default ON** since log set 018. Turned OFF by `/mnt/app/root/altscreen_render.hwdecode.off`
 (GEM CarPlay-RGI -> *HW decoder ON / OFF*) or, for the rest of the boot, `/tmp/altscreen_render.hwdecode.off`.
-After a real hardware failure the renderer writes both itself (the /mnt/app one only when that
-partition is writable) and stays on software decode. Read per phone connection; the decoder
-is created on the first stream bytes.
+After a hardware failure the renderer writes the `/tmp` one itself (software decode for the rest of
+this boot). Since 1.5 it writes the persistent `/mnt/app` one only when the video core hung (a
+call past the watchdog deadline, a decoder that never left Executing, a hang during setup or
+resume), because such a hang can freeze the HMI and the next boot must not walk into it again
+(`video hardware hung; hardware decode off also after a reboot`). A decoder that merely failed
+(setup refused, no picture within 2 s, a port change, a failed blit) is tried again after the next
+boot; until 1.4 any CarPlay failure kept software decode for good, unnoticed. Read per phone
+connection; the decoder is created on the first stream bytes. GEM *Cluster video status* shows
+which marker keeps hardware off (`hw_off=`).
 
 Android Auto has its own pair, `altscreen_render.aa.hwdecode.off`. After an Android Auto
 hardware failure the renderer writes only the `/tmp` one, so the next boot tries hardware again.
 Software decode cannot keep up with the 1080p30 Android Auto stream
-(this FFmpeg build has no NEON). The tee then falls behind and waits for a key frame, and
+(1.4's FFmpeg build had no NEON; 1.5 builds it with NEON, not car-tested yet, with
+`altscreen_render.noasm` as the switch back to plain C). The
+tee then falls behind and waits for a key frame, and
 Google Maps sends one only every minute or two, so the cockpit picture froze for about 90 s at
 a time while the main screen kept moving (issue #44). The GEM *HW decoder ON / OFF* switch sets
 and clears both pairs; ON also clears the start records. The renderer log names the marker
@@ -106,6 +114,19 @@ Hung video hardware (issue #14):
   The renderer switches hardware decode OFF and exits; the restarted renderer uses software.
 - **Watchdog.** Setup (10 s), teardown (8 s) and each feed (4 s) have a deadline. An OMX call
   that is still blocked after it switches hardware decode OFF and exits the process.
+- **Monotonic waits (1.5).** The 2 s state-change waits and the 200 ms input-buffer wait use a
+  `CLOCK_MONOTONIC` condition variable (wall clock for the variable and the deadlines alike if
+  the unit refuses it: `monotonic condition variable refused` in the log). They used the wall clock: a clock set forward while the
+  decoder was being set up (the head unit sets its clock from GPS/the network after boot) made
+  every wait time out at once, which marked the decoder as hung and switched hardware off.
+- **Damaged pictures (1.5).** `OMX_ErrorStreamCorrupt` / `MbErrorsInFrame` are still decoded past;
+  each one is counted (`damaged=` in the status file) and the renderer asks the phone for a key
+  frame over the tee back-channel, at most every 2 s, instead of waiting for its next periodic
+  one. The software decoder's errors do the same.
+- **Calibration grid (1.5).** With the grid marker the ruler (`altr_grid_rects`, the same list the
+  GL path draws) is filled by the 2D blitter into the RGBA buffer after each blit, before the
+  post. The fill call is looked up at run time; a `libscreen` without it, or a failed fill, is
+  logged once and costs only the ruler.
 - **Main-screen yield (car logs 2026-10-30, save 011).** With the cluster decoder running, a
   reverse-camera / CarPlay / Audi screen burst started and stopped stock's 1024x480 decoder four
   times in 80 s. The fifth start hit `VCD_HWTimeoutHandler` -> `MMKIVdecDriver_Start TimeOut` ->

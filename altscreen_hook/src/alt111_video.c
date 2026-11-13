@@ -21,7 +21,7 @@ void alt111_video_detach(struct alt111_video *v)
     clear_queue(v);
     ++v->consumer;
     v->attached = v->priming_queued = v->consumer_primed = 0;
-    v->keyframe_needed = 0;
+    v->keyframe_needed = v->skip_to_idr = v->resync_armed = 0;
 }
 
 void alt111_video_destroy(struct alt111_video *v)
@@ -139,8 +139,23 @@ int alt111_video_attach(struct alt111_video *v)
     if (v->attached) return ALT111_BUSY; /* do not steal a production consumer */
     ++v->consumer;
     v->attached = v->keyframe_needed = 1;
-    v->priming_queued = v->consumer_primed = 0;
+    v->priming_queued = v->consumer_primed = v->skip_to_idr = v->resync_armed = 0;
     return ALT111_OK;
+}
+
+/* Drop every queued AU not yet started on the socket; a partly written head stays, so the
+ * consumer never sees half an AU. The consumer keeps its connection and its decoder. */
+static void drop_backlog(struct alt111_video *v)
+{
+    unsigned i, keep = v->count && v->queue[v->head].offset ? 1u : 0u;
+    for (i = keep; i < v->count; ++i) {
+        struct alt111_chunk *c = &v->queue[(v->head + i) % ALT111_QUEUE_CAP];
+        v->queued_bytes -= c->length;
+        free(c->bytes);
+        memset(c, 0, sizeof(*c));
+        ++v->dropped_aus;
+    }
+    v->count = keep;
 }
 
 static int nal_next(const uint8_t *p, size_t n, unsigned width,
@@ -209,11 +224,39 @@ int alt111_video_submit(struct alt111_video *v, uint64_t stream,
         ++v->dropped_aus;
         return ALT111_WAIT;
     }
+    if (v->skip_to_idr) {
+        if (!idr) { ++v->dropped_aus; return ALT111_WAIT; }
+        v->skip_to_idr = 0;              /* this IDR restarts the picture chain */
+    }
     prefix = !v->consumer_primed && !v->priming_queued ? v->config_length : 0;
     if (v->count == ALT111_QUEUE_CAP || bytes + prefix > ALT111_QUEUE_BYTES - v->queued_bytes) {
-        ++v->dropped_aus;
-        alt111_video_detach(v);
-        return ALT111_RESTART_CONSUMER;
+        if (!v->consumer_primed) {
+            /* Still priming: nothing decodable reached it yet, start over. */
+            ++v->dropped_aus;
+            alt111_video_detach(v);
+            return ALT111_RESTART_CONSUMER;
+        }
+        if (v->resync_armed && v->delivered_aus == v->resync_delivered) {
+            /* Not one AU delivered since the last skip: the consumer stopped reading.
+             * Skipping again would ask the phone for a key frame every second for a
+             * renderer that is not there; drop it as 1.4 did, it reconnects when alive. */
+            ++v->dropped_aus;
+            alt111_video_detach(v);
+            return ALT111_RESTART_CONSUMER;
+        }
+        /* The consumer fell behind (car logs: "video AU rc=2 -> consumer reset" while the
+         * map starts). Drop the backlog and continue at the next IDR on the same socket. */
+        drop_backlog(v);
+        ++v->resyncs;
+        v->resync_armed = 1;
+        v->resync_delivered = v->delivered_aus;
+        if (!idr || v->count == ALT111_QUEUE_CAP ||
+            bytes > ALT111_QUEUE_BYTES - v->queued_bytes) {
+            ++v->dropped_aus;
+            v->skip_to_idr = 1;
+            return ALT111_RESYNC;
+        }
+        /* This AU is the IDR: queue it below, no key frame request needed. */
     }
     out = (uint8_t *)malloc(prefix + bytes);
     if (!out) { alt111_video_detach(v); ++v->dropped_aus; return ALT111_NOMEM; }

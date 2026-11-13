@@ -71,7 +71,7 @@ Every ID matches `+[ACCNavigationRouteGuidanceUpdateInfo keyForType:]` (accessor
 | 0x10 | LaneGuidanceCurrentIndex | `laneGuidanceIndex` | [x] |
 | 0x11 | LaneGuidanceTotalCount | `laneGuidanceTotal` | [x] |
 | 0x12 | LaneGuidanceShowing | `laneGuidanceShowing` | [x] |
-| 0x13 | SourceName | (from 0x5200) | [x] |
+| 0x13 | SourceName | `sourceName` -> per-app stack ([maneuver-mapping](maneuver-mapping.md#-per-app-compensation-source-stacks)) | [x] |
 | 0x14 | SourceSupportsRouteGuidance | `sourceSupportsRg` | [x] |
 | 0x15 | DestinationTimeZoneOffsetMinutes | - | [ ] |
 | 0x16 | StopType | - | [ ] |

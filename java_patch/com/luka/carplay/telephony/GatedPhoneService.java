@@ -129,6 +129,8 @@ public class GatedPhoneService implements CombiBAPServicePhone {
     private String carrier = "";
     /* iPhone battery 0..100 from PowerUpdate, -1 = not reported. */
     private int batteryPct = -1, loggedBatteryPct = -2;
+    /* Signal values as logged last (issue #52: which scale the VC bars expect). */
+    private int signalRaw = -1, loggedSignalRaw = -2, loggedStockSignal = -2;
     /* Missed-call indication: unreturned missed calls newer than the last VC reset. */
     private long missedResetTs, newestRecentTs;   /* phone clock, s */
     private int missedCalls, missedNumbers;
@@ -500,6 +502,11 @@ public class GatedPhoneService implements CombiBAPServicePhone {
 
     public synchronized void updateSignalQuality(int q) {
         stockSignal = q;
+        if (q != loggedStockSignal) {
+            /* The stock value for a Bluetooth phone is the scale the VC's bars are made for. */
+            loggedStockSignal = q;
+            Log.i(TAG, "stock signal quality " + q + (gated ? " (held, CarPlay owns the phone tab)" : " -> VC"));
+        }
         if (!gated) real.updateSignalQuality(q);
     }
 
@@ -587,6 +594,7 @@ public class GatedPhoneService implements CombiBAPServicePhone {
     private synchronized void setComm(CarplayBus.Data d) {
         int sig = d.num("signal", -1), reg = d.num("registration", -1);
         /* iAP2 SignalStrength 0..5 -> BAP percent (stock DSI scale, 20 per bar). */
+        signalRaw = sig;
         signalPct = sig < 0 ? 0 : Math.min(sig, 5) * 20;
         regState = bapRegisterState(reg, d.bool("airplane", false));
         carrier = d.str("carrier", "");
@@ -615,6 +623,10 @@ public class GatedPhoneService implements CombiBAPServicePhone {
         int valid = carrier.length() > 0 ? 1 : 0;
         real.updateNetworkProvider(valid, carrier, valid, carrier);
         real.updateMobileBatteryLevel(batteryLevel(batteryPct));
+        if (signalRaw != loggedSignalRaw) {
+            loggedSignalRaw = signalRaw;
+            Log.i(TAG, "iPhone signal " + signalRaw + "/5 -> VC quality " + signalPct);
+        }
         if (batteryPct != loggedBatteryPct) {
             loggedBatteryPct = batteryPct;
             Log.i(TAG, "iPhone battery " + batteryPct + "% -> VC level "

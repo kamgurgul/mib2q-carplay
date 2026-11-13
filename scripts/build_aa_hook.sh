@@ -35,7 +35,7 @@ docker run --rm --platform=linux/amd64 -v "$PROJECT_DIR":/src "$IMG" bash -c '
   CC=arm-unknown-nto-qnx6.5.0eabi-gcc
   NM=arm-unknown-nto-qnx6.5.0eabi-nm
   cd /src/aa_hook
-  SRCS="aa_hook.c aa_tee.c aa_navxlate.c aa_trip.c aa_uiconfig.c aa_yield.c"
+  SRCS="aa_hook.c aa_tee.c aa_navxlate.c aa_trip.c aa_uiconfig.c aa_yield.c aa_focus.c"
   # Link in the container, copy only the final ELF to the mount (see README, Windows notes).
   $CC -shared -fPIC -O2 -g -std=gnu99 -Wall -Wextra -Werror -fvisibility=hidden \
       $SRCS -Wl,-soname,'"$SONAME"' -Wl,--version-script=/src/aa_hook/aa_hook.exports.map \

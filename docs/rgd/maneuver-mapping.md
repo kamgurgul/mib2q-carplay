@@ -128,6 +128,40 @@ third-party apps (e.g. Sygic) may omit the JunctionType field; `State` then keep
 turn lost its arrow ([#9](https://github.com/kamgurgul/mib2q-carplay/issues/9)). `junctionType` still
 selects the side-street algorithm (`SideStreets`: `0` intersection, `1` roundabout, else none).
 
+## 🧭 Per-app compensation (source stacks)
+
+Ported from luka-dev `52fbc2b`, `5508460`, `a334f1b`. `0x5200`/0x13 SourceName (the app's localized
+display name, not a bundle ID) selects a stack in `NavigationStack.forSource`; the stack's modules
+adjust a fresh `ManeuverSemantics` value before `ManeuverMapper`, and HUD and renderer use the same
+result. The received `RouteGuidance.State` is never changed.
+
+| Stack | Names (exact, case/NBSP-insensitive) | What it does |
+| --- | --- | --- |
+| `default` | anything else: Apple Maps, Google Maps, Waze, empty, unknown | nothing, mapping as above |
+| `baidu` | `百度地图` | infers a missing roundabout junction; CP 28..32 are Baidu *directions*, not exit numbers: coarse hints +90, 0, -45, -90, -135 degrees (never snapped to a road) |
+| `amap` | `Amap`, `高德地图`, `高德地圖`, `AMapiPhone` | AMap sends junction 0 for roundabouts: CP 28 = left circle, 29 = generic departure, 30 = right circle |
+| `yandex` | Navigator/Maps names (`Навигатор`, `Yandex Navi`, `Яндекс Карты`, ...) | CP 28..46 carry `exitNumber` 1..19 with no angle; exits 1..14 get the illustrative schematic below |
+
+**Roundabout schematic (Yandex only):** with an exit number, no received angle and no real road
+geometry, `RoundaboutSchematic` spreads the entry, the exits up to the selected one and one exit after
+it over the HUD's 22.5-degree grid. FctID 23 gets the selected direction and the other roads as side
+streets; `maneuver_render` gets the same angles with road snapping off. It is drawn, not measured: the
+real exit direction is still unknown (exit 2 is always drawn straight on). Exits 15..19 and CP 7 keep
+the old fallback. A received angle (also 0 or -1), partial geometry or an app change replaces it.
+
+**Driving side:** none of the analysed apps sets `trafficSide`, so iOS omits `0x5202`/0x08
+(`mDrivingSide = -1`). The circulation side then comes from the car's RHD coding
+(`CarPlayApp.isVehicleRightHandDrive()`, sysConst 464 == 1 -> left-hand traffic); an explicit 0/1
+from the phone still wins. A car driven abroad across the traffic side uses its home side.
+
+**App changes:** the native hook keeps the source name across soft reroutes and writes it into every
+cached snapshot (empty = unknown). A different named app flushes the native slot cache, and Java
+clears the old app's route content, so maneuvers are never relabelled. A first late name only enriches.
+
+Android Auto does not use this path's stacks: `AaRgState` sends no `source_name` (always `default`),
+and AA roundabouts are mapped in `AaManeuverMap` (exit number without angle -> estimated angle,
+issue #17). Waze on CarPlay sends `source_supports_rg = 0`, so it has no route guidance at all.
+
 ## ⚠️ Product gap
 
 `MAN_TLV_DESCRIPTION` (0x5202/0x02 InstructionText) is parsed but not surfaced on the cluster.

@@ -135,9 +135,18 @@ public final class AaRouteStateTest {
         check(AaClusterView.viewFor(true, "LayoutMIB2HighB9Sport") == AaClusterView.FULL, "large map = full");
         check(AaClusterView.viewFor(false, "LayoutMIB2HighB9Sport") == AaClusterView.SPORT, "sport");
         check(AaClusterView.viewFor(false, "LayoutMIB2HighB9") == AaClusterView.CLASSIC, "classic");
-        check(AaClusterView.record(AaClusterView.SPORT).length() == 8
-            && AaClusterView.record(AaClusterView.FULL).length() == 8
-            && AaClusterView.record(AaClusterView.CLASSIC).length() == 8, "fixed 8-byte records");
+        check(AaClusterView.viewFor(false, "LayoutMIB2HighQ7Sport") == AaClusterView.SPORT, "Q7 sport");
+        check(AaClusterView.viewFor(false, "LayoutMIB2HighQ7") == AaClusterView.CLASSIC, "Q7 classic");
+        /* The hook (aa_uiconfig.c view_read) parses exactly these bytes; a hook before 1.5
+         * reads the first 8. */
+        check("sport     -460     18\n".equals(AaClusterView.record(AaClusterView.SPORT, -460, 18)),
+            "Q7Sport record");
+        check("classic      0     26\n".equals(AaClusterView.record(AaClusterView.CLASSIC, 0, 26)),
+            "B9 classic record");
+        check("full      -476     26\n".equals(AaClusterView.record(AaClusterView.FULL, -476, 26)),
+            "B9Sport large-map record");
+        check(AaClusterView.record(AaClusterView.SPORT, -123456, 1234567).length() == 22
+            && AaClusterView.record(AaClusterView.FULL, 0, 0).length() == 22, "fixed 22-byte records");
     }
 
     private static void gate() {

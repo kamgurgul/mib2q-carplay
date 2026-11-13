@@ -97,6 +97,8 @@ public final class ScreenModule implements Module {
     /* VC map tab (BAP MapViewAndOrientation lvdsMapIsVisible). -1 until the VC reports it.
      * Cockpit state, not session state: start()/stop() leave it alone. */
     private static volatile int vcMainMap = -1;
+    /* Last "phone map hidden" state handed to the hooks, -1 = none since the hook's hello. */
+    private static int lastHiddenSent = -1;
 
     /** True for any of OUR CarPlay cluster contexts (drift-reconciled at 250 ms). */
     private static boolean isOurCarPlayContext(int c) {
@@ -116,8 +118,34 @@ public final class ScreenModule implements Module {
                 desiredCtx = CTX_STOCK_CLUSTER;
             }
             sendRgiStateLocked();
+            publishHiddenLocked();
             LOCK.notifyAll();
         }
+    }
+
+    /** The cockpit shows no phone map: another VC tab, or the Audi map picked with a long
+     *  roller press. The hooks pause the cluster stream for it only with their opt-in marker
+     *  (/mnt/app/root/cluster_video.pause_hidden); without it this is information only. */
+    private static boolean phoneMapHiddenLocked() {
+        return connected && (userStockMap || vcMainMap == 0);
+    }
+
+    /** CarPlay: CMD_ALT_HIDDEN to the AltScreen hook. Android Auto: /tmp/aa_cluster_hidden for
+     *  the gal hook (no bus peer). Only on change; the hook's hello resets the latch. Caller
+     *  holds LOCK. */
+    private static void publishHiddenLocked() {
+        int hidden = phoneMapHiddenLocked() ? 1 : 0;
+        if (hidden == lastHiddenSent) return;
+        boolean sent;
+        if (CarPlayApp.isActive()) {
+            sent = CarplayBus.getInstance().sendBinary(CarplayBus.CMD_ALT_HIDDEN,
+                new byte[] { (byte) hidden });
+        } else if (CarPlayApp.isAndroidAutoActive()) {
+            sent = com.luka.carplay.aa.AaClusterView.publishHidden(hidden == 1);
+        } else {
+            sent = false;
+        }
+        if (sent) lastHiddenSent = hidden;
     }
 
     /** Mirror the confirmed RGI presentation to the CarPlay hook; the AltScreen hook picks the
@@ -135,7 +163,11 @@ public final class ScreenModule implements Module {
 
     private static final CarplayBus.Listener HELLO_LISTENER = new CarplayBus.Listener() {
         public void onFrame(int type, int flags, byte[] payload, int len) {
-            synchronized (LOCK) { sendRgiStateLocked(); }
+            synchronized (LOCK) {
+                sendRgiStateLocked();
+                lastHiddenSent = -1;          /* a respawned hook starts at "shown" */
+                publishHiddenLocked();
+            }
         }
     };
 
@@ -156,13 +188,15 @@ public final class ScreenModule implements Module {
     public static boolean isAltScreenShown() { return altScreenActive && !userStockMap; }
 
     /** Long press of the left steering-wheel roller. Toggles the cluster between the
-     *  phone map and the stock Audi map. Ignored until the phone video is actually live,
-     *  so a press during native-nav startup cannot stick the cluster on the stock map
-     *  before the phone map has been seen. */
+     *  phone map and the stock Audi map. Picking the Audi map is ignored until the phone
+     *  video is actually live, so a press during native-nav startup cannot stick the cluster
+     *  on the stock map before the phone map has been seen. Going back to the phone map
+     *  always works: with the pause option the Audi map hides the phone map, the hook stops
+     *  its stream, the video is no longer live, and this press is what restarts it. */
     public static void onSteeringWheelLongPress() {
         boolean stock;
         synchronized (LOCK) {
-            if (!platformSupported || !connected || !altScreenActive) {
+            if (!platformSupported || !connected || (!altScreenActive && !userStockMap)) {
                 Log.i(TAG, "MFW long press ignored: connected=" + connected
                     + " video=" + altScreenActive);
                 return;
@@ -181,6 +215,7 @@ public final class ScreenModule implements Module {
         if (vcMainMap == v) return;
         vcMainMap = v;
         Log.i(TAG, "VC main map visible=" + visible);
+        synchronized (LOCK) { publishHiddenLocked(); }
     }
 
     /** -1 unknown, 0 another cockpit tab, 1 VC map tab. */
@@ -332,6 +367,8 @@ public final class ScreenModule implements Module {
             userStockMap = false;
             desiredCtx = CTX_STOCK_CLUSTER;
             sendRgiStateLocked();   /* navActive is false here: reset the hook's URL state */
+            lastHiddenSent = -1;    /* a new session: publish the cockpit's state again */
+            publishHiddenLocked();
         }
         CarplayBus.getInstance().on(CarplayBus.EVT_HELLO, HELLO_LISTENER);
         synchronized (LOCK) {

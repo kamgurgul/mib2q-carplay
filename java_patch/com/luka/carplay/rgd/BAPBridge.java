@@ -114,6 +114,7 @@ public class BAPBridge {
     private int lastFirstManeuverIdx = -1;
     private int lastFirstManeuverVer = -1;
     private long lastFirstRouteGeneration = -1L;
+    private long lastFirstSourceRevision = -1L;
     /* Call-for-action blink phase: true=100%, false=0% */
     private boolean actionBlinkFull = true;
     private final Object distanceToManeuverLock = new Object();
@@ -1012,7 +1013,8 @@ public class BAPBridge {
                     && firstIdx < s.mVer.length) ? s.mVer[firstIdx] : -1;
             boolean primaryChanged = (firstIdx != lastFirstManeuverIdx)
                 || (currentFirstVer != lastFirstManeuverVer)
-                || s.routeGeneration != lastFirstRouteGeneration;
+                || s.routeGeneration != lastFirstRouteGeneration
+                || s.sourceRevision != lastFirstSourceRevision;
             if (primaryChanged) {
                 // A distance gap may reuse only this maneuver's cached phase.
                 // Invalidate before publishing, so failed sends/retries cannot
@@ -1022,6 +1024,7 @@ public class BAPBridge {
                 lastFirstManeuverIdx = firstIdx;
                 lastFirstManeuverVer = currentFirstVer;
                 lastFirstRouteGeneration = s.routeGeneration;
+                lastFirstSourceRevision = s.sourceRevision;
             }
             boolean hasUsableDistance = (distM > 0);
             /* Treat arrival types as approach state even with distM==0 so their
@@ -1579,10 +1582,27 @@ public class BAPBridge {
     private void sendManeuvers(RouteGuidance.State s, ManeuverPresentation maneuver) throws Exception {
         int idx = maneuver.slot;
         int z = idx >= 0 ? s.mZLevel[idx] : 0;
-        byte[] streets = idx >= 0 ? maneuverSideStreets(s, idx, maneuver.main) : new byte[0];
+        byte[] streets = idx >= 0 ? maneuverSideStreets(s, maneuver) : new byte[0];
         CombiBAPNaviManeuverDescriptor[] arr = new CombiBAPNaviManeuverDescriptor[] {
             createDescriptor(maneuver.main, maneuver.direction, z, streets)
         };
+        ManeuverSemantics value = maneuver.semantics;
+        if (value != null && (value.junctionInferred || value.roundaboutDeparture || value.exitNumber > 0
+                || value.angleSource == ManeuverSemantics.ANGLE_DIRECTION_HINT)) {
+            Log.i(TAG, "Maneuver stack=" + NavigationStack.forSource(s.sourceName).name
+                + " type=" + value.type + " junction=" + value.junctionType
+                + " inferred_junction=" + value.junctionInferred
+                + " driving_side=" + value.drivingSide
+                + " inferred_side=" + value.drivingSideInferred
+                + " roundabout_departure=" + value.roundaboutDeparture
+                + " angle=" + value.angle + " angle_source="
+                + (value.angleSource == ManeuverSemantics.ANGLE_RECEIVED ? "received"
+                    : value.angleSource == ManeuverSemantics.ANGLE_DIRECTION_HINT ? "direction_hint" : "unknown")
+                + " exit_number=" + value.exitNumber
+                + " geometry=" + (maneuver.schematic == null ? "source" : "ordinal_schematic")
+                + (maneuver.schematic == null ? "" : " schematic_angle_half_degrees="
+                    + maneuver.schematic.exitAngle));
+        }
         appConnectorNavi.updateManeuverDescriptor(arr);
     }
 
@@ -1886,6 +1906,7 @@ public class BAPBridge {
     private int lastCrDrivingSide = -1;
     private int lastCrVer = -1;
     private long lastCrRouteGeneration = -1L;
+    private long lastCrSourceRevision = -1L;
     private boolean rendererManeuverPending; // guarded by this, also read by blink worker
     private int lastCrIdx = -1;
     private int[] lastCrJunctionAngles;
@@ -2034,11 +2055,7 @@ public class BAPBridge {
             if (maneuver == ManeuverPresentation.NONE) return false;
             int firstIdx = maneuver.slot;
             boolean followStraight = !maneuver.hasManeuver();
-            RendererMapper.Mapping mapped = RendererMapper.map(maneuver.main, maneuver.direction,
-                firstIdx >= 0 ? s.mDrivingSide[firstIdx] : 0,
-                firstIdx >= 0 ? s.mType[firstIdx] : ManeuverMapper.MT_FOLLOW_ROAD,
-                firstIdx >= 0 ? s.mTurnAngle[firstIdx] : 0,
-                firstIdx >= 0 && ManeuverPresentation.anglePresent(s, firstIdx),
+            RendererMapper.Mapping mapped = RendererMapper.map(maneuver,
                 firstIdx >= 0 ? s.mJunctionAngles[firstIdx] : null);
             int icon = mapped.icon;
             int direction = mapped.direction;
@@ -2053,7 +2070,8 @@ public class BAPBridge {
                 && sameIntArray(junctionAngles, lastCrJunctionAngles);
             if (sameGeometry && (icon == RendererMapper.ICON_ARRIVED
                     || (firstIdx == lastCrIdx && ver == lastCrVer
-                        && s.routeGeneration == lastCrRouteGeneration))) {
+                        && s.routeGeneration == lastCrRouteGeneration
+                        && s.sourceRevision == lastCrSourceRevision))) {
                 rendererManeuverPending = false;
                 return false;
             }
@@ -2067,7 +2085,8 @@ public class BAPBridge {
                 && exitAngle == lastCrExitAngle && drivingSide == lastCrDrivingSide
                 && mapped.snapToRoad == lastCrSnapToRoad
                 && firstIdx == lastCrIdx && ver == lastCrVer
-                && s.routeGeneration == lastCrRouteGeneration;
+                && s.routeGeneration == lastCrRouteGeneration
+                && s.sourceRevision == lastCrSourceRevision;
             boolean ok = rendererClient.sendBapProgressManeuver(icon, direction, exitAngle,
                 drivingSide, junctionAngles, progress.level, progress.mode(),
                 perspective, roadsOnly, mapped.snapToRoad,
@@ -2080,6 +2099,7 @@ public class BAPBridge {
                 lastCrDrivingSide = drivingSide;
                 lastCrVer = ver;
                 lastCrRouteGeneration = s.routeGeneration;
+                lastCrSourceRevision = s.sourceRevision;
                 lastCrIdx = firstIdx;
                 lastCrJunctionAngles = junctionAngles;
                 lastCrSnapToRoad = mapped.snapToRoad;
@@ -2276,11 +2296,15 @@ public class BAPBridge {
         return v;
     }
 
-    private static byte[] maneuverSideStreets(RouteGuidance.State s, int idx, int main) {
-        if (main == ManeuverMapper.NO_INFO || main == ManeuverMapper.NO_SYMBOL) return new byte[0];
+    private static byte[] maneuverSideStreets(RouteGuidance.State s, ManeuverPresentation maneuver) {
+        if (maneuver.schematic != null) return maneuver.schematic.sideStreets;
+        int idx = maneuver.slot;
+        ManeuverSemantics value = maneuver.semantics;
+        if (maneuver.main == ManeuverMapper.NO_INFO || maneuver.main == ManeuverMapper.NO_SYMBOL
+                || value.angleSource == ManeuverSemantics.ANGLE_DIRECTION_HINT) return new byte[0];
         int angle = s.mExitAngle[idx];
         if (angle == -1 && !ManeuverPresentation.anglePresent(s, idx)) angle = 1000;
-        return SideStreets.calcSideStreetsBytes(s.mType[idx], s.mJunctionType[idx], s.mDrivingSide[idx],
+        return SideStreets.calcSideStreetsBytes(value.mappingType(), value.junctionType, value.drivingSide,
             s.mJunctionAngles[idx], angle);
     }
 

@@ -40,6 +40,13 @@ uint64_t altr_hwdec_frames(altr_hwdec_t *d);
 /* 1 once the component reported an error or an unsupported port change. */
 int altr_hwdec_failed(altr_hwdec_t *d);
 
+/* Damaged access units the decoder reported and decoded past (stream corrupt / macroblock
+ * errors); the caller asks the phone for a key frame when this grows. */
+unsigned altr_hwdec_damaged(altr_hwdec_t *d);
+
+/* Calibration ruler (altr_grid_rects) over every picture, like the GL path's. */
+void altr_hwdec_set_grid(altr_hwdec_t *d, int on);
+
 /* Close only the decoder (the video core is free for stock's main-screen
  * decoder); window 99 keeps the last picture. 0 = done, -1 = stuck as in
  * altr_hwdec_destroy. Feeding a suspended decoder fails. */

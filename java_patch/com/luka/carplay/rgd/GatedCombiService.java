@@ -1,13 +1,16 @@
 /*
- * GatedCombiService - Wrapper around CombiBAPServiceNavi that gates
- * native route-guidance updates during CarPlay route guidance.
+ * Native BAP ownership and latest-state restoration. CarPlay writes to the raw
+ * endpoint; only the stock listener passes through this wrapper.
  *
- * When blockRouteGuidance=true, native route-guidance related calls from
- * CombiBAPListener are silently dropped so they don't overwrite BAPBridge.
- * This keeps BAPBridge as the single source for FctIDs
- * 17/18/19/20/21/22/23/24/39/46/49/55.
+ * While CarPlay owns a group, stock writes are retained (latest value per FctID,
+ * never a history) instead of reaching the cluster. When ownership is released,
+ * ScreenNavStatusGate replays the retained values on NavigationJobs, so the
+ * cluster gets the native state back even where the stock setters deduplicate.
  *
- * Non-route-guidance methods always delegate.
+ * Owned: route session FctIDs 17/18/23/24/39/49/55 and position/destination
+ * 19/20/21/22/46. Map scale (45) and altitude (47) are NOT owned on this branch:
+ * route guidance is a maneuver overlay over the stock cluster map, so the native
+ * scale/altitude readouts in the lower bar stay live (upstream hides them).
  *
  * Copyright (c) 2026 LuKa (@LuKa_dev)
  */
@@ -23,72 +26,224 @@ import de.audi.atip.interapp.combi.bap.navi.data.CombiBAPNaviManeuverDescriptor;
 import de.audi.atip.interapp.combi.bap.navi.data.CombiBAPSemiDynamicRouteInfo;
 import de.audi.atip.interapp.combi.bap.navi.data.EtcStatus;
 
+import com.luka.carplay.framework.Log;
+
 public class GatedCombiService implements CombiBAPServiceNavi {
     final CombiBAPServiceNavi real;
     volatile boolean blockRouteGuidance;
     /* FctIDs 19/20/21/22/46 have different ownership from the rest of route guidance:
      * outside CarPlay RGI the stock navigator may keep driving the current/next-road
-     * text, the lower bar,
-     * travel information and destination menu; maneuver/lane records remain
-     * session-gated. */
+     * text, the lower bar, travel information and destination menu; maneuver/lane
+     * records remain session-gated. */
     volatile boolean blockCurrentPositionInfo;
+    private boolean retired;
+
+    /* Index by BAP function ID. Typed closures retain one value per function,
+     * never a history of maneuvers. SYNC is the stock RGStatus sync(0) group. */
+    private static final long SYNC = bit(17) | bit(39) | bit(23) | bit(18) | bit(49);
+    private static final long POSITION = bit(19) | bit(20) | bit(21) | bit(22) | bit(46);
+    private static final long ROUTE = SYNC | bit(24) | bit(55);
+    private static final int[] ORDER = {17, 39, 23, 18, 49, 24, 55, 19, 20, 21, 22, 46};
+    private interface Value { void send(CombiBAPServiceNavi to); }
+    private final Value[] latest = new Value[56];
+    private long known, pending;
+    private boolean replayFailureLogged;
 
     public GatedCombiService(CombiBAPServiceNavi r) { this.real = r; }
+    private static long bit(int id) { return 1L << id; }
+    private long allowed() {
+        return (blockRouteGuidance ? 0L : ROUTE) | (blockCurrentPositionInfo ? 0L : POSITION);
+    }
 
-    /** Route-data ownership. BAPBridge is the only writer for the maneuver FctIDs while CarPlay RGI
-     * is active.  Scale and altitude are NOT gated on this branch: the cluster shows the stock native
-     * map, so its native scale/altitude readouts in the lower bar stay visible. */
-    public void setRouteGuidanceBlocked(boolean active) {
+    /** Acquiring ownership is synchronous with stock writes, but does no I/O.
+     * Releasing and replaying are owned by NavigationJobs in ScreenNavStatusGate. */
+    public synchronized void setRouteGuidanceBlocked(boolean active) {
+        if (retired || blockRouteGuidance == active) return;
         blockRouteGuidance = active;
+        pending |= known & ROUTE;
     }
 
-    public void setCurrentPositionInfoBlocked(boolean blocked) {
+    public synchronized void setCurrentPositionInfoBlocked(boolean blocked) {
+        if (retired || blockCurrentPositionInfo == blocked) return;
         blockCurrentPositionInfo = blocked;
+        pending |= known & POSITION;
     }
 
-    /* GATED ROUTE-GUIDANCE METHODS */
-    public void updateRGStatus(int a) {
-        if (!blockRouteGuidance) real.updateRGStatus(a);
+    /** Also used after repeated CarPlay cleanup while ownership is already released. */
+    public synchronized void requestReplay(boolean route) {
+        if (!retired) pending |= known & (route ? ROUTE : POSITION);
     }
 
-    public void updateActiveRGType(int a) {
-        if (!blockRouteGuidance) real.updateActiveRGType(a);
+    public synchronized void retire() {
+        retired = true;
+        pending = known = 0L;
+        for (int i = 0; i < latest.length; i++) latest[i] = null;
     }
 
-    public void updateDistanceToNextManeuver(int a, int b, boolean c, int d) {
-        if (!blockRouteGuidance) real.updateDistanceToNextManeuver(a, b, c, d);
+    public synchronized boolean hasPendingReplay() {
+        return !retired && (pending & allowed()) != 0L;
     }
 
-    public void updateCurrentPositionInfo(String s) {
-        if (!blockCurrentPositionInfo) real.updateCurrentPositionInfo(s);
+    private void publish(int id, Value value) {
+        if (retired) return;
+        latest[id] = value;
+        known |= bit(id);
+        pending |= bit(id);
+        if ((allowed() & bit(id)) != 0L) {
+            // Keep the stock caller's exception handling; a failed handoff remains pending.
+            value.send(real);
+            pending &= ~bit(id);
+        }
     }
 
-    public void updateManeuverDescriptor(CombiBAPNaviManeuverDescriptor[] a) {
-        if (!blockRouteGuidance) real.updateManeuverDescriptor(a);
+    /** NavigationJobs only. A failed sync-group member keeps the entire current
+     * group pending: retry RGStatus first, then complete its sync window. */
+    public synchronized void replayPending() {
+        if (retired) return;
+        long work = pending & allowed();
+        long syncWork = (work & SYNC) == 0L ? 0L : known & SYNC;
+        work |= syncWork;
+        boolean syncFailed = false;
+        for (int i = 0; i < ORDER.length; i++) {
+            int id = ORDER[i];
+            if ((work & bit(id)) == 0L) continue;
+            try { latest[id].send(real); pending &= ~bit(id); }
+            catch (Throwable t) {
+                pending |= bit(id);
+                if ((SYNC & bit(id)) != 0L) syncFailed = true;
+                replayFailure(id, t);
+            }
+        }
+        if (syncFailed) pending |= syncWork;
+        if (!hasPendingReplay()) replayFailureLogged = false;
     }
 
-    public void updateLaneGuidance(boolean a, CombiBAPNaviLaneGuidanceData[] b) {
-        if (!blockRouteGuidance) real.updateLaneGuidance(a, b);
+    private void replayFailure(int id, Throwable t) {
+        if (replayFailureLogged) return;
+        replayFailureLogged = true;
+        Log.w("NativeBAP", "restore pending FctID=" + id + ": " + t);
     }
 
-    public void updateExitView(int a, int b) {
-        if (!blockRouteGuidance) real.updateExitView(a, b);
+    public synchronized void updateRGStatus(final int status) {
+        publish(17, new Value() { public void send(CombiBAPServiceNavi to) {
+            to.updateRGStatus(status);
+        } });
     }
 
-    public void updateManeuverState(int a) {
-        if (!blockRouteGuidance) real.updateManeuverState(a);
+    public synchronized void updateActiveRGType(final int type) {
+        publish(39, new Value() { public void send(CombiBAPServiceNavi to) {
+            to.updateActiveRGType(type);
+        } });
     }
 
-    /* All other methods: pure delegation. */
+    public synchronized void updateDistanceToNextManeuver(final int distance, final int unit, final boolean bargraph, final int value) {
+        publish(18, new Value() { public void send(CombiBAPServiceNavi to) {
+            to.updateDistanceToNextManeuver(distance, unit, bargraph, value);
+        } });
+    }
+
+    public synchronized void updateCurrentPositionInfo(final String street) {
+        publish(19, new Value() { public void send(CombiBAPServiceNavi to) {
+            to.updateCurrentPositionInfo(street);
+        } });
+    }
+
+    public synchronized void updateExitView(final int variant, final int id) {
+        publish(49, new Value() { public void send(CombiBAPServiceNavi to) {
+            to.updateExitView(variant, id);
+        } });
+    }
+
+    public synchronized void updateManeuverState(final int state) {
+        publish(55, new Value() { public void send(CombiBAPServiceNavi to) {
+            to.updateManeuverState(state);
+        } });
+    }
+
+    public synchronized void updateTurnToInfo(final String turn, final String sign) {
+        publish(20, new Value() { public void send(CombiBAPServiceNavi to) {
+            to.updateTurnToInfo(turn, sign);
+        } });
+    }
+
+    public synchronized void updateDistanceToDestination(final int distance, final int unit, final boolean stopover) {
+        publish(21, new Value() { public void send(CombiBAPServiceNavi to) {
+            to.updateDistanceToDestination(distance, unit, stopover);
+        } });
+    }
+
+    public synchronized void updateTimeToDestination(final int type, final int unit, final long time) {
+        publish(22, new Value() { public void send(CombiBAPServiceNavi to) {
+            to.updateTimeToDestination(type, unit, time);
+        } });
+    }
+
+    public synchronized void updateManeuverDescriptor(CombiBAPNaviManeuverDescriptor[] data) {
+        final CombiBAPNaviManeuverDescriptor[] saved = copyManeuvers(data);
+        publish(23, new Value() { public void send(CombiBAPServiceNavi to) {
+            to.updateManeuverDescriptor(copyManeuvers(saved));
+        } });
+    }
+
+    public synchronized void updateLaneGuidance(final boolean enabled, CombiBAPNaviLaneGuidanceData[] data) {
+        final CombiBAPNaviLaneGuidanceData[] saved = copyLanes(data);
+        publish(24, new Value() { public void send(CombiBAPServiceNavi to) {
+            to.updateLaneGuidance(enabled, copyLanes(saved));
+        } });
+    }
+
+    public synchronized void updateDestinationInfo(CombiBAPDestinationInfo data) {
+        final CombiBAPDestinationInfo saved = copyDestination(data);
+        publish(46, new Value() { public void send(CombiBAPServiceNavi to) {
+            to.updateDestinationInfo(copyDestination(saved));
+        } });
+    }
+
+    private static byte[] copyBytes(byte[] data) { return data == null ? null : (byte[]) data.clone(); }
+    private static CombiBAPNaviManeuverDescriptor[] copyManeuvers(CombiBAPNaviManeuverDescriptor[] data) {
+        if (data == null) return null;
+        CombiBAPNaviManeuverDescriptor[] copy = new CombiBAPNaviManeuverDescriptor[data.length];
+        for (int i = 0; i < data.length; i++) {
+            CombiBAPNaviManeuverDescriptor d = data[i];
+            if (d != null) copy[i] = new CombiBAPNaviManeuverDescriptor(
+                d.mainElement, d.direction, d.zLevelGuidance, copyBytes(d.sideStreets));
+        }
+        return copy;
+    }
+    private static CombiBAPNaviLaneGuidanceData[] copyLanes(CombiBAPNaviLaneGuidanceData[] data) {
+        if (data == null) return null;
+        CombiBAPNaviLaneGuidanceData[] copy = new CombiBAPNaviLaneGuidanceData[data.length];
+        for (int i = 0; i < data.length; i++) {
+            CombiBAPNaviLaneGuidanceData d = data[i];
+            if (d != null) copy[i] = new CombiBAPNaviLaneGuidanceData(d.posID, d.laneDirection,
+                copyBytes(d.laneSideStreets), d.laneType, d.laneMarkingLeft,
+                d.laneMarkingRight, d.laneDescription, d.guidanceInfo);
+        }
+        return copy;
+    }
+    private static CombiBAPDestinationInfo copyDestination(CombiBAPDestinationInfo data) {
+        if (data == null) return null;
+        CombiBAPNaviDestination d = data.getDestination();
+        CombiBAPNaviDestination copy = null;
+        if (d != null) {
+            copy = new CombiBAPNaviDestination(d.getLastName(), d.getFirstName(), d.getStreet(),
+                d.getHouseNumber(), d.getCity(), d.getCityPart(), d.getState(), d.getPostalCode(),
+                d.getCountry(), d.getLatitude(), d.getLongitude(), d.getPOIType(),
+                d.getPOIDescription(), d.getPOICategory(), d.getAddressType());
+            copy.setNaviID(d.getNaviID());
+            copy.setNaviType(d.getNaviType());
+        }
+        return new CombiBAPDestinationInfo(data.getNoOfStopovers(), data.getNoOfNextStopover(), copy);
+    }
+
+    /* Unowned functions retain stock behavior. */
+    /* Native map scale and altitude: not gated on this branch (see header). */
+    public void updateMapScale(int a, boolean b, int c, int d, boolean e) {
+        real.updateMapScale(a, b, c, d, e); }
+    public void updateAltitude(int a, int b) { real.updateAltitude(a, b); }
     public void showInitializingScreen() { real.showInitializingScreen(); }
     public void hideInitializingScreen() { real.hideInitializingScreen(); }
     public void updateCompassInfo(int a, int b) { real.updateCompassInfo(a, b); }
-    public void updateTurnToInfo(String a, String b) {
-        if (!blockCurrentPositionInfo) real.updateTurnToInfo(a, b); }
-    public void updateDistanceToDestination(int a, int b, boolean c) {
-        if (!blockCurrentPositionInfo) real.updateDistanceToDestination(a, b, c); }
-    public void updateTimeToDestination(int a, int b, long c) {
-        if (!blockCurrentPositionInfo) real.updateTimeToDestination(a, b, c); }
     public void updateTMCInfoMessages(CombiBAPTMCInfoMessage[] a) {
         real.updateTMCInfoMessages(a); }
     public void updateLastDestinationsList(CombiBAPDestinationListEntry[] a) {
@@ -109,14 +264,6 @@ public class GatedCombiService implements CombiBAPServiceNavi {
     public void updateSupportedMapViews(int a, int b) { real.updateSupportedMapViews(a, b); }
     public void updateMapVisibility(boolean a, boolean b) { real.updateMapVisibility(a, b); }
     public void updateMapOrientation(int a) { real.updateMapOrientation(a); }
-    public void updateMapScale(int a, boolean b, int c, int d, boolean e) {
-        real.updateMapScale(a, b, c, d, e);   /* native map scale — not gated on this branch */
-    }
-    public void updateDestinationInfo(CombiBAPDestinationInfo a) {
-        if (!blockCurrentPositionInfo) real.updateDestinationInfo(a); }
-    public void updateAltitude(int a, int b) {
-        real.updateAltitude(a, b);            /* native altitude — not gated on this branch */
-    }
     public void updateOnlineNavigationState(int a, int b, int c) {
         real.updateOnlineNavigationState(a, b, c); }
     public void updateSemidynamicRouteGuidance(CombiBAPSemiDynamicRouteInfo a) {

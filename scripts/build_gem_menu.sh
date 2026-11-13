@@ -24,6 +24,7 @@ BUTTONS="
 install|install|Install / update CarPlay (release on SD)
 logs|logs|Save logs to SD (+ verbose on)
 verbose|verbose|Verbose logging ON / OFF (toggle, survives reboot, default OFF)
+status|status|Cluster video status (decoder, stream, options)
 altscreen_on|altscreen_on|Cluster video (AltScreen) ON
 altscreen_off|altscreen_off|Cluster video (AltScreen) OFF
 rgd_enable|rgd_enable|Route guidance ON
@@ -38,11 +39,14 @@ cluster_speed|cluster_speed|Cluster map speed limit ON / OFF (toggle, CarPlay, d
 cluster_compass|cluster_compass|Cluster map compass ON / OFF (toggle, CarPlay, default OFF)
 cluster_wide_all|cluster_wide_all|Cluster map all features on wide view ON / OFF (toggle, CarPlay, default OFF)
 reacquire|reacquire|Re-request cluster map (test app switching)
+pause_hidden|pause_hidden|Pause cluster map while hidden ON / OFF (toggle, CarPlay + Android Auto, opt-in, test)
 hwdec|hwdec|HW decoder ON / OFF (toggle, default ON)
 hwdelay|hwdelay|HW decoder 2-min delayed start ON / OFF (toggle, CarPlay + Android Auto, default OFF)
+noasm|noasm|Software decoder plain C (no NEON) ON / OFF (toggle, default OFF, next reboot)
 aa_cluster_on|aa_cluster_on|Android Auto cluster map ON
 aa_cluster_off|aa_cluster_off|Android Auto cluster map OFF
 aa_daynight|aa_daynight|Android Auto cluster day/night ON / OFF (toggle, opt-in, test)
+aa_refocus|aa_refocus|Android Auto cluster key frame on demand ON / OFF (toggle, opt-in, test)
 touchpad_dpad_on|touchpad_dpad_on|Touchpad as D-pad ON (CarPlay, default)
 touchpad_dpad_off|touchpad_dpad_off|Touchpad as D-pad OFF (stock touchpad)
 siri_short|siri_short|Siri on short voice-key press ON / OFF (toggle, CarPlay, default OFF)

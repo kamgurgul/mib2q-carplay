@@ -47,8 +47,14 @@ No application heartbeat on this leg - Java relies on TCP FIN/RST + `setKeepAliv
 ## 🧭 Direction
 
 - **EVT_*** hook->Java: `EVT_RGD_UPDATE` (0x0020), `EVT_COVERART` (0x0010), `EVT_HELLO`, sync markers.
-- **CMD_*** Java->hook: `CMD_SYNC_REQ` (0x0100) requests a sticky snapshot. The `CMD_ALT_*` (0x0110-0x0116) defines in `bus_protocol.h` are altScreen leftovers with no
-  handler in this hook.
+- **CMD_*** Java->hook: `CMD_SYNC_REQ` (0x0100) requests a sticky snapshot. `hook/altzoom` hands
+  `CMD_ALT_ZOOM` (0x0110), `CMD_ALT_ZONE` (0x0111), `CMD_ALT_RGI` (0x0116) and, from 1.5,
+  `CMD_ALT_HIDDEN` (0x0119, `[u8 0 shown / 1 hidden]`: the cockpit shows no phone map) to the
+  AltScreen hook in the same process (`altscreen111_*`, resolved with `dlsym`; dropped without it).
+  `CMD_TEL` (0x0117) and `CMD_VEHICLE` (0x0118): [phone-and-vehicle](phone-and-vehicle.md).
+  `CMD_ALT_APPEARANCE` (0x0114) and `CMD_ALT_UICTX` (0x0115) are reserved MHI3 ids with no
+  handler: the CarPlay command format for a per-display appearance is not known (the phone's
+  night mode is session-wide and already follows the MMI through stock `requestNightMode`).
 
 ## ⚙️ Threads (hook side)
 

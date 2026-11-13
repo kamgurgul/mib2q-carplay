@@ -41,6 +41,29 @@ public final class RendererMapper {
             maneuverType, angle, anglePresent, roads);
     }
 
+    static Mapping map(ManeuverPresentation maneuver, int[] roads) {
+        ManeuverSemantics value = maneuver.semantics;
+        if (maneuver.schematic != null) {
+            Mapping schematic = fromBap(maneuver.main, maneuver.direction, value.drivingSide);
+            schematic.exitAngle = maneuver.schematic.exitAngle;
+            schematic.junctionAngles = maneuver.schematic.junctionAngles;
+            schematic.snapToRoad = false;
+            return schematic;
+        }
+        Mapping out = value == null
+            ? map(maneuver.main, maneuver.direction, 0, ManeuverMapper.MT_FOLLOW_ROAD, 0, false, null)
+            // A known departure without geometry uses the existing departure
+            // glyph. Do not turn an unknown circle angle into a straight exit.
+            : value.roundaboutDeparture && !value.hasAngle()
+            ? fromBap(maneuver.main, maneuver.direction, value.drivingSide)
+            : map(maneuver.main, maneuver.direction, value.drivingSide, value.mappingType(),
+                value.angle, value.anglePresent, roads);
+        // A coarse direction must never snap to a road as if it were a measured angle.
+        if (value != null && value.angleSource == ManeuverSemantics.ANGLE_DIRECTION_HINT)
+            out.snapToRoad = false;
+        return out;
+    }
+
     private static Mapping fromBap(int main, int direction, int drivingSide) {
         Mapping out = new Mapping();
         out.drivingSide = drivingSide == ManeuverMapper.DRIVING_SIDE_LEFT ? 1 : 0;

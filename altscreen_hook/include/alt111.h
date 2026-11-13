@@ -9,7 +9,9 @@
 
 #define ALT111_MAX_VIEWS 3
 #define ALT111_CODEC_CAP 4096
-#define ALT111_QUEUE_CAP 16
+/* About 1 s at 30 fps. A consumer that falls further behind is skipped to the next IDR
+ * on the same connection (ALT111_RESYNC), not reset (1.4: 16 AUs, then a reconnect). */
+#define ALT111_QUEUE_CAP 32
 #define ALT111_AU_LIMIT (2u * 1024u * 1024u)
 #define ALT111_QUEUE_BYTES (4u * 1024u * 1024u)
 #define ALT111_COMMAND_TIMEOUT_MS 1500u
@@ -18,6 +20,9 @@
 
 enum alt111_result {
     ALT111_OK = 0, ALT111_WAIT = 1, ALT111_RESTART_CONSUMER = 2,
+    /* Queue overflow on a primed consumer: the unsent backlog was dropped and pictures are
+     * skipped until the next IDR; the adapter asks the phone for one (forceKeyFrame). */
+    ALT111_RESYNC = 3,
     ALT111_INVALID = -1, ALT111_STALE = -2, ALT111_BUSY = -3,
     ALT111_NOMEM = -4
 };
@@ -150,11 +155,17 @@ struct alt111_video {
     uint64_t session, stream, codec, consumer, sequence;
     unsigned active, attached, config_valid, config_blocked, nal_length_size;
     unsigned priming_queued, consumer_primed, keyframe_needed;
+    unsigned skip_to_idr;       /* after ALT111_RESYNC: drop pictures until an IDR */
     uint8_t config[ALT111_CODEC_CAP];
     size_t config_length, queued_bytes;
     struct alt111_chunk queue[ALT111_QUEUE_CAP];
     unsigned head, count;
     uint64_t source_aus, source_idrs, delivered_aus, dropped_aus;
+    uint64_t resyncs;           /* overflows answered by skipping to an IDR */
+    /* Progress guard: delivered_aus at the last skip of this consumer (resync_armed). A
+     * second overflow with nothing delivered since means it stopped reading: reset it. */
+    uint64_t resync_delivered;
+    unsigned resync_armed;
 };
 void alt111_video_init(struct alt111_video *v);
 /* Destroy requires no outstanding peek pointer use. No internal threads. */

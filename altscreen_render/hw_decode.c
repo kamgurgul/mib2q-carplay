@@ -81,6 +81,10 @@ struct altr_hwdec {
     int64_t ts;
     uint64_t first_input_ms;
     int busy_drops;
+    clockid_t wait_clock;       /* clock of cond: CLOCK_MONOTONIC, or CLOCK_REALTIME if refused */
+    volatile int grid;          /* calibration ruler over each picture (main loop sets it) */
+    int grid_failed_logged;
+    volatile unsigned damaged;  /* damaged access units the decoder reported (keyframe requests) */
 
     AVCodecContext *pctx;
     AVCodecParserContext *parser;
@@ -100,6 +104,9 @@ static OMX_ERRORTYPE on_event(OMX_HANDLETYPE h, void *app, OMX_U32 ev, OMX_U32 d
          * Keep the component alive, as in Luka's October 29 release. Hardware and
          * timeout errors still take the existing guarded fallback path. */
         if (d->executing && (d1 == OMX_ErrorStreamCorrupt || d1 == OMX_ErrorMbErrorsInFrame)) {
+            /* The main loop asks the phone for a key frame (tee back-channel) instead of
+             * waiting for the next periodic one. */
+            d->damaged++;
             fprintf(stderr, "hw_decode: damaged frame (OMX 0x%x), continuing\n", d1);
             pthread_mutex_unlock(&d->lock);
             return 0;
@@ -147,6 +154,44 @@ static OMX_ERRORTYPE on_empty_done(OMX_HANDLETYPE h, void *app, OMX_BUFFERHEADER
     return 0;
 }
 
+/* Calibration ruler (altr_grid_rects, the same list the GL path draws) filled by the 2D
+ * blitter into the RGBA buffer that was just blitted, before it is posted: the post with
+ * SCREEN_WAIT_IDLE flushes the fills too. A failed fill only costs the ruler. */
+static void draw_grid(altr_hwdec_t *d, screen_buffer_t dst)
+{
+    /* Looked up, not linked: a libscreen without it must cost only the ruler, not the
+     * renderer (an unresolved call would end the process at the first picture with the grid). */
+    typedef int (*fill_fn)(screen_context_t, screen_buffer_t, const int *);
+    static fill_fn fill;
+    static int looked_up;
+    altr_rect_t r[ALTR_GRID_MAX_RECTS];
+    int i, n = altr_grid_rects(d->view.view_w, d->view.view_h, r, ALTR_GRID_MAX_RECTS);
+    if (!looked_up) {
+        looked_up = 1;
+        fill = (fill_fn)dlsym(RTLD_DEFAULT, "screen_" "fill");
+        if (!fill)
+            fprintf(stderr, "hw_decode: this libscreen has no fill call; the calibration grid "
+                    "needs HW decoder OFF\n");
+    }
+    if (!fill) return;
+    for (i = 0; i < n; i++) {
+        int attr[] = {
+            SCREEN_BLIT_DESTINATION_X, r[i].x, SCREEN_BLIT_DESTINATION_Y, r[i].y,
+            SCREEN_BLIT_DESTINATION_WIDTH, r[i].w, SCREEN_BLIT_DESTINATION_HEIGHT, r[i].h,
+            SCREEN_BLIT_COLOR, (int)r[i].argb,
+            SCREEN_BLIT_END
+        };
+        if (fill(d->sctx, dst, attr) != 0) {
+            if (!d->grid_failed_logged) {
+                d->grid_failed_logged = 1;
+                fprintf(stderr, "hw_decode: calibration grid fill failed errno=%d (picture unaffected)\n",
+                        errno);
+            }
+            return;
+        }
+    }
+}
+
 static OMX_ERRORTYPE on_fill_done(OMX_HANDLETYPE h, void *app, OMX_BUFFERHEADERTYPE *b)
 {
     altr_hwdec_t *d = (altr_hwdec_t *)app;
@@ -187,12 +232,15 @@ static OMX_ERRORTYPE on_fill_done(OMX_HANDLETYPE h, void *app, OMX_BUFFERHEADERT
             fprintf(stderr, "hw_decode: screen_blit tiled NV12 -> RGBA failed errno=%d -> software fallback\n",
                     errno);
             d->failed = 1;
-        } else if (screen_post_window(d->win, dst[0], 1, rect, SCREEN_WAIT_IDLE) != 0) {
-            fprintf(stderr, "hw_decode: screen_post_window failed errno=%d\n", errno);
         } else {
-            pthread_mutex_lock(&d->lock);
-            d->frames++;
-            pthread_mutex_unlock(&d->lock);
+            if (d->grid) draw_grid(d, dst[0]);
+            if (screen_post_window(d->win, dst[0], 1, rect, SCREEN_WAIT_IDLE) != 0) {
+                fprintf(stderr, "hw_decode: screen_post_window failed errno=%d\n", errno);
+            } else {
+                pthread_mutex_lock(&d->lock);
+                d->frames++;
+                pthread_mutex_unlock(&d->lock);
+            }
         }
         if (d->failed) return 0;
     }
@@ -218,11 +266,14 @@ static OMX_ERRORTYPE on_fill_done(OMX_HANDLETYPE h, void *app, OMX_BUFFERHEADERT
 
 /* abort_on_failure: setup gives up at the first error; teardown must still wait
  * for the component, or a merely failed decoder looks "stuck" (log set 017). */
+/* Deadlines on CLOCK_MONOTONIC (the condition variable is created with that clock): a wall
+ * clock set forward during decoder setup made every wait time out at once, which marked
+ * the decoder as hung and switched hardware decode off. */
 static int wait_state(altr_hwdec_t *d, OMX_U32 want, int ms, int abort_on_failure)
 {
     struct timespec t;
     int ok, timed_out = 0;
-    clock_gettime(CLOCK_REALTIME, &t);
+    clock_gettime(d->wait_clock, &t);
     t.tv_sec += ms / 1000;
     t.tv_nsec += (long)(ms % 1000) * 1000000L;
     if (t.tv_nsec >= 1000000000L) { t.tv_sec++; t.tv_nsec -= 1000000000L; }
@@ -319,7 +370,7 @@ static int send_input(altr_hwdec_t *d, const uint8_t *p, size_t n, OMX_U32 flags
     OMX_BUFFERHEADERTYPE *b;
     int idx = -1;
 
-    clock_gettime(CLOCK_REALTIME, &t);
+    clock_gettime(d->wait_clock, &t);
     t.tv_nsec += 200000000L;
     if (t.tv_nsec >= 1000000000L) { t.tv_sec++; t.tv_nsec -= 1000000000L; }
     pthread_mutex_lock(&d->lock);
@@ -579,7 +630,22 @@ altr_hwdec_t *altr_hwdec_create(const altr_view_t *view, int displayable_id, int
     d->view = *view;
     d->disp_id = displayable_id;
     pthread_mutex_init(&d->lock, NULL);
-    pthread_cond_init(&d->cond, NULL);
+    {
+        /* See wait_state. If the unit refuses the monotonic clock, stay on the wall clock
+         * for the condition variable AND the deadlines: mixing them would time every wait
+         * out at once, i.e. report a hung decoder. */
+        pthread_condattr_t ca;
+        pthread_condattr_init(&ca);
+        d->wait_clock = CLOCK_REALTIME;
+        if (pthread_condattr_setclock(&ca, CLOCK_MONOTONIC) == 0 &&
+            pthread_cond_init(&d->cond, &ca) == 0) {
+            d->wait_clock = CLOCK_MONOTONIC;
+        } else {
+            pthread_cond_init(&d->cond, NULL);
+            fprintf(stderr, "hw_decode: monotonic condition variable refused; waits on the wall clock\n");
+        }
+        pthread_condattr_destroy(&ca);
+    }
     hw_session_reset(d);
 
     /*
@@ -671,6 +737,8 @@ int altr_hwdec_feed(altr_hwdec_t *d, const uint8_t *data, size_t len)
 
 uint64_t altr_hwdec_frames(altr_hwdec_t *d) { return d ? d->frames : 0; }
 int altr_hwdec_failed(altr_hwdec_t *d) { return d ? d->failed : 1; }
+unsigned altr_hwdec_damaged(altr_hwdec_t *d) { return d ? d->damaged : 0; }
+void altr_hwdec_set_grid(altr_hwdec_t *d, int on) { if (d) d->grid = on ? 1 : 0; }
 
 int altr_hwdec_destroy(altr_hwdec_t *d)
 {
@@ -691,6 +759,8 @@ altr_hwdec_t *altr_hwdec_create(const altr_view_t *v, int id, int *stuck)
 int altr_hwdec_feed(altr_hwdec_t *d, const uint8_t *p, size_t n) { (void)d; (void)p; (void)n; return -1; }
 uint64_t altr_hwdec_frames(altr_hwdec_t *d) { (void)d; return 0; }
 int altr_hwdec_failed(altr_hwdec_t *d) { (void)d; return 1; }
+unsigned altr_hwdec_damaged(altr_hwdec_t *d) { (void)d; return 0; }
+void altr_hwdec_set_grid(altr_hwdec_t *d, int on) { (void)d; (void)on; }
 int altr_hwdec_destroy(altr_hwdec_t *d) { (void)d; return 0; }
 int altr_hwdec_suspend(altr_hwdec_t *d) { (void)d; return 0; }
 int altr_hwdec_resume(altr_hwdec_t *d, int *stuck) { (void)d; if (stuck) *stuck = 0; return -1; }

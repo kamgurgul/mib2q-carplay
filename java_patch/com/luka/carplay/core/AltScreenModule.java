@@ -42,12 +42,19 @@ public final class AltScreenModule implements Module {
     /* Renderer rewrites the file at least every 200 ms while a frame is on screen.
      * Older than this means the writer is gone even if the file was never unlinked. */
     private static final long HEARTBEAT_MS = 1000L;
-    /* Require the file to be missing for two polls before declaring video gone,
-     * so a single dropped frame between the renderer's unlink/rewrite does not
-     * flap the cluster context. */
+    /* The same limit counted in this module's own polls, for a file that carries "seq=":
+     * live while seq changed within the last STALE_POLLS polls (~1 s). Independent of the
+     * wall clock and of the file system's mtime resolution; a renderer without seq
+     * falls back to the mtime check. */
+    private static final int STALE_POLLS = (int) (HEARTBEAT_MS / POLL_MS);
+    /* Video counts as gone on the third poll in a row without it (two debounce polls), so
+     * one missed rewrite between the renderer's unlink/rewrite does not flap the context. */
     private static final int MISS_DEBOUNCE = 2;
 
     private final File liveFile = new File(LIVE_FILE);
+    /* Poller thread only. */
+    private long lastSeq = -1L;
+    private int pollsSinceSeq;
     private Thread worker;
     private int generation;
     private boolean stopRequested;
@@ -131,11 +138,18 @@ public final class AltScreenModule implements Module {
     /* File exists, was rewritten recently, and its pid is still a live process. */
     private boolean videoLive() {
         try {
-            if (!liveFile.isFile()) return false;
-            long modified = liveFile.lastModified();
-            long age = System.currentTimeMillis() - modified;
-            if (modified <= 0L || age < 0L || age > HEARTBEAT_MS) return false;
-            int pid = readPid(liveFile);
+            if (!liveFile.isFile()) { lastSeq = -1L; return false; }
+            String text = read(liveFile);
+            long seq = field(text, "seq=");
+            if (seq >= 0L) {
+                if (seq != lastSeq) { lastSeq = seq; pollsSinceSeq = 0; }
+                else if (++pollsSinceSeq > STALE_POLLS) return false;
+            } else {
+                long modified = liveFile.lastModified();
+                long age = System.currentTimeMillis() - modified;
+                if (modified <= 0L || age < 0L || age > HEARTBEAT_MS) return false;
+            }
+            int pid = (int) field(text, "pid=");
             if (pid <= 0) return false;
             File proc = new File("/proc/" + pid);
             if (proc.isDirectory()) return true;
@@ -146,31 +160,35 @@ public final class AltScreenModule implements Module {
         }
     }
 
-    private static int readPid(File f) {
+    private static String read(File f) {
         FileInputStream in = null;
         try {
             in = new FileInputStream(f);
             byte[] buf = new byte[64];
             int n = in.read(buf);
-            if (n <= 0) return -1;
-            String s = new String(buf, 0, n);
-            int i = s.indexOf("pid=");
-            if (i < 0) return -1;
-            i += 4;
-            int end = i;
-            while (end < s.length()) {
-                char c = s.charAt(end);
-                if (c < '0' || c > '9') break;
-                end++;
-            }
-            if (end == i) return -1;
-            return Integer.parseInt(s.substring(i, end));
+            return n <= 0 ? "" : new String(buf, 0, n);
         } catch (Throwable t) {
-            return -1;
+            return "";
         } finally {
             if (in != null) {
                 try { in.close(); } catch (Throwable t) { /* best-effort */ }
             }
         }
+    }
+
+    /** Decimal value after key ("pid=", "seq="), -1 when absent or malformed. */
+    static long field(String s, String key) {
+        int i = s == null ? -1 : s.indexOf(key);
+        if (i < 0) return -1L;
+        i += key.length();
+        int end = i;
+        while (end < s.length() && end - i < 18) {
+            char c = s.charAt(end);
+            if (c < '0' || c > '9') break;
+            end++;
+        }
+        if (end == i) return -1L;
+        try { return Long.parseLong(s.substring(i, end)); }
+        catch (NumberFormatException e) { return -1L; }
     }
 }

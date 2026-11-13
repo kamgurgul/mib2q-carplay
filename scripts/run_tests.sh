@@ -132,8 +132,22 @@ sh scripts/test_install_payload.sh
 
 printf '%-32s ' altscreen_view_test
 cc -std=gnu99 -O2 -Wall -Wextra -Werror -pedantic -Ialtscreen_render \
-    tests/altscreen_view_test.c altscreen_render/view.c -o "$OUT/altscreen_view"
+    tests/altscreen_view_test.c altscreen_render/view.c -lm -o "$OUT/altscreen_view"
 "$OUT/altscreen_view"
+
+printf '%-32s ' altscreen_policy_test
+# Renderer session decisions: bounded hardware starts, yield stamp, hang-only persistence,
+# key-frame pacing, frozen picture on a new connection.
+mkdir -p "$OUT/altscreen_policy.d"
+cc -std=gnu99 -O1 -Wall -Wextra -Werror -pedantic -Ialtscreen_render \
+    tests/altscreen_policy_test.c altscreen_render/policy.c -o "$OUT/altscreen_policy"
+"$OUT/altscreen_policy" "$OUT/altscreen_policy.d"
+
+printf '%-32s ' alt111_video_test
+# CarPlay stream-111 core: a slow renderer skips to the next IDR instead of a reconnect.
+cc -std=gnu99 -O1 -Wall -Wextra -Werror -pedantic -Ialtscreen_hook/include \
+    tests/alt111_video_test.c altscreen_hook/src/alt111_video.c -o "$OUT/alt111_video"
+"$OUT/alt111_video"
 
 printf '%-32s ' alt111_settings_test
 # The shipping gen2 URL builder: MMI CarPlay settings, guidance edges (needs no jar).
@@ -167,7 +181,7 @@ printf '%-32s ' aa_uiconfig_test
 # -rdynamic: the hook finds the fake queueOutgoing via dlsym(RTLD_DEFAULT) (Linux needs the export).
 cc -rdynamic -std=gnu99 -O1 -Wall -Wextra -Werror -Wno-unused-function \
     "-DAA_VIEW_PATH=\"$OUT/aa_view\"" "-DAA_FILE_INSETS=\"$OUT/aa_insets\"" "-DAA_FILE_DPI=\"$OUT/aa_dpi\"" \
-    "-DAA_THEME_PATH=\"$OUT/aa_theme\"" \
+    "-DAA_THEME_PATH=\"$OUT/aa_theme\"" "-DAA_FILE_FPS=\"$OUT/aa_fps\"" \
     tests/aa_uiconfig_test.c -ldl -o "$OUT/aa_uiconfig"
 "$OUT/aa_uiconfig"
 
@@ -222,6 +236,12 @@ cc -std=gnu99 -O1 -Wall -Wextra -Werror -Iaa_hook \
     -DAA_HW_YIELD_WAIT_MS=400u tests/aa_yield_test.c aa_hook/aa_yield.c -lpthread -o "$OUT/aa_yield"
 "$OUT/aa_yield"
 
+printf '%-32s ' aa_focus_test
+# Opt-in video focus of the Android Auto cluster sink: pause while hidden, key-frame refocus.
+mkdir -p "$OUT/aa_focus.d"
+cc -std=gnu99 -O1 -Wall -Wextra -Werror -Iaa_hook tests/aa_focus_test.c -o "$OUT/aa_focus"
+"$OUT/aa_focus" "$OUT/aa_focus.d"
+
 printf '%-32s ' altscreen_nal_fuzz
 # Annex-B scanners on every phone byte: the hardware decoder's SPS/PPS split and the
 # Android Auto tee's key-frame gate (structured + random, exact-size buffers).
@@ -240,6 +260,25 @@ for f in yield active; do
         || { echo "FAIL: hw_$f file: AA hook '$aa', CarPlay hook '$cp', renderer '$rd'"; exit 1; }
 done
 echo "hw_yield / hw_active: both hooks and the renderer agree"
+
+printf '%-32s ' pause_hidden_marker
+# One opt-in marker for both hooks; Java writes the Android Auto record the gal hook reads.
+cp_m=$(sed -n 's/.*g_pause_hidden_marker = "\([^"]*\)".*/\1/p' altscreen_hook/libaltscreen111_gen2.c)
+aa_m=$(sed -n 's/.*AA_MARKER_DIR "\(cluster_video[^"]*\)".*/\1/p' aa_hook/aa_hook.h)
+aa_h=$(sed -n 's/^#define AA_HIDDEN_PATH *"\([^"]*\)".*/\1/p' aa_hook/aa_hook.h)
+jv_h=$(sed -n 's/.*HIDDEN_PATH = "\([^"]*\)".*/\1/p' java_patch/com/luka/carplay/aa/AaClusterView.java)
+[ -n "$cp_m" ] && [ "$cp_m" = "/mnt/app/root/$aa_m" ] && [ -n "$aa_h" ] && [ "$aa_h" = "$jv_h" ] \
+    || { echo "FAIL: pause marker CarPlay '$cp_m' AA '$aa_m', hidden record hook '$aa_h' Java '$jv_h'"; exit 1; }
+echo "pause marker $cp_m and hidden record $aa_h agree"
+
+printf '%-32s ' frame_rate_file
+# One file for the MMI setting, the CarPlay hook and the Android Auto hook.
+cp_f=$(sed -n 's/.*g_fps_override_path = "\([^"]*\)".*/\1/p' altscreen_hook/libaltscreen111_gen2.c)
+aa_f=$(sed -n 's/^#define AA_FILE_FPS *AA_MARKER_DIR "\([^"]*\)".*/\1/p' aa_hook/aa_hook.h)
+grep -q "\"root/$aa_f\"" java_patch/com/luka/carplay/connectivity/CarPlaySettings.java \
+    && [ -n "$aa_f" ] && [ "$cp_f" = "/mnt/app/root/$aa_f" ] \
+    || { echo "FAIL: frame rate file CarPlay '$cp_f', Android Auto '$aa_f', or not the MMI setting's"; exit 1; }
+echo "frame rate file $cp_f: both hooks and the MMI setting agree"
 
 printf '%-32s ' disconnect_freeze_contract
 # altscreen_render keeps window 99's last picture after a session ends until Java has

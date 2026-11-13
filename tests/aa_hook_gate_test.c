@@ -21,9 +21,13 @@ unsigned aa_nal_types(const void *data, size_t size) { (void)data; (void)size; r
 void aa_nav_translate(unsigned char channel, const void *shared) { (void)channel; (void)shared; }
 void aa_nav_set_channel(unsigned channel) { (void)channel; }
 int aa_dpi(void) { return AA_DPI_DEFAULT; }
+int aa_fps(void) { return 30; }
 void aa_uiconfig_sink(void *sink) { (void)sink; }
 void aa_uiconfig_media(void *media) { (void)media; }
 void aa_relayout_tick(void *sink) { (void)sink; }
+void aa_focus_tick(void *sink, aa_set_focus_fn set_focus) { (void)sink; (void)set_focus; }
+void aa_focus_setup_done(void *sink) { (void)sink; }
+int aa_tee_keyframe_wanted(void) { return 0; }
 
 static int yields;
 static const char *last_yield = "";

@@ -131,6 +131,12 @@
                                         /* Speed at most 10 Hz, slow fields on */
                                         /* change. Hook: $PASCD (0xFFFB) and   */
                                         /* VehicleStatusUpdate (0xA101).       */
+#define CMD_ALT_HIDDEN          0x0119  /* binary [u8 0=shown 1=hidden]: the    */
+                                        /* cockpit does not show the phone's   */
+                                        /* map (another VC tab, or the Audi    */
+                                        /* map by long press). The AltScreen   */
+                                        /* hook pauses stream 111 (stopUI)     */
+                                        /* only with its opt-in marker.        */
 /* NOTE: dispatchable inbound types must be < MAX_TYPES in bus.c (grown to      */
 /* cover this 0x11x block).                                                     */
 

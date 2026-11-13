@@ -21,7 +21,9 @@
  *     the current step's lanes for Java;
  *   - sends the cockpit view's safe area at connect and on every view change (aa_uiconfig.c);
  *   - tells altscreen_render before gal's main-screen decoder changes state, so the two decoders
- *     on the one video core never do so together (aa_yield.c; replaces the 120 s boot wait).
+ *     on the one video core never do so together (aa_yield.c; replaces the 120 s boot wait);
+ *   - opt-in: pauses the cluster stream while the cockpit hides it, and asks the phone for a key
+ *     frame the renderer needs (aa_focus.c, video focus of the cluster sink).
  *
  * ABI safety: the hook relies on object layouts inside libautoreceiver. It runs only when the
  * receiver matches a known profile (below), checked by symbol offsets at load time. Any other
@@ -217,6 +219,7 @@ static int secondary_setup(void *sink, int type)
     if (type != 3) return -8;           /* stock accepts H.264 (codec type 3) only */
     send_config(sink, 2);               /* the verified stock handleSetup status value */
     set_focus(sink, 1, 1);
+    aa_focus_setup_done(sink);
     return 0;
 }
 
@@ -255,6 +258,7 @@ static void secondary_data(void *sink, uint64_t timestamp, const void *shared, u
     const unsigned char *p = payload(shared, skip, &size);
     int rc;
     aa_relayout_tick(sink);
+    aa_focus_tick(sink, set_focus);
     ++frame_count;
     if (unpinned) unpinned_done("first_frame");
     if (p && size) { frame_bytes += size; aa_tee_frame(p, size); }
@@ -330,6 +334,7 @@ static int input_route(void *endpoint, unsigned char channel, unsigned short id,
 static void build_sink(void *receiver, void *main_sink)
 {
     unsigned id;
+    int cluster_fps;
     void *router = (void *)(uintptr_t)u32(main_sink, 8);
     if (attempted || !enabled) return;
     attempted = 1;
@@ -366,15 +371,17 @@ static void build_sink(void *receiver, void *main_sink)
     put32(input_endpoint, 0, (uint32_t)(uintptr_t)(input_vtable + 2));
     put32(input_endpoint, 8, (uint32_t)(uintptr_t)router);
     ((unsigned char *)input_endpoint)[12] = (unsigned char)input_service;
-    real_config(secondary, AA_CODEC_RES_1080P, 30, AA_MARGIN_W, AA_MARGIN_H, aa_dpi(), 3, 10000);
+    cluster_fps = aa_fps();
+    real_config(secondary, AA_CODEC_RES_1080P, cluster_fps, AA_MARGIN_W, AA_MARGIN_H, aa_dpi(), 3, 10000);
     if (u32(secondary, 0x44) - u32(secondary, 0x40) != 8) {
         aa_log("cluster.refused reason=configuration_vector"); return;
     }
     aa_uiconfig_sink(secondary);
     registered = real_register(receiver, secondary) != 0;
     if (registered) registered = real_register(receiver, input_endpoint) != 0;
-    aa_log("cluster.register ok=%d video_service=%u input_service=%u codec=%dx%d@30 viewport=%dx%d",
-           registered, video_service, input_service, AA_STREAM_W, AA_STREAM_H, AA_VIEW_W, AA_VIEW_H);
+    aa_log("cluster.register ok=%d video_service=%u input_service=%u codec=%dx%d@%d viewport=%dx%d",
+           registered, video_service, input_service, AA_STREAM_W, AA_STREAM_H, cluster_fps,
+           AA_VIEW_W, AA_VIEW_H);
 }
 
 /* gal's navigation-status endpoint: its channel is where 0x8006/0x8007 are translated. */
@@ -545,7 +552,10 @@ EXPORT void _ZN13MessageRouter12routeMessageEhRK10shared_ptrI8IoBufferE(void *r,
                 aa_log("channel.message channel=%u id=0x%02x%02x bytes=%u", ch, p[0], p[1], n);
         }
         aa_nav_translate(ch, shared);
-        if (secondary) aa_relayout_tick(secondary);   /* view changes on a still map */
+        if (secondary) {
+            aa_relayout_tick(secondary);   /* view changes on a still map */
+            aa_focus_tick(secondary, set_focus);
+        }
     }
     if (real_route) real_route(r, ch, shared);
 }

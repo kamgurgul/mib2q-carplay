@@ -92,7 +92,10 @@ flowchart LR
 - `aa/VcMapViewGate` + `ClusterService.updateGALState`: while ctx 81/82 shows the phone's
   map, the stock "navigation on mobile device" state (BAP InfoStates 6) is held back. That
   state would take the VC out of its map view.
-- `aa/AaClusterView`: the cockpit view (full / classic / sport) for the hook's layouts.
+- `aa/AaClusterView`: the cockpit view (full / classic / sport) for the hook's layouts, with
+  the stock layout's Sport small-stage shift and map origin row (`/tmp/aa_cluster_view`, e.g.
+  `sport     -460     18` on a Q7). The hook's built-in safe areas are B9 numbers (-476 / 26)
+  and follow these two, so every car gets the same window on the cockpit panel (issue #53).
 - `aa/AaCoverArt` + `aa/PngCover`: `gal` saves the album art to `/tmp/gal_albumArt_<n>.png` and
   reports it (DSI coverArtUrl), which stock ignores. The file is normalised to a 256x256 RGB
   PNG (the fork's car-tested J9 decoder/encoder), written to `/var/app/icab/tmp/37/` beside the
@@ -166,7 +169,10 @@ clock conversion, repeated samples, expiry and cancellation/reconnect. It runs f
 
 ### Marker files
 
-They apply on the next phone connection, except the first row, which needs a reboot.
+They apply on the next phone connection, except the first row, which needs a reboot, and the
+two opt-in focus switches, which are read live. *Android Auto cluster map* and *day/night* are
+also in the MMI (*Connection manager → Options → CarPlay settings*, from 1.5); both menus write
+the same files.
 
 | File | Effect |
 |---|---|
@@ -175,8 +181,12 @@ They apply on the next phone connection, except the first row, which needs a reb
 | `/mnt/app/root/aa_cluster.abi_trial` | run the hook on a receiver without a profile (testing only; `gal` may crash) |
 | `/mnt/app/root/aa_cluster.navxlate_off` / `.relayout_off` | leave new nav messages alone / no layout updates |
 | `/mnt/app/root/aa_cluster.daynight` | opt-in: cluster map Light by day, Dark by night from the MMI day/night design (GEM: *Android Auto cluster day/night*; picked at phone connect) |
+| `/mnt/app/root/aa_cluster.keyframe_refocus` | opt-in, experimental (1.5): when the renderer needs a key frame the tee no longer holds, the cluster sink reports NATIVE and 200 ms later PROJECTED video focus, so the phone should restart the stream with a key frame; at most every 10 s (GEM *Android Auto cluster key frame on demand*) |
+| `/mnt/app/root/cluster_video.pause_hidden` | opt-in, experimental (1.5), shared with CarPlay: NATIVE video focus while the cockpit shows no phone map (Java writes `/tmp/aa_cluster_hidden`), PROJECTED when it is back (GEM *Pause cluster map while hidden*, MMI *Pause Hidden Cluster Map*) |
 | `/mnt/app/root/aa_cluster.dpi` | density, one number 80..400 (default 125 = 1:1 on the 125 PPI panel) |
-| `/mnt/app/root/aa_cluster.insets` | 12 numbers: top bottom left right for full, classic, sport |
+| `/mnt/app/root/mibr-carplay111-fps` | `60` = the cluster display is registered at 60 fps, anything else or no file = 30 (1.5; the CarPlay hook's file, MMI *Cluster Map Frame Rate*). The cockpit captures 30 fps either way; 60 doubles the 1080p decoder's work and is untested on the car |
+| `/mnt/app/root/aa_cluster.insets` | 12 numbers: top bottom left right for full, classic, sport, in viewport pixels. Sent as written: unlike the built-in values (`97 176 350 370  97 176 510 510  78 176 484 394` on a B9) they are not moved with the car's layout. `aa_cluster_hook.log` shows what was sent (`uiconfig.set`, `relayout.sent`) |
+| `/mnt/app/root/aa_cluster.uiconfig_legacy` | fallback (1.5): send the safe area the 1.4 way. Since 1.5 the UiConfig carries margins 270/270/240/240 around the viewport (field 1) and the safe area relative to the viewport as content and stable insets (fields 2, 3); 1.4 sent only field 2, measured from the full 1920x1080 frame, which Google Maps followed but Yandex did not (map off-centre in every view, issue #53). Read at phone connect; `uiconfig.set ... encoding=viewport|legacy` in `aa_cluster_hook.log` |
 | `/mnt/app/root/altscreen_render.aa.hwdecode.off` | Android Auto software decode (GEM *HW decoder ON / OFF* switches it with CarPlay's; a hardware failure writes only `/tmp/altscreen_render.aa.hwdecode.off`, issue #44) |
 | `/mnt/app/root/altscreen_render.hwdecode.delayed` | software decode for the first 2 minutes after an MMI start, then hardware, CarPlay and Android Auto (GEM *HW decoder 2-min delayed start*; default off) |
 | `/mnt/app/carplay_rgd.disabled` | route guidance off for both phone types |
@@ -203,5 +213,10 @@ They apply on the next phone connection, except the first row, which needs a reb
 - Size and density apply on the next phone connection; layouts switch live.
 - A route started while parked shows Google's "depart" step at 0 m until the car moves; it
   is shown as soon as Android Auto reports navigation focus (car log 021).
-- Not ported from upstream: the cockpit options menu, touchpad input on the cluster display,
-  the turn card and the 720p band mode.
+- Android Auto sends a key frame only every minute or two. The tee keeps the last one with
+  everything after it (8 MB), so a renderer that reconnects soon after it starts at once; later,
+  it waits for the phone's next one. The tee now records that case and a renderer's back-channel
+  request (`tee.client keyframe_request`); only with `aa_cluster.keyframe_refocus` is the phone
+  asked for one (`focus.refocus`), since focus changes on the cluster display are untested.
+- Not ported from upstream: touchpad input on the cluster display, the turn card and the 720p
+  band mode. The cockpit options (cluster map, day/night) are in the MMI CarPlay settings.

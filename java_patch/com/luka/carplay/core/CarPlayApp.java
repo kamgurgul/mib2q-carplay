@@ -76,6 +76,8 @@ public final class CarPlayApp {
     /* Looked up by name so inserting a module ahead of RgdModule cannot retarget
      * the navigation-service rebind onto AltScreen. */
     private static final int RGD_MODULE_INDEX = indexOf("rgd");
+    /* Stock AbstractTerminalModeConfiguration: sysConst(464) == 1 means RHD. */
+    private static final int SYSCONST_RIGHT_HAND_DRIVE = 464;
 
     private static int indexOf(String name) {
         for (int i = 0; i < MODULES.length; i++) {
@@ -90,6 +92,18 @@ public final class CarPlayApp {
     public static IFrameworkAccess framework() {
         FrameworkRef r = fwRef;
         return r != null ? r.framework() : null;
+    }
+
+    /** True when the MMI reports a right-hand-drive vehicle (stock sysConst 464).
+     *  Used only as the traffic-side fallback when a CarPlay app omits TLV 0x08. */
+    public static boolean isVehicleRightHandDrive() {
+        IFrameworkAccess fw = framework();
+        if (fw == null) return false;
+        try {
+            return fw.getSysConst(SYSCONST_RIGHT_HAND_DRIVE) == 1;
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     /** True while a CarPlay device is connected (onActivate..onDeactivate).

@@ -8,7 +8,8 @@
 #
 # It first builds a minimal static FFmpeg 6.1.5 for QNX (H.264 decoder + parser
 # only — the on-car renderer is fed Annex-B directly by the AltScreen hook tee,
-# so no demuxer/bitstream-filter is needed) into build/ffmpeg-qnx, then compiles
+# so no demuxer/bitstream-filter is needed) with its ARM/NEON assembly (FFMPEG_NEON=0
+# builds the plain C decoder of 1.4, a slower software fallback), then compiles
 # the renderer + the shared cluster_surface and links EGL/GLES/screen the same
 # way the maneuver renderer does (synthesised import stubs; the ELF binds the
 # unit's real libraries at runtime).
@@ -21,6 +22,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 FFMPEG_VERSION="${FFMPEG_VERSION:-6.1.5}"
 FFMPEG_SHA256="${FFMPEG_SHA256:-b8c8e926b948c14df1264cd0beac1c773df9170ac9cac97bdf1275cd3d385902}"
+FFMPEG_NEON="${FFMPEG_NEON:-1}"
 
 if ! docker image inspect "$IMG" >/dev/null 2>&1; then
     echo "ERROR: docker image '$IMG' not found."
@@ -31,7 +33,7 @@ fi
 echo "=== altscreen_render QNX build (Docker $IMG) ==="
 
 docker run --rm --platform=linux/amd64 \
-  -e FFMPEG_VERSION="$FFMPEG_VERSION" -e FFMPEG_SHA256="$FFMPEG_SHA256" \
+  -e FFMPEG_VERSION="$FFMPEG_VERSION" -e FFMPEG_SHA256="$FFMPEG_SHA256" -e FFMPEG_NEON="$FFMPEG_NEON" \
   -v "$PROJECT_DIR":/src "$IMG" bash -c '
   set -e
   export PATH=/opt/qnx650/host/linux/x86/usr/bin:$PATH
@@ -63,21 +65,44 @@ docker run --rm --platform=linux/amd64 \
   if [ ! -f "$DIR/configure" ]; then
     rm -rf "$DIR"; mkdir -p "$DIR"; tar xf "$TAR" -C "$DIR" --strip-components=1
   fi
-  if [ ! -f "$DIR/libavcodec/libavcodec.a" ]; then
-    ( cd "$DIR" && ./configure \
-        --cc="$CC" --ar="$AR" --ld="$CC" --arch=arm --target-os=qnx \
-        --enable-cross-compile --disable-asm --disable-debug --disable-doc \
+  # FFmpeg compiles C and its .S files with the same driver. C needs -include stddef.h
+  # (QNX headers), which breaks the assembler; NEON .S files need -mfpu=neon, which the C
+  # code must not get (it stays VFPv3-D16 like the rest of the renderer). A wrapper tells
+  # the two apart. NEON code is picked by build flags on QNX; main.c turns it off at run
+  # time on a CPU whose syspage does not report NEON.
+  FFCC=/opt/ffmpeg-qnx/qnx-cc
+  cat > "$FFCC" <<WRAP
+#!/bin/sh
+for a in "\$@"; do case "\$a" in *.S|*.s) exec $CC "\$@" -mfpu=neon ;; esac; done
+exec $CC -include stddef.h "\$@"
+WRAP
+  chmod +x "$FFCC"
+  if [ "$FFMPEG_NEON" = 1 ]; then
+    FF_ASM="--enable-asm --enable-neon --enable-armv6 --enable-armv6t2 --enable-vfp --disable-inline-asm"
+  else
+    FF_ASM="--disable-asm"
+  fi
+  STAMP="$DIR/.altr-config"
+  if [ ! -f "$DIR/libavcodec/libavcodec.a" ] || [ "$(cat "$STAMP" 2>/dev/null)" != "$FF_ASM" ]; then
+    ( cd "$DIR" && { make distclean >/dev/null 2>&1 || true; } && ./configure \
+        --cc="$FFCC" --ar="$AR" --ld="$CC" --as="$FFCC" --arch=arm --cpu=armv7-a --target-os=qnx \
+        --enable-cross-compile $FF_ASM --disable-debug --disable-doc \
         --disable-programs --disable-avdevice --disable-avformat --disable-swresample \
         --disable-swscale --disable-postproc --disable-avfilter --disable-network \
         --disable-everything \
         --enable-decoder=h264 --enable-parser=h264 \
-        --extra-cflags="-include stddef.h $CFLAGS_TARGET" \
-      && make -j"$(nproc)" )
+        --extra-cflags="$CFLAGS_TARGET" \
+      && make -j"$(nproc)" && echo "$FF_ASM" > "$STAMP" )
+  fi
+  if [ "$FFMPEG_NEON" = 1 ]; then
+    grep -q "^#define HAVE_NEON 1" "$DIR/config.h" || { echo "ERROR: FFmpeg configured without NEON"; exit 1; }
+    n=$(arm-unknown-nto-qnx6.5.0eabi-nm "$DIR/libavcodec/libavcodec.a" 2>/dev/null | grep -c "_neon$" || true)
+    echo "FFmpeg: NEON assembly built ($n NEON functions)"
   fi
 
   cd /src/altscreen_render
   ABI_INCLUDE=/src/toolchain/qnx65-abi/include
-  SRCS="main.c decode.c view.c video_gles.c omx_probe.c hw_decode.c ../common/cluster_surface.c"
+  SRCS="main.c decode.c view.c policy.c video_gles.c omx_probe.c hw_decode.c ../common/cluster_surface.c"
 
   gen_stub(){ local so="$1" rx="$2"; shift 2
     grep -rhoE "$rx" "$@" 2>/dev/null | sort -u | sed "s/.*/int &(){return 0;}/" > /tmp/st_$so.c

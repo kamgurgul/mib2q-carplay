@@ -48,6 +48,16 @@
  *   ALTR_AA_DECODE_THREADS (default 2, 1..4) — frame threads of the Android Auto
  *                   software decoder (fallback when hardware decode is off); 1 = the
  *                   low-delay single-thread decoder of 1.3.1 (issue #44)
+ *   ALTR_AA_SW_FAST (default 0) — 1 = the Android Auto software decoder skips the deblocking
+ *                   filter (about a third less CPU). Off by default: without the in-loop
+ *                   filter the picture drifts from the encoder's until the next key frame,
+ *                   and Android Auto sends one only every minute or two
+ *   /mnt/app/root/altscreen_render.noasm (or /tmp/...) — FFmpeg's plain C code instead of its
+ *                   ARM/NEON assembly (GEM "Software decoder plain C"). The renderer creates
+ *                   the /tmp one itself after an illegal instruction, then restarts on C code
+ *   ALTR_KEYFRAME_GAP_MS (default 2000) — at most one key-frame request per this many ms
+ *                   over the tee back-channel (one byte 'K' to the hook) when the decoder
+ *                   reports a damaged picture
  *   ALTR_HW_MIN_UPTIME_S (default 120) — with the marker
  *                   /mnt/app/root/altscreen_render.hwdecode.delayed (GEM toggle) only:
  *                   no hardware decoder before this uptime, software decode until then,
@@ -82,11 +92,15 @@
 #include "video_gles.h"
 #include "omx_probe.h"
 #include "hw_decode.h"
+#include "policy.h"
+
+#include <libavutil/cpu.h>
 
 #ifdef PLATFORM_QNX
 #include <EGL/egl.h>
 #include <GLES2/gl2.h>
 #include <sys/neutrino.h>   /* setprio() */
+#include <sys/syspage.h>    /* includes arm/syspage.h: ARM_CPU_FLAG_NEON */
 #include "cluster_surface.h"
 #endif
 
@@ -107,6 +121,25 @@ static void omx_probe_poll(int w, int h)
     altr_omx_probe(w, h);
 }
 static void on_signal(int s){ (void)s; g_stop = 1; }
+
+/* FFmpeg's ARM/NEON assembly (1.5) has no run-time CPU detection on QNX. Two guards beside
+ * the syspage check in main(): the marker selects FFmpeg's plain C code, and an illegal
+ * instruction creates the /tmp marker and exits, so carplay_monitor.sh restarts the renderer
+ * on C code instead of into the same fault. Async-signal-safe calls only. */
+#ifdef PLATFORM_QNX
+#define ALTR_NOASM_MARKER "/mnt/app/root/altscreen_render.noasm"
+#define ALTR_NOASM_BOOT   "/tmp/altscreen_render.noasm"
+static void on_sigill(int s)
+{
+    static const char msg[] = "altscreen_render: illegal instruction; plain C decoder from the next start ("
+                              ALTR_NOASM_BOOT ")\n";
+    int fd = open(ALTR_NOASM_BOOT, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    (void)s;
+    if (fd >= 0) close(fd);
+    (void)!write(2, msg, sizeof(msg) - 1);
+    _exit(4);
+}
+#endif
 
 static const char *env_s(const char *k, const char *d){ const char *v=getenv(k); return (v&&*v)?v:d; }
 static int env_i(const char *k, int d){ const char *v=getenv(k); return (v&&*v)?atoi(v):d; }
@@ -145,8 +178,9 @@ struct source {
     const char *hw_off_marker;  /* persistent "hardware decode off" switch */
     const char *hw_off_boot;    /* the same for this boot (/tmp) */
     const char *hw_settle_marker; /* present => wait ALTR_HW_MIN_UPTIME_S before hardware (NULL = always) */
-    int hw_fail_persists;       /* a hardware failure also writes hw_off_marker (else this boot only) */
+    int hw_hang_persists;       /* a hung video core also writes hw_off_marker (else this boot only) */
     int sw_threads;             /* software decoder frame threads; 1 = low delay */
+    int sw_fast;                /* software decoder skips deblocking (altr_decode_create_opts) */
 };
 
 /* Delayed hardware start (GEM "HW decoder delayed start"): both sources start on hardware at
@@ -164,14 +198,25 @@ static int g_live_written;
 static uint64_t g_live_touch_ms;
 
 static const char *g_source_name = "none";
+/* Status detail for the GEM status page (mods/altscreen_status): which decoder runs and why
+ * hardware is off, if it is. */
+static const char *decoder_state(void);      /* hardware | software | suspended | frozen | none */
+static char g_hw_off_reason[96];             /* marker that keeps hardware off, "" = none */
+static unsigned long g_connections;          /* tee connections this process */
+static unsigned long g_keyframe_requests;    /* 'K' sent over the tee back-channel */
+static unsigned long g_damaged;              /* damaged pictures reported by a decoder */
 
 static void write_status(const char *state, int w, int h, uint64_t frames)
 {
     int fd = open(g_status_file, O_WRONLY|O_CREAT|O_TRUNC, 0644);
     if (fd < 0) return;
-    char b[224];
-    int n = snprintf(b, sizeof(b), "state=%s\nsource=%s\nwidth=%d\nheight=%d\nframes=%llu\npid=%d\n",
-                     state, g_source_name, w, h, (unsigned long long)frames, (int)getpid());
+    char b[512];
+    int n = snprintf(b, sizeof(b), "state=%s\nsource=%s\nwidth=%d\nheight=%d\nframes=%llu\npid=%d\n"
+                     "decoder=%s\nhw_off=%s\nconnections=%lu\nkeyframe_requests=%lu\ndamaged=%lu\n",
+                     state, g_source_name, w, h, (unsigned long long)frames, (int)getpid(),
+                     decoder_state(), g_hw_off_reason[0] ? g_hw_off_reason : "none", g_connections,
+                     g_keyframe_requests, g_damaged);
+    if (n >= (int)sizeof(b)) n = (int)sizeof(b) - 1;
     if (n > 0) (void)!write(fd, b, (size_t)n);
     close(fd);
 }
@@ -181,11 +226,14 @@ static void write_status(const char *state, int w, int h, uint64_t frames)
 static void set_live(int live)
 {
     if (live) {
-        char b[32];
+        char b[48];
         int n, fd;
         uint64_t now = now_ms();
+        static unsigned seq;
         if (g_live_written && (now - g_live_touch_ms) < 200) return;
-        n = snprintf(b, sizeof(b), "pid=%d\n", (int)getpid());
+        /* seq changes on every rewrite: Java counts its own polls since the last change, so
+         * a wall-clock step (or a coarse mtime) cannot make a live renderer look stale. */
+        n = snprintf(b, sizeof(b), "pid=%d\nseq=%u\n", (int)getpid(), ++seq);
         fd = open(g_live_file, O_WRONLY|O_CREAT|O_TRUNC, 0644);
         if (fd >= 0) {
             if (n > 0) (void)!write(fd, b, (size_t)n);
@@ -228,13 +276,33 @@ struct app {
     uint64_t hw_upgrade_at_ms;    /* deferred: reconnect to hardware at this uptime */
     uint64_t live_hold_until_ms;  /* planned switch to hardware: keep .live fresh until the first picture */
     uint64_t freeze_until_ms;     /* session over: decoder suspended, window 99 keeps the last picture until then */
+    const struct source *hw_src;  /* source the hardware decoder (and a frozen picture) belongs to */
 #endif
+    int tee_fd;                   /* connected tee, -1 while idle (keyframe back-channel) */
+    uint64_t keyframe_ms;         /* last key-frame request on this connection */
+    uint64_t keyframe_gap_ms;
+    unsigned long errors_seen;    /* software decoder error count at the last check */
+    unsigned damaged_seen;        /* hardware damaged-picture count at the last check */
 };
 
 #ifdef PLATFORM_QNX
 static int present_frame(struct app *a, const altr_frame_t *f);
 static void gl_shutdown(struct app *a);
 #endif
+
+static struct app *g_app;
+
+static const char *decoder_state(void)
+{
+    struct app *a = g_app;
+    if (!a) return "none";
+#ifdef PLATFORM_QNX
+    if (a->hw && a->freeze_until_ms) return "frozen";
+    if (a->hw && a->hw_waiting) return "suspended";
+    if (a->hw) return "hardware";
+#endif
+    return a->src ? "software" : "none";
+}
 
 static void on_frame(void *user, const altr_frame_t *f)
 {
@@ -259,6 +327,27 @@ static void on_frame(void *user, const altr_frame_t *f)
 }
 
 /* ---- tee client ---- */
+
+#ifndef MSG_DONTWAIT
+#define MSG_DONTWAIT 0
+#endif
+
+/* Key-frame request over the tee back-channel: one byte 'K' to the hook. The CarPlay hook
+ * answers with forceKeyFrame to the iPhone (its serialized command queue); the Android
+ * Auto hook re-sends its cached key frame group and, opt-in, asks the phone for one. A
+ * hook that predates the back-channel never reads its socket: the byte just waits there
+ * (at most one per ALTR_KEYFRAME_GAP_MS). */
+static void request_keyframe(struct app *a, const char *why)
+{
+    static const char k = 'K';
+    if (a->tee_fd < 0 || !altr_keyframe_due(now_ms(), &a->keyframe_ms, a->keyframe_gap_ms)) return;
+    if (send(a->tee_fd, &k, 1, MSG_DONTWAIT) == 1) {
+        g_keyframe_requests++;
+        fprintf(stderr, "altscreen_render: key frame requested from %s: %s\n",
+                a->src ? a->src->name : "?", why);
+    }
+}
+
 static int tee_connect(const char *host, int port)
 {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -416,15 +505,29 @@ static int hw_wanted(const struct source *s)
     return access(s->hw_off_marker, F_OK) != 0 && access(s->hw_off_boot, F_OK) != 0;
 }
 
-static void hw_switch_off(const struct source *s)
+/* Hardware decode off after a failure: always for this boot (/tmp); also after a reboot
+ * only when the video core hung (altr_hw_fail_persists): until 1.5 any CarPlay failure
+ * wrote the persistent marker, so one bad session kept software decode for good. */
+static void hw_switch_off(const struct source *s, int video_core_hung)
 {
     int fd = open(s->hw_off_boot, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd >= 0) close(fd);
-    if (!s->hw_fail_persists) return;
+    snprintf(g_hw_off_reason, sizeof(g_hw_off_reason), "%s", s->hw_off_boot);
+    if (!altr_hw_fail_persists(s->hw_hang_persists, video_core_hung)) {
+        fprintf(stderr, "altscreen_render: %s hardware decode off for this boot (%s)\n",
+                s->name, s->hw_off_boot);
+        return;
+    }
     fd = open(s->hw_off_marker, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd >= 0) close(fd);
-    else fprintf(stderr, "altscreen_render: %s not writable (errno %d); off for this boot only\n",
-                 s->hw_off_marker, errno);
+    if (fd >= 0) {
+        close(fd);
+        snprintf(g_hw_off_reason, sizeof(g_hw_off_reason), "%s", s->hw_off_marker);
+        fprintf(stderr, "altscreen_render: %s video hardware hung; hardware decode off also after "
+                "a reboot (%s; GEM HW decoder ON clears it)\n", s->name, s->hw_off_marker);
+    } else {
+        fprintf(stderr, "altscreen_render: %s not writable (errno %d); off for this boot only\n",
+                s->hw_off_marker, errno);
+    }
 }
 
 /* Main-screen video yield (car logs 2026-10-30, save 011). Stock's main-screen
@@ -454,20 +557,8 @@ static uint64_t hw_yield_until(int force)
     static uint64_t checked_ms, until;
     uint64_t now = now_ms();
     if (force || !checked_ms || now - checked_ms >= ALTR_HW_YIELD_POLL_MS) {
-        char b[32];
-        unsigned long long t = 0;
-        ssize_t n;
-        int fd = open(ALTR_HW_YIELD_FILE, O_RDONLY);
         checked_ms = now;
-        until = 0;
-        if (fd >= 0) {
-            n = read(fd, b, sizeof(b) - 1);
-            close(fd);
-            if (n > 0) {
-                b[n] = 0;
-                if (sscanf(b, "%llu", &t) == 1 && t) until = (uint64_t)t + g_hw_yield_hold_ms;
-            }
-        }
+        until = altr_yield_until(ALTR_HW_YIELD_FILE, g_hw_yield_hold_ms, now);
     }
     return until > now ? until : 0;
 }
@@ -498,92 +589,41 @@ static int hw_yield_claim(uint64_t *until)
     return 1;
 }
 
-/* Bounded hardware-decoder starts across renderer restarts (idea from
- * luka-dev/mib2q-carplay-rgi, sink_omx_qnx.c).  Failures this process sees
- * already switch hardware decode off (hw_give_up, the watchdog); what they miss
- * is a renderer that dies inside the decoder start or before the first picture:
+/* Bounded hardware-decoder starts across renderer restarts (policy.c). Failures this
+ * process sees already switch hardware decode off (hw_give_up, the watchdog); what they
+ * miss is a renderer that dies inside the decoder start or before the first picture:
  * carplay_monitor.sh restarts it and it would try hardware again, and each failed
- * OMX_GetHandle can hold a decoder slot that dio_manager's own decoder then
- * lacks.  A per-source /tmp record counts starts that never produced a picture:
- * after 3, hardware waits 30 s (software meanwhile, the boot-settle upgrade then
- * reconnects); after a second set of 3 it stays off for this boot. */
-#define ALTR_HW_START_MAX     3u
-#define ALTR_HW_COOLDOWN_MS   30000u
-#define ALTR_HW_ROUNDS_MAX    2u
-
-struct hw_starts { unsigned starts, rounds; unsigned long long until_ms; };
-
+ * OMX_GetHandle can hold a decoder slot that dio_manager's own decoder then lacks. */
 static void hw_starts_path(const struct source *s, char *out, size_t cap)
 {
     snprintf(out, cap, "%s.starts", s->hw_off_boot);
 }
 
-static void hw_starts_load(const struct source *s, struct hw_starts *st)
-{
-    char p[160];
-    FILE *f;
-    memset(st, 0, sizeof(*st));
-    hw_starts_path(s, p, sizeof(p));
-    f = fopen(p, "r");
-    if (!f) return;
-    if (fscanf(f, "%u %u %llu", &st->starts, &st->rounds, &st->until_ms) != 3)
-        memset(st, 0, sizeof(*st));
-    fclose(f);
-}
-
-static void hw_starts_save(const struct source *s, const struct hw_starts *st)
-{
-    char p[160];
-    FILE *f;
-    hw_starts_path(s, p, sizeof(p));
-    f = fopen(p, "w");
-    if (!f) return;
-    fprintf(f, "%u %u %llu\n", st->starts, st->rounds, st->until_ms);
-    fclose(f);
-}
-
-/* A picture came out (or the session closed cleanly): the decoder works. */
 static void hw_starts_clear(const struct source *s)
 {
     char p[160];
     hw_starts_path(s, p, sizeof(p));
-    unlink(p);
+    altr_hw_starts_clear(p);
 }
 
-/* Before a hardware start.  0 = go ahead (counted), 1 = software until
- * *defer_until, -1 = hardware off for this boot. */
+/* 0 = go ahead (counted), 1 = software until *defer_until, -1 = hardware off for this boot. */
 static int hw_starts_begin(const struct source *s, uint64_t now, uint64_t *defer_until)
 {
-    struct hw_starts st;
-    int fd;
-    hw_starts_load(s, &st);
-    if (st.until_ms && now < st.until_ms) {
-        *defer_until = st.until_ms;
-        return 1;
+    char p[160];
+    int rc;
+    hw_starts_path(s, p, sizeof(p));
+    rc = altr_hw_starts_begin(p, s->hw_off_boot, now, defer_until);
+    if (rc == ALTR_HW_OFF) {
+        snprintf(g_hw_off_reason, sizeof(g_hw_off_reason), "%s", s->hw_off_boot);
+        fprintf(stderr, "altscreen_render: %s hardware decoder never produced a picture in "
+                "%u starts; hardware decode off for this boot\n", s->name,
+                ALTR_HW_START_MAX * ALTR_HW_ROUNDS_MAX);
+    } else if (rc == ALTR_HW_DEFER && *defer_until > now) {
+        fprintf(stderr, "altscreen_render: %s hardware decoder: %u starts without a picture; "
+                "software decode for %llu s to protect the decoder pool\n", s->name,
+                ALTR_HW_START_MAX, (unsigned long long)((*defer_until - now + 999u) / 1000u));
     }
-    if (st.starts >= ALTR_HW_START_MAX) {
-        st.starts = 0;
-        if (++st.rounds >= ALTR_HW_ROUNDS_MAX) {
-            fd = open(s->hw_off_boot, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-            if (fd >= 0) close(fd);
-            hw_starts_save(s, &st);
-            fprintf(stderr, "altscreen_render: %s hardware decoder never produced a picture in "
-                    "%u starts; hardware decode off for this boot\n", s->name,
-                    ALTR_HW_START_MAX * ALTR_HW_ROUNDS_MAX);
-            return -1;
-        }
-        st.until_ms = now + ALTR_HW_COOLDOWN_MS;
-        hw_starts_save(s, &st);
-        fprintf(stderr, "altscreen_render: %s hardware decoder never produced a picture in %u "
-                "starts; software decode for %u s to protect the decoder pool\n", s->name,
-                ALTR_HW_START_MAX, ALTR_HW_COOLDOWN_MS / 1000u);
-        *defer_until = st.until_ms;
-        return 1;
-    }
-    st.until_ms = 0;
-    st.starts++;
-    hw_starts_save(s, &st);
-    return 0;
+    return rc;
 }
 
 /* Watchdog for calls into the OMX component. They are IPC to videoCore, which
@@ -619,7 +659,7 @@ static void *wd_main(void *arg)
         if (!deadline || now < deadline) continue;
         fprintf(stderr, "altscreen_render: %s hardware decoder blocked in %s; HW decoder switched OFF, "
                 "exiting for a clean restart\n", s->name, what);
-        hw_switch_off(s);
+        hw_switch_off(s, 1);
         set_live(0);
         write_status("hw_stuck", 0, 0, 0);
         _exit(3);
@@ -685,13 +725,17 @@ static void hw_freeze(struct app *a)
             "returns to the stock map\n", ALTR_DISCONNECT_FREEZE_MS);
 }
 
-/* End a disconnect freeze: now (a new session) or once the hold is over (idle). */
+/* End a disconnect freeze: now (another phone type connected) or once the hold is over
+ * with no new stream from the same source (idle, or a tee connection that carries
+ * nothing yet: both hooks listen the whole time their process lives). A new stream from
+ * the same source resumes the suspended decoder on this window instead (main loop). */
 static void hw_unfreeze(struct app *a, int force)
 {
     if (!a->freeze_until_ms) return;
     if (!force && now_ms() < a->freeze_until_ms) return;
     hw_close(a);
     a->freeze_until_ms = 0;
+    fprintf(stderr, "altscreen_render: frozen picture released%s\n", force ? " (other source)" : "");
 }
 
 /* Close the hardware session. A decoder stuck in Executing keeps our buffers:
@@ -701,19 +745,22 @@ static void hw_close(struct app *a)
 {
     int rc;
     if (!a->hw) return;
-    wd_arm(a->src, "teardown", ALTR_WD_DESTROY_MS, 0);
+    /* hw_src, not src: a frozen decoder is closed after its connection is gone (a->src
+     * NULL), and hw_starts_clear(NULL) crashed the renderer at every session end. */
+    wd_arm(a->hw_src, "teardown", ALTR_WD_DESTROY_MS, 0);
     rc = altr_hwdec_destroy(a->hw);
     wd_disarm();
     if (rc != 0) {
-        hw_switch_off(a->src);
+        hw_switch_off(a->hw_src, 1);
         set_live(0);
         fprintf(stderr, "altscreen_render: stuck hardware decoder; HW decoder switched OFF, "
                 "exiting for a clean restart\n");
         _exit(3);
     }
-    hw_starts_clear(a->src);    /* started and stopped cleanly: not a failing start */
+    hw_starts_clear(a->hw_src); /* started and stopped cleanly: not a failing start */
     hw_active_mark(0);          /* the video core is free for stock's decoder */
     a->hw = NULL;
+    a->hw_src = NULL;
 }
 
 /* Main-screen yield: close only the decoder, window 99 keeps the last picture.
@@ -722,11 +769,11 @@ static void hw_suspend(struct app *a)
 {
     int rc;
     if (!a->hw) return;
-    wd_arm(a->src, "suspend", ALTR_WD_DESTROY_MS, 0);
+    wd_arm(a->hw_src, "suspend", ALTR_WD_DESTROY_MS, 0);
     rc = altr_hwdec_suspend(a->hw);
     wd_disarm();
     if (rc != 0) {
-        hw_switch_off(a->src);
+        hw_switch_off(a->hw_src, 1);
         set_live(0);
         fprintf(stderr, "altscreen_render: stuck hardware decoder; HW decoder switched OFF, "
                 "exiting for a clean restart\n");
@@ -735,11 +782,12 @@ static void hw_suspend(struct app *a)
     hw_active_mark(0);          /* the video core is free for stock's decoder */
 }
 
+/* A decoder that failed but did not hang the video core: off for this boot only. */
 static void hw_give_up(struct app *a, const char *why)
 {
     fprintf(stderr, "altscreen_render: %s hardware decode %s; back to software decode "
-            "(HW decoder switched OFF)\n", a->src->name, why);
-    hw_switch_off(a->src);
+            "(HW decoder switched OFF)\n", a->hw_src->name, why);
+    hw_switch_off(a->hw_src, 0);
     hw_close(a);
 }
 
@@ -773,10 +821,11 @@ static void sources_init(struct source *src, int *nsrc, int surface_w, int surfa
     src[*nsrc].hw_off_marker = ALTR_HWDEC_OFF_MARKER;
     src[*nsrc].hw_off_boot = ALTR_HWDEC_OFF_BOOT;
     src[*nsrc].hw_settle_marker = ALTR_HW_SETTLE_MARKER;
-    src[*nsrc].hw_fail_persists = 1;
+    src[*nsrc].hw_hang_persists = 1;             /* a hung core must not hit the next boot */
     /* Apple Maps without a route sends a picture only when the map changes: a frame
      * threaded decoder would hold the last one back, so CarPlay stays low delay. */
     src[*nsrc].sw_threads = 1;
+    src[*nsrc].sw_fast = 0;
     (*nsrc)++;
 
     if (env_i("ALTR_AA_TEE_PORT", 19821) <= 0) return;
@@ -805,7 +854,7 @@ static void sources_init(struct source *src, int *nsrc, int surface_w, int surfa
     src[*nsrc].hw_off_marker = ALTR_AA_HWDEC_OFF_MARKER;
     src[*nsrc].hw_off_boot = ALTR_AA_HWDEC_OFF_BOOT;
     src[*nsrc].hw_settle_marker = ALTR_HW_SETTLE_MARKER;   /* issue #48; the yield covers #14 */
-    src[*nsrc].hw_fail_persists = 0;             /* issue #44: this boot only */
+    src[*nsrc].hw_hang_persists = 0;             /* issue #44: this boot only, hung or not */
     /* Software fallback only (the hardware decoder is the default). On one core a
      * 1080p30 drive falls behind and freezes until the next key frame (issue #44).
      * Frame threads keep up; the cost is one picture of delay, so while the map is
@@ -813,6 +862,7 @@ static void sources_init(struct source *src, int *nsrc, int surface_w, int surfa
     src[*nsrc].sw_threads = env_i("ALTR_AA_DECODE_THREADS", 2);
     if (src[*nsrc].sw_threads < 1) src[*nsrc].sw_threads = 1;
     if (src[*nsrc].sw_threads > 4) src[*nsrc].sw_threads = 4;
+    src[*nsrc].sw_fast = env_i("ALTR_AA_SW_FAST", 0) != 0;
     (*nsrc)++;
 }
 
@@ -823,6 +873,7 @@ int main(void)
     int nsrc, k;
     memset(&a, 0, sizeof(a));
     memset(src, 0, sizeof(src));
+    g_app = &a;
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
     signal(SIGPIPE, SIG_IGN);
@@ -836,7 +887,26 @@ int main(void)
     if (setprio(0, 15) < 0)
         fprintf(stderr, "altscreen_render: setprio(15) failed: %s; running at default\n",
                 strerror(errno));
+    /* The FFmpeg build has NEON (software fallback, issue #44) and picks it from build
+     * flags, not the CPU, on QNX. The MHI2Q Krait cores have NEON; a CPU whose startup
+     * does not report it gets FFmpeg's plain ARM code instead of SIGILL. */
+    {
+        int neon = (SYSPAGE_ENTRY(cpuinfo)->flags & ARM_CPU_FLAG_NEON) != 0;
+        int noasm = access(ALTR_NOASM_MARKER, F_OK) == 0 || access(ALTR_NOASM_BOOT, F_OK) == 0;
+        signal(SIGILL, on_sigill);
+        if (noasm)
+            av_force_cpu_flags(0);          /* every FFmpeg DSP table keeps its C functions */
+        else if (!neon && (av_get_cpu_flags() & AV_CPU_FLAG_NEON))
+            av_force_cpu_flags(av_get_cpu_flags() & ~AV_CPU_FLAG_NEON);
+        fprintf(stderr, "altscreen_render: CPU NEON %s; software decoder uses %s\n",
+                neon ? "yes" : "not reported",
+                noasm ? "plain C (altscreen_render.noasm)" :
+                (av_get_cpu_flags() & AV_CPU_FLAG_NEON) ? "NEON" : "ARM assembly without NEON");
+    }
 #endif
+    a.tee_fd = -1;
+    a.keyframe_gap_ms = (uint64_t)env_i("ALTR_KEYFRAME_GAP_MS", 2000);
+    if (a.keyframe_gap_ms < 500u) a.keyframe_gap_ms = 500u;
 
     const char *host = env_s("ALTR_TEE_HOST", "127.0.0.1");
     g_live_file   = env_s("ALTR_LIVE_FILE",   "/tmp/altscreen_render.live");
@@ -882,11 +952,11 @@ int main(void)
     altr_decoder_t *decs[2] = { NULL, NULL };
     int dec_ok = 1;
     for (k = 0; k < nsrc; k++) {
-        decs[k] = altr_decode_create_threads(on_frame, &a, src[k].sw_threads);
+        decs[k] = altr_decode_create_opts(on_frame, &a, src[k].sw_threads, src[k].sw_fast);
         if (!decs[k]) dec_ok = 0;
-        else if (src[k].sw_threads > 1)
-            fprintf(stderr, "altscreen_render: %s software decoder: %d frame threads\n",
-                    src[k].name, src[k].sw_threads);
+        else if (src[k].sw_threads > 1 || src[k].sw_fast)
+            fprintf(stderr, "altscreen_render: %s software decoder: %d frame thread(s)%s\n",
+                    src[k].name, src[k].sw_threads, src[k].sw_fast ? ", no deblocking" : "");
     }
     if (!dec_ok) {
         for (k = 0; k < nsrc; k++) altr_decode_destroy(decs[k]);
@@ -926,16 +996,28 @@ int main(void)
             continue;
         }
 #ifdef PLATFORM_QNX
-        hw_unfreeze(&a, 1);         /* a new session: drop the previous one's frozen window */
+        /* A connection is not a new stream yet: the frozen picture of the same source stays
+         * until that source sends bytes (then its decoder resumes on this window) or the
+         * hold ends. Another phone type drops it at once. */
+        if (altr_freeze_on_connect(a.freeze_until_ms != 0, a.hw_src == s) == ALTR_FREEZE_CLOSE)
+            hw_unfreeze(&a, 1);
 #endif
         a.src = s;
         a.last_shown_ms = 0;
+        a.tee_fd = fd;
+        a.keyframe_ms = 0;
+        a.errors_seen = (unsigned long)altr_decode_error_count(decs[s - src]);
+        g_connections++;
         g_source_name = s->name;
         fprintf(stderr, "altscreen_render: connected to %s tee %s:%d\n", s->name, host, s->port);
+        g_hw_off_reason[0] = 0;
 #ifdef PLATFORM_QNX
-        if (!hw_wanted(s))
+        if (!hw_wanted(s)) {
+            const char *why = access(s->hw_off_boot, F_OK) == 0 ? s->hw_off_boot : s->hw_off_marker;
+            snprintf(g_hw_off_reason, sizeof(g_hw_off_reason), "%s", why);
             fprintf(stderr, "altscreen_render: %s hardware decode OFF (%s present); software decode\n",
-                    s->name, access(s->hw_off_boot, F_OK) == 0 ? s->hw_off_boot : s->hw_off_marker);
+                    s->name, why);
+        }
 #endif
         write_status("connected", a.last_w, a.last_h, a.frames);
 
@@ -946,7 +1028,10 @@ int main(void)
             if (g_stop) { close(fd); goto done; }
             omx_probe_poll(a.surface_w, a.surface_h);
 #ifdef PLATFORM_QNX
-            if (a.hw && !a.hw_waiting && hw_yield_until(0)) {
+            /* Frozen picture, and the hold ended before this source sent a new stream. */
+            if (a.freeze_until_ms) hw_unfreeze(&a, 0);
+            if (a.hw) altr_hwdec_set_grid(a.hw, grid_enabled(now_ms()));
+            if (a.hw && !a.hw_waiting && !a.freeze_until_ms && hw_yield_until(0)) {
                 /* Stock is about to start or stop its main-screen decoder (the
                  * hook waits for us): free the video core now. The cockpit keeps
                  * the last picture until the main screen is quiet. */
@@ -989,6 +1074,17 @@ int main(void)
                 ssize_t n = recv(fd, buf, sizeof(buf), 0);
                 if (n <= 0) break;
 #ifdef PLATFORM_QNX
+                if (a.freeze_until_ms) {
+                    /* A new stream from the source whose last picture is frozen (stream 111
+                     * restarted, the hook reset its consumer, Android Auto's next playback):
+                     * resume its suspended decoder on window 99 instead of closing it, so the
+                     * cockpit goes from the old picture straight to the new one. The stream
+                     * starts with SPS/PPS and an IDR (hook priming / tee replay). */
+                    fprintf(stderr, "altscreen_render: new %s stream; decoder resumes on the "
+                            "frozen window\n", s->name);
+                    a.freeze_until_ms = 0;
+                    a.hw_waiting = 1;
+                }
                 if (a.hw_waiting) {
                     uint64_t until;
                     /* Once anything was dropped only a reconnect brings a key frame. */
@@ -1002,7 +1098,7 @@ int main(void)
                         if (altr_hwdec_resume(a.hw, &stuck) != 0) {
                             wd_disarm();
                             if (stuck) {
-                                hw_switch_off(s);
+                                hw_switch_off(s, 1);
                                 set_live(0);
                                 fprintf(stderr, "altscreen_render: video hardware not answering; "
                                         "HW decoder switched OFF, exiting for a clean restart\n");
@@ -1063,18 +1159,24 @@ int main(void)
                         gl_shutdown(&a);             /* frees displayable 99 for the decoder */
                         if (a.live_hold_until_ms && now_ms() < a.live_hold_until_ms) set_live(1);
                         wd_arm(s, "setup", ALTR_WD_CREATE_MS, a.live_hold_until_ms);
+                        a.hw_src = s;
                         a.hw = altr_hwdec_create(&s->view, a.disp_id, &stuck);
                         wd_disarm();
                         a.hw_frames_seen = 0;
+                        a.damaged_seen = 0;
                         if (!a.hw) {
-                            hw_give_up(&a, "setup failed");
-                            if (!stuck) hw_active_mark(0);   /* stuck: exiting, the hook sees the pid gone */
                             if (stuck) {
+                                /* A hung core: off also after a reboot. Exiting: the hook
+                                 * sees the pid gone, so the active file needs no clearing. */
+                                hw_switch_off(s, 1);
                                 set_live(0);
                                 fprintf(stderr, "altscreen_render: video hardware not answering; "
                                         "exiting for a clean restart\n");
                                 _exit(3);
                             }
+                            hw_give_up(&a, "setup failed");
+                            a.hw_src = NULL;        /* no decoder: hw_close had nothing to clear */
+                            hw_active_mark(0);
                             ensure_gl(&a);
                             break;                  /* reconnect: the hook re-primes with a fresh IDR */
                         }
@@ -1090,6 +1192,14 @@ int main(void)
                         hw_give_up(&a, "failed");
                         ensure_gl(&a);
                         break;
+                    }
+                    {
+                        unsigned dm = altr_hwdec_damaged(a.hw);
+                        if (dm != a.damaged_seen) {
+                            g_damaged += dm - a.damaged_seen;
+                            a.damaged_seen = dm;
+                            request_keyframe(&a, "damaged picture (hardware decoder)");
+                        }
                     }
                     hf = altr_hwdec_frames(a.hw);
                     if (hf > a.hw_frames_seen) {
@@ -1107,6 +1217,14 @@ int main(void)
                 if (!a.have_gl && ensure_gl(&a) != 0) continue;
 #endif
                 altr_decode_feed(decs[s - src], buf, (size_t)n);
+                {
+                    unsigned long e = (unsigned long)altr_decode_error_count(decs[s - src]);
+                    if (e != a.errors_seen) {
+                        g_damaged += e - a.errors_seen;
+                        a.errors_seen = e;
+                        request_keyframe(&a, "damaged picture (software decoder)");
+                    }
+                }
             } else if (r < 0 && errno != EINTR) {
                 break;
             }
@@ -1129,6 +1247,7 @@ int main(void)
         }
 
         close(fd);
+        a.tee_fd = -1;
 #ifdef PLATFORM_QNX
         if (a.hw && a.hw_waiting) {
             /* Suspended for the main screen: keep window 99 and its last picture

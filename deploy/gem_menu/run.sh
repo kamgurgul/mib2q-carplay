@@ -78,6 +78,60 @@ cluster_switch() {
     fi
 }
 
+# Opt-in marker switch: $1 = file, $2 = text when ON, $3 = text when OFF.
+marker_toggle() {
+    mount -uw /mnt/app 2>/dev/null
+    if [ -e "$1" ]; then
+        rm -f "$1"; sync
+        echo "DONE. $3"
+    else
+        : > "$1" || { echo "FAILED: cannot create $1"; exit 1; }
+        sync
+        echo "DONE. $2"
+    fi
+}
+
+# Read-only status page: what the cluster video renderer and the hooks report right now.
+# Paths overridable for the host test (CP_TMP, CP_ROOT).
+status_page() {
+    TD=${CP_TMP:-/tmp}
+    RD=${CP_ROOT:-/mnt/app/root}
+    echo "== Cluster video (altscreen_render)"
+    if [ -f "$TD/altscreen_render.status" ]; then
+        grep -E '^(state|source|decoder|hw_off|frames|connections|keyframe_requests|damaged)=' \
+            "$TD/altscreen_render.status"
+    else
+        echo "renderer not running (no $TD/altscreen_render.status)"
+    fi
+    if [ -f "$TD/altscreen_render.live" ]; then echo "cockpit: phone map live"; else echo "cockpit: phone map not live"; fi
+    for m in "$RD/altscreen_render.noasm" "$TD/altscreen_render.noasm" \
+             "$RD/altscreen_render.hwdecode.off" "$TD/altscreen_render.hwdecode.off" \
+             "$RD/altscreen_render.aa.hwdecode.off" "$TD/altscreen_render.aa.hwdecode.off" \
+             "$RD/altscreen_render.hwdecode.delayed"; do
+        [ -e "$m" ] && echo "marker: $m"
+    done
+    echo "== CarPlay cluster stream (stream 111)"
+    if [ -f "$TD/mibr-alt111-gen2.status" ]; then
+        grep -E '^(command_ready|projection_desired|shown_ack|source_aus|source_idrs|delivered_aus|dropped_aus|resyncs|nav_url)=' \
+            "$TD/mibr-alt111-gen2.status"
+    else
+        echo "no CarPlay cluster session this boot"
+    fi
+    echo "== Android Auto cluster display"
+    if [ -f "$TD/aa_cluster_hook.log" ]; then
+        grep -E 'init (enabled|disabled)|cluster\.(start|stop)|focus\.' "$TD/aa_cluster_hook.log" | tail -n 4
+    else
+        echo "no Android Auto session this boot"
+    fi
+    echo "== Options"
+    for m in cluster_video.pause_hidden aa_cluster.keyframe_refocus aa_cluster.daynight aa_cluster.off \
+             aa_cluster.uiconfig_legacy aa_cluster.insets \
+             mibr-carplay111-view.animation mibr-carplay111-viewareas.single; do
+        [ -e "$RD/$m" ] && echo "set: $RD/$m"
+    done
+    return 0
+}
+
 run_action() {
     [ -f "$A/$1/custom.sh" ] || { echo "FAILED: action $1 missing in $A (re-run menu_install)"; exit 1; }
     exec /bin/sh "$A/$1/custom.sh"
@@ -233,6 +287,37 @@ case $ACT in
         fi
         echo "Applies at the next phone connection (a day/night change while connected waits for it too)."
         ;;
+    status)
+        status_page
+        ;;
+    pause_hidden)
+        # Opt-in, both phone types: while the cockpit shows no phone map (another VC tab, or the
+        # Audi map picked with a long roller press) the phone stops the cluster stream (CarPlay
+        # stopUI, Android Auto native video focus) and resumes when the map is back. Applies at
+        # the next change of the cockpit view.
+        marker_toggle /mnt/app/root/cluster_video.pause_hidden \
+            "Cluster map paused while the cockpit hides it (opt-in, test). The last picture stays until the phone map is back." \
+            "Cluster map keeps streaming while hidden (default)."
+        ;;
+    aa_refocus)
+        # Opt-in, Android Auto: when the cluster map renderer needs a key frame the tee no longer
+        # holds, bounce the cluster display's video focus (native, then projected after 200 ms)
+        # so the phone sends one, at most every 10 s. Without it the map waits for the phone's
+        # next periodic key frame (a minute or two). Read live.
+        marker_toggle /mnt/app/root/aa_cluster.keyframe_refocus \
+            "Android Auto cluster map asks the phone for a key frame when it needs one (opt-in, test)." \
+            "Android Auto cluster map waits for the phone's own key frames (default)."
+        ;;
+    noasm)
+        # The software decoder (fallback when the hardware decoder is off) uses FFmpeg's
+        # ARM/NEON assembly from 1.5. This marker selects its plain C code instead, slower
+        # but the decoder of 1.4. The renderer sets it for the boot itself after an illegal
+        # instruction. Read when the renderer starts: applies after the next reboot.
+        rm -f /tmp/altscreen_render.noasm
+        marker_toggle /mnt/app/root/altscreen_render.noasm \
+            "Software decoder: plain C code, no NEON (after the next reboot)." \
+            "Software decoder: ARM/NEON assembly (default, after the next reboot)."
+        ;;
     cluster_maneuver)
         cluster_switch showManeuver yes "Turn card"
         ;;
@@ -280,7 +365,7 @@ case $ACT in
         echo "DONE. CarPlay-RGI menu removed; it disappears after the next reboot."
         ;;
     *)
-        echo "usage: run.sh install|uninstall|logs|lsd|verbose|altscreen_on|altscreen_off|rgd_enable|rgd_disable|aa_cluster_on|aa_cluster_off|aa_daynight|touchpad_dpad_on|touchpad_dpad_off|grid|safearea|safearea_reset|singleview|cluster_maneuver|cluster_eta|cluster_speed|cluster_compass|cluster_wide_all|reacquire|hwdec|hwdelay|siri_short|omxprobe|remove_menu"
+        echo "usage: run.sh install|uninstall|logs|lsd|verbose|status|altscreen_on|altscreen_off|rgd_enable|rgd_disable|aa_cluster_on|aa_cluster_off|aa_daynight|aa_refocus|pause_hidden|touchpad_dpad_on|touchpad_dpad_off|grid|safearea|safearea_reset|singleview|cluster_maneuver|cluster_eta|cluster_speed|cluster_compass|cluster_wide_all|reacquire|hwdec|hwdelay|noasm|siri_short|omxprobe|remove_menu"
         exit 2
         ;;
 esac

@@ -28,6 +28,6 @@ public final class SettingsModelTest {
             if (m.getValue() != CarPlaySettings.defaultValue(key)) throw new AssertionError("default " + key);
             if (bank.getModel(2500500 + key) != m) throw new AssertionError("model recreated");
         }
-        System.out.println("SettingsModelTest: stock IDs preserved, all ten choice models registered PASS");
+        System.out.println("SettingsModelTest: stock IDs preserved, all " + CarPlaySettings.COUNT + " choice models registered PASS");
     }
 }

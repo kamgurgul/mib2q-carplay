@@ -1,5 +1,7 @@
 package com.luka.carplay.rgd;
 
+import com.luka.carplay.core.CarPlayApp;
+
 /** One resolved instruction shared by HUD and renderer. Raw route data stays
  * untouched; RouteGuidance/BAP session ownership decides whether guidance is active. */
 final class ManeuverPresentation {
@@ -11,11 +13,20 @@ final class ManeuverPresentation {
     final int slot;
     final int main;
     final int direction;
+    final ManeuverSemantics semantics;
+    final RoundaboutSchematic schematic;
 
     private ManeuverPresentation(int slot, int main, int direction) {
+        this(slot, main, direction, null, null);
+    }
+
+    private ManeuverPresentation(int slot, int main, int direction, ManeuverSemantics semantics,
+                                 RoundaboutSchematic schematic) {
         this.slot = slot;
         this.main = main;
         this.direction = direction;
+        this.semantics = semantics;
+        this.schematic = schematic;
     }
 
     boolean hasManeuver() { return slot >= 0; }
@@ -26,18 +37,39 @@ final class ManeuverPresentation {
         return slot >= 0 && slot < s.mType.length ? slot : -1;
     }
 
+    static int vehicleDrivingSide() {
+        try {
+            return CarPlayApp.isVehicleRightHandDrive()
+                ? ManeuverMapper.DRIVING_SIDE_LEFT
+                : ManeuverMapper.DRIVING_SIDE_RIGHT;
+        } catch (NoClassDefFoundError e) {
+            return ManeuverMapper.DRIVING_SIDE_RIGHT;
+        }
+    }
+
     static ManeuverPresentation resolve(RouteGuidance.State s, boolean active) {
+        return resolve(s, active, vehicleDrivingSide());
+    }
+
+    static ManeuverPresentation resolve(RouteGuidance.State s, boolean active, int fallbackDrivingSide) {
         if (!active) return NONE;
         // Only the current list entry is authoritative. Count is a total, not
         // availability; a missing/unknown current entry must never borrow look-ahead.
         int slot = currentSlot(s);
         if (slot < 0 || !ManeuverMapper.isValidType(s.mType[slot]))
             return FOLLOW;
-        int[] mapped = ManeuverMapper.map(s.mType[slot], s.mTurnAngle[slot],
-            s.mJunctionType[slot], s.mDrivingSide[slot], anglePresent(s, slot));
+        NavigationStack stack = NavigationStack.forSource(s.sourceName);
+        ManeuverSemantics semantics = stack.resolve(
+            s.mType[slot], s.mJunctionType[slot], s.mDrivingSide[slot], fallbackDrivingSide,
+            s.mTurnAngle[slot], anglePresent(s, slot));
+        int[] mapped = ManeuverMapper.map(semantics.mappingType(), semantics.angle,
+            semantics.junctionType, semantics.drivingSide, semantics.anglePresent);
         if (mapped[0] == ManeuverMapper.NO_INFO || mapped[0] == ManeuverMapper.NO_SYMBOL)
             return FOLLOW;
-        return new ManeuverPresentation(slot, mapped[0], mapped[1]);
+        RoundaboutSchematic schematic = stack == NavigationStack.YANDEX
+            ? RoundaboutSchematic.create(semantics, s.mJunctionAngles[slot]) : null;
+        return new ManeuverPresentation(slot, mapped[0],
+            schematic == null ? mapped[1] : schematic.direction, semantics, schematic);
     }
 
     static boolean anglePresent(RouteGuidance.State s, int slot) {

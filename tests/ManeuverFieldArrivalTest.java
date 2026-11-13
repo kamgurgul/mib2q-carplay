@@ -35,6 +35,7 @@ public final class ManeuverFieldArrivalTest {
     private static final class HUD implements InvocationHandler {
         int main, direction, descriptors, distance, bar, distanceFailures, maneuverStateFailures;
         boolean barOn;
+        byte[] streets;
         public Object invoke(Object proxy, Method method, Object[] args) {
             if (method.getName().equals("updateManeuverState") && maneuverStateFailures > 0) {
                 maneuverStateFailures--;
@@ -43,6 +44,7 @@ public final class ManeuverFieldArrivalTest {
             if (method.getName().equals("updateManeuverDescriptor")) {
                 CombiBAPNaviManeuverDescriptor[] data = (CombiBAPNaviManeuverDescriptor[]) args[0];
                 main = data[0].mainElement; direction = data[0].direction; descriptors++;
+                streets = data[0].sideStreets;
             }
             if (method.getName().equals("updateDistanceToNextManeuver")) {
                 if (distanceFailures > 0) {
@@ -59,6 +61,8 @@ public final class ManeuverFieldArrivalTest {
     private static final class Renderer extends RendererServer {
         int icon = -1, direction, angle, writes, failures, progressLevel, progressMode, progressState;
         int progressOnFollow;
+        int[] junctionAngles;
+        boolean snapToRoad;
         public boolean isReady() { return true; }
         public boolean isFrameReady() { return true; }
         public boolean isConnected() { return true; }
@@ -74,6 +78,7 @@ public final class ManeuverFieldArrivalTest {
                 boolean refresh, boolean snap, int progress) {
             if (failures > 0) { failures--; return false; }
             progressLevel = level; progressMode = mode; progressState = progress;
+            junctionAngles = roads; snapToRoad = snap;
             icon = nextIcon; direction = nextDirection; angle = nextAngle; writes++; return true;
         }
     }
@@ -441,8 +446,113 @@ public final class ManeuverFieldArrivalTest {
             }
         }
     }
+    private static void sourceStacks() throws Exception {
+        Fixture f = new Fixture();
+        try {
+            f.feed("route_generation:n:501\nroute_state:n:1\nmaneuver_count:n:1\n"
+                + "maneuver_list:s:0\nm0_ver:n:1\nm0_type:n:31\ndist_maneuver_m:n:100\n");
+            // Upstream gates roundabout types on junction=1 (FOLLOW here). This branch maps the
+            // icon from the type alone (MIBSI parity, #9): default = plain mapper, no compensation.
+            int[] plainHud = ManeuverMapper.map(31, 1000, ManeuverMapper.JUNCTION_NOT_SET,
+                ManeuverMapper.DRIVING_SIDE_RIGHT, false);
+            ManeuverSemantics plainSem = ManeuverPresentation.resolve(f.state, true).semantics;
+            check(f.hud.main == plainHud[0] && f.hud.direction == plainHud[1]
+                && (plainSem == null || (!plainSem.junctionInferred && !plainSem.hasAngle()
+                    && plainSem.exitNumber == 0)), "unknown source uses default");
+            f.renderer.failures = 1;
+            f.feed("source_name:s:百度地图\n");
+            check(f.hud.main == ManeuverMapper.ROUNDABOUT_TRS_RIGHT && f.hud.direction == ManeuverMapper.DIR_LEFT,
+                "late Baidu source did not reach HUD");
+            check((f.state.dirtyMask & RouteGuidance.State.DIRTY_MANEUVER_ICON) != 0,
+                "late source lost failed renderer refresh");
+            f.feed("dist_maneuver_m:n:90\n");
+            check(f.renderer.icon == RendererMapper.ICON_ROUNDABOUT && f.renderer.angle == -180,
+                "renderer retry did not use Baidu semantic direction");
+            int writes = f.renderer.writes;
+            f.feed("source_name:s:百度地图\n"); f.replay();
+            check(f.renderer.writes == writes, "same source restarted animation");
+            f.feed("source_name:s:Amap\nroute_state:n:1\nmaneuver_count:n:1\nmaneuver_list:s:0\n"
+                + "m0_ver:n:1\nm0_type:n:28\nm0_junction_type:n:0\ndist_maneuver_m:n:100\n");
+            check(f.hud.direction == ManeuverMapper.DIR_LEFT && f.renderer.angle == -180
+                && f.state.mJunctionType[0] == 0, "AMap CP28 did not use separate left-circle compensation");
+            f.renderer.failures = 1;
+            f.feed("m0_type:n:29\n");
+            check(f.hud.main == ManeuverMapper.EXIT_ROUNDABOUT_TRS_RIGHT
+                && (f.state.dirtyMask & RouteGuidance.State.DIRTY_MANEUVER_ICON) != 0,
+                "AMap departure HUD/send failure not retained");
+            f.feed("dist_maneuver_m:n:90\n");
+            check(f.renderer.icon == RendererMapper.ICON_ROUNDABOUT_EXIT,
+                "AMap departure retry collapsed to straight-circle fallback");
+            writes = f.renderer.writes; f.replay();
+            check(f.renderer.writes == writes, "AMap departure replay restarted transition");
+            f.feed("m0_type:n:30\n");
+            check(f.hud.direction == ManeuverMapper.DIR_RIGHT && f.renderer.angle == 180,
+                "AMap CP30 inherited Baidu's forward-left direction");
+            // Same slot/version/generation, different provider; clear stale phase and geometry.
+            // Real Yandex packets omit TLV 0x08 (m0_driving_side), so schematic activates immediately.
+            f.feed("source_name:s:Yandex Navi\nroute_state:n:1\nmaneuver_count:n:1\nmaneuver_list:s:0\n"
+                + "m0_ver:n:1\nm0_type:n:31\nm0_junction_type:n:1\n");
+            check(f.state.distManeuverM == -1 && f.state.mDrivingSide[0] == -1
+                && f.hud.main == ManeuverMapper.ROUNDABOUT_TRS_RIGHT && f.renderer.angle == -135
+                && f.renderer.progressMode == 0 && !f.hud.barOn,
+                "Yandex absent drivingSide must clear Baidu progress and render fourth-exit schematic");
+            check(ManeuverPresentation.resolve(f.state, true).semantics.exitNumber == 4,
+                "bridge path lost Yandex ordinal");
+            f.feed("m0_driving_side:n:1\n");
+            check(f.hud.main == ManeuverMapper.ROUNDABOUT_TRS_LEFT && f.renderer.angle == 135,
+                "late explicit LHT circulation side must mirror schematic");
+            f.feed("m0_driving_side:n:0\n");
+            check(f.hud.main == ManeuverMapper.ROUNDABOUT_TRS_RIGHT && f.renderer.angle == -135,
+                "late explicit RHT circulation side must restore schematic");
+            f.renderer.failures = 1;
+            f.feed("m0_type:n:33\n");
+            check(f.hud.direction == ManeuverMapper.DIR_LEFT
+                && (f.state.dirtyMask & RouteGuidance.State.DIRTY_MANEUVER_ICON) != 0,
+                "sixth-exit schematic HUD / failed renderer retry");
+            f.feed("dist_maneuver_m:n:90\n");
+            check(f.renderer.angle == -180, "schematic retry lost selected sixth exit");
+            check(Arrays.equals(f.hud.streets, new byte[]{(byte)160, (byte)192, (byte)224, 0, 32, 96})
+                && Arrays.equals(f.renderer.junctionAngles, new int[]{270, 180, 90, 0, -90, -180, -270})
+                && !f.renderer.snapToRoad, "actual outputs must retain five before and one after");
+            writes = f.renderer.writes; f.replay();
+            check(f.renderer.writes == writes, "schematic replay restarted animation");
+            f.feed("m0_turn_angle:n:0\n");
+            check(f.hud.direction == ManeuverMapper.DIR_STRAIGHT && f.renderer.angle == 0
+                && ManeuverPresentation.resolve(f.state, true).schematic == null
+                && f.hud.streets.length == 0 && f.renderer.junctionAngles.length == 0,
+                "late actual angle must replace both schematic outputs");
+            // Live #92 Yandex Maps mN_full=1 frames (type=29 exit 2, type=30 exit 3, no TLV 0x08).
+            f.feed("source_name:s:Яндекс\u00a0Карты\nroute_state:n:1\nmaneuver_count:n:1\nmaneuver_list:s:0\n"
+                + "m0_full:n:1\nm0_ver:n:2\nm0_type:n:29\nm0_turn_angle:n:1000\nm0_exit_angle:n:1000\n"
+                + "m0_junction_type:n:1\nm0_name:s:ул. Кирова\ndist_maneuver_m:n:300\n");
+            check(f.state.mDrivingSide[0] == -1
+                && f.hud.main == ManeuverMapper.ROUNDABOUT_TRS_RIGHT
+                && f.hud.direction == ManeuverMapper.DIR_STRAIGHT
+                && Arrays.equals(f.hud.streets, new byte[]{(byte)192, 64})
+                && f.renderer.icon == RendererMapper.ICON_ROUNDABOUT && f.renderer.angle == 0
+                && Arrays.equals(f.renderer.junctionAngles, new int[]{180, 0, -180})
+                && !f.renderer.snapToRoad,
+                "live Yandex Maps exit 2 without TLV 0x08 must emit side streets +90/-90");
+            f.feed("m0_full:n:1\nm0_ver:n:3\nm0_type:n:30\nm0_turn_angle:n:1000\nm0_exit_angle:n:1000\n"
+                + "m0_junction_type:n:1\nm0_name:s:ул. Кирова\ndist_maneuver_m:n:200\n");
+            check(f.state.mDrivingSide[0] == -1
+                && f.hud.main == ManeuverMapper.ROUNDABOUT_TRS_RIGHT
+                && f.hud.direction == ManeuverMapper.DIR_SLIGHT_LEFT
+                && f.hud.streets.length == 3
+                && f.renderer.icon == RendererMapper.ICON_ROUNDABOUT && f.renderer.angle == -90
+                && Arrays.equals(f.renderer.junctionAngles, new int[]{225, 90, -90, -225})
+                && !f.renderer.snapToRoad,
+                "live Yandex Maps exit 3 without TLV 0x08 must point -45 deg with 3 side roads");
+            f.feed("source_name:s:Google Maps\nroute_state:n:1\nmaneuver_count:n:1\nmaneuver_list:s:0\n"
+                + "m0_ver:n:1\nm0_type:n:2\ndist_maneuver_m:n:100\n");
+            check(f.hud.main == ManeuverMapper.TURN && f.hud.direction == ManeuverMapper.DIR_RIGHT
+                && f.renderer.icon == RendererMapper.ICON_TURN && f.renderer.angle == 180,
+                "default stack did not resume normal mapping");
+        } finally { f.close(); }
+    }
     public static void main(String[] args) throws Exception {
         Log.setLevel(-1);
+        sourceStacks();
         missingJunction();
         farStraightTransition();
         distanceOwnership();

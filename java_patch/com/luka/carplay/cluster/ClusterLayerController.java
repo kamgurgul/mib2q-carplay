@@ -319,7 +319,8 @@ public final class ClusterLayerController {
         logDecision(geometry, popup, carplayOpacity, videoActive, videoX, videoY);
         if (com.luka.carplay.core.CarPlayApp.isAndroidAutoActive()) {
             /* Android Auto: the gal hook reads the layout from a file (no bus peer). */
-            com.luka.carplay.aa.AaClusterView.publish(popup, geometry.layoutName);
+            com.luka.carplay.aa.AaClusterView.publish(popup, geometry.layoutName,
+                geometry.smallStageDX, geometry.mapY);
         } else {
             sendAltViewArea(videoActive, popup, geometry.smallStageDX != 0);
         }

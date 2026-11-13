@@ -15,6 +15,10 @@ TEST_DIR=$(mktemp -d)
 trap 'rm -rf "$TEST_DIR"' EXIT
 CLASSPATH="$PATCH_JAR:$STOCK_JAR:$OSGI_LIBS"
 "$JDK_DIR/bin/javac" -encoding UTF-8 -cp "$CLASSPATH" -d "$TEST_DIR" \
+    "$PROJECT_DIR/tests/NativeBapReplayTest.java" \
+    "$PROJECT_DIR/tests/NativeBapHandoffTest.java" \
+    "$PROJECT_DIR/tests/NativeBapStockListenerTest.java" \
+    "$PROJECT_DIR/tests/NavigationStackTest.java" \
     "$PROJECT_DIR/tests/CurrentPositionDeliveryTest.java" \
     "$PROJECT_DIR/tests/RouteInfoTimeoutTest.java" \
     "$PROJECT_DIR/tests/CurrentPositionStockChainTest.java" \
@@ -57,12 +61,18 @@ CLASSPATH="$PATCH_JAR:$STOCK_JAR:$OSGI_LIBS"
 "$JDK_DIR/bin/java" -Xverify:none -cp "$TEST_DIR:$CLASSPATH" ClusterKdkBapChainTest
 "$JDK_DIR/bin/java" -Xverify:none -cp "$TEST_DIR:$CLASSPATH" ClusterKdkRendererLifecycleTest
 
+# Native BAP ownership: latest-state retention/replay, NavigationJobs handoff, actual stock listener.
+"$JDK_DIR/bin/java" -Xverify:none -cp "$TEST_DIR:$CLASSPATH" com.luka.carplay.rgd.NativeBapReplayTest
+"$JDK_DIR/bin/java" -Xverify:none -cp "$TEST_DIR:$CLASSPATH" com.luka.carplay.core.NativeBapHandoffTest
+"$JDK_DIR/bin/java" -Xverify:none -cp "$TEST_DIR:$CLASSPATH" NativeBapStockListenerTest
+
 "$JDK_DIR/bin/java" -Xverify:none -cp "$TEST_DIR:$CLASSPATH" com.luka.carplay.rgd.LaneGuidanceTransportTest "$PROJECT_DIR/build/lane-guidance-wire.bin"
 "$JDK_DIR/bin/java" -Xverify:none -cp "$TEST_DIR:$CLASSPATH" com.luka.carplay.rgd.LaneGuidanceLifecycleTest
 "$JDK_DIR/bin/java" -Xverify:none -cp "$TEST_DIR:$CLASSPATH" com.luka.carplay.rgd.RgiDeliveryRecoveryTest
 "$JDK_DIR/bin/java" -Xverify:none -cp "$TEST_DIR:$CLASSPATH" com.luka.carplay.rgd.FollowStreetTest
 "$JDK_DIR/bin/java" -Xverify:none -cp "$TEST_DIR:$CLASSPATH" RouteGenerationFuzzTest 0x5eed 20000
 "$JDK_DIR/bin/java" -Xverify:none -cp "$TEST_DIR:$CLASSPATH" com.luka.carplay.rgd.BapShutdownFailureTest
+"$JDK_DIR/bin/java" -Xverify:none -cp "$TEST_DIR:$CLASSPATH" com.luka.carplay.rgd.NavigationStackTest
 "$JDK_DIR/bin/java" -Xverify:none -cp "$TEST_DIR:$CLASSPATH" com.luka.carplay.rgd.ManeuverFieldArrivalTest
 "$JDK_DIR/bin/java" -Xverify:none -cp "$TEST_DIR:$CLASSPATH" com.luka.carplay.rgd.RendererRerouteTransportTest
 "$JDK_DIR/bin/java" -Xverify:none -cp "$TEST_DIR:$CLASSPATH" com.luka.carplay.rgd.CurrentPositionDeliveryTest

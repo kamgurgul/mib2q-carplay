@@ -78,6 +78,11 @@ static void emit(altr_decoder_t *d)
         /* CarPlay H.264 is 4:2:0 8-bit; guard anything else off the callback. */
         f.chroma_shift_w = 1;
         f.chroma_shift_h = 1;
+        /* VUI colour description, when the phone signals one. */
+        f.colorspace = d->frame->colorspace == AVCOL_SPC_BT709 ? ALTR_CS_BT709
+            : (d->frame->colorspace == AVCOL_SPC_BT470BG || d->frame->colorspace == AVCOL_SPC_SMPTE170M)
+              ? ALTR_CS_BT601 : ALTR_CS_UNSPECIFIED;
+        f.full_range = d->frame->color_range == AVCOL_RANGE_JPEG;
         if (f.width > 0 && f.height > 0 && f.y && f.u && f.v) {
             d->frames++;
             if (d->cb) d->cb(d->user, &f);
@@ -94,6 +99,11 @@ altr_decoder_t *altr_decode_create(altr_frame_cb cb, void *user)
 }
 
 altr_decoder_t *altr_decode_create_threads(altr_frame_cb cb, void *user, int threads)
+{
+    return altr_decode_create_opts(cb, user, threads, 0);
+}
+
+altr_decoder_t *altr_decode_create_opts(altr_frame_cb cb, void *user, int threads, int fast)
 {
     altr_decoder_t *d = (altr_decoder_t *)calloc(1, sizeof(*d));
     if (!d) return NULL;
@@ -113,6 +123,13 @@ altr_decoder_t *altr_decode_create_threads(altr_frame_cb cb, void *user, int thr
         /* Low-latency: emit each frame as soon as it decodes. */
         d->ctx->flags |= AV_CODEC_FLAG_LOW_DELAY;
         d->ctx->thread_count = 1;
+    }
+    if (fast) {
+        /* No deblocking and FFmpeg's non-bit-exact shortcuts: blockier edges, roughly a
+         * third less CPU per picture. Only for a stream software cannot otherwise keep up
+         * with (Android Auto 1080p30 on this unit). */
+        d->ctx->skip_loop_filter = AVDISCARD_ALL;
+        d->ctx->flags2 |= AV_CODEC_FLAG2_FAST;
     }
     if (avcodec_open2(d->ctx, d->codec, NULL) < 0) {
         fprintf(stderr, "decode: avcodec_open2 failed\n"); goto fail;

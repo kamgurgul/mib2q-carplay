@@ -23,7 +23,30 @@ typedef struct altr_frame {
     const uint8_t *y, *u, *v;
     int ystride, ustride, vstride;
     int chroma_shift_w, chroma_shift_h; /* 1,1 for 4:2:0 */
+    int colorspace;     /* ALTR_CS_*: the stream's matrix_coefficients (VUI), 0 = not signalled */
+    int full_range;     /* 1 = full-range (JPEG) samples, 0 = video range 16-235 */
 } altr_frame_t;
+
+/* YUV -> RGB matrix of a picture. Unsignalled (the CarPlay and Android Auto streams seen
+ * so far) keeps the BT.601 video-range matrix the renderer always used. */
+enum { ALTR_CS_UNSPECIFIED = 0, ALTR_CS_BT601 = 1, ALTR_CS_BT709 = 2 };
+
+/* r = ys*(Y - yo) + rv*V, g = ys*(Y - yo) - gu*U - gv*V, b = ys*(Y - yo) + bu*U,
+ * with U, V centred on 0 (sample - 0.5) and every value in 0..1. */
+typedef struct altr_yuv_matrix {
+    float ys, yo, rv, gu, gv, bu;
+} altr_yuv_matrix_t;
+
+void altr_yuv_matrix(int colorspace, int full_range, altr_yuv_matrix_t *m);
+
+/* Calibration ruler, one list for the GL path and the hardware blitter: rectangles in
+ * window pixels (origin top-left, as iOS sees the canvas), colour 0xAARRGGBB. Horizontal
+ * lines every 60 px (red 60, orange 120, yellow 180, green 240, cyan 300, blue 360,
+ * magenta 420, white 480), grey verticals every 180 px, a grey border. Returns the count
+ * (at most max). */
+typedef struct altr_rect { int x, y, w, h; uint32_t argb; } altr_rect_t;
+#define ALTR_GRID_MAX_RECTS 24
+int altr_grid_rects(int width, int height, altr_rect_t *out, int max);
 
 typedef void (*altr_frame_cb)(void *user, const altr_frame_t *f);
 
@@ -54,6 +77,10 @@ altr_decoder_t *altr_decode_create(altr_frame_cb cb, void *user);
  * Auto's 30 FPS), roughly threads times the throughput, each picture one AU later. Not
  * for a sparse stream: the last picture of a burst waits for the next AU (or a flush). */
 altr_decoder_t *altr_decode_create_threads(altr_frame_cb cb, void *user, int threads);
+
+/* As above; fast = 1 skips the deblocking filter and allows FFmpeg's non-bit-exact
+ * shortcuts (AV_CODEC_FLAG2_FAST), for a stream software decode cannot keep up with. */
+altr_decoder_t *altr_decode_create_opts(altr_frame_cb cb, void *user, int threads, int fast);
 
 /* Feed Annex-B H.264 bytes (any chunking). Emits frames via the callback.
  * Returns 0 on success, <0 on a fatal decoder error. */

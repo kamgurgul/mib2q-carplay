@@ -43,7 +43,7 @@ design-dependent. The only hard-coded hole rectangles in this area are Night Vis
 ## 📊 HU-side authoritative table (MU1316)
 
 `Layout.getIntegerConstant(id)`, chain `LayoutMIB2HighB9Sport -> LayoutMIB2HighB9 -> LayoutMIB2HighQ7`.
-Classic overrides **only** 58/59/60/61; everything else falls through to Q7.
+Classic (B9) overrides 58/59/60/61 and the map origin 108/109; everything else falls through to Q7.
 
 | id | meaning | Classic (B9) | Sport (B9Sport) |
 |---:|---|---:|---:|
@@ -53,6 +53,21 @@ Classic overrides **only** 58/59/60/61; everything else falls through to Q7.
 | 118-121 | popup crop src (x,y,w,h) | 59, 27, 210x153 | 59, 27, 210x153 |
 | 108 / 109 | map origin (displayables 33, 58) | 0, 26 | 0, 26 |
 | 80 / 81 | small-stage map offset | 0, 0 (Q7) | -476, 0 |
+
+A Q7 runs `LayoutMIB2HighQ7` / `LayoutMIB2HighQ7Sport` (Sport extends Q7 directly, not B9). Same
+ids, read from the MU1329 stock jar; the crops and 81 are as above:
+
+| id | meaning | Q7 | Q7Sport |
+|---:|---|---:|---:|
+| 58 / 59 | in-tube anchor | 1045, 199 | 979, 133 |
+| 60 / 61 | popup anchor | 1083, 112 | 1083, 112 |
+| 108 / 109 | map origin | 0, 18 | 0, 18 |
+| 80 | small-stage map offset | 0 | -460 |
+
+The code reads all of these from the live `Layout`, so the planes are right on both cars. What
+is measured per car is anything laid out *inside* plane 99 by the phone: the Android Auto safe
+areas are B9 numbers and are moved by the difference in 80 and 109
+([Android Auto overview](../android-auto/overview.md), issue #53).
 
 ## 🔄 Stages & visibility (VC-driven)
 

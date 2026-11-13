@@ -27,13 +27,14 @@
 /* The writer logs from its own thread: remember which thread that is, and count lost clients. */
 static pthread_mutex_t seen_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_t writer_thread;
-static int writer_seen, clients_lost;
+static int writer_seen, clients_lost, clients_closed;
 
 void aa_log(const char *fmt, ...)
 {
     pthread_mutex_lock(&seen_lock);
     if (!strncmp(fmt, "tee.client connected", 20)) { writer_thread = pthread_self(); writer_seen = 1; }
     if (!strncmp(fmt, "tee.client lost", 15)) clients_lost++;
+    if (!strncmp(fmt, "tee.client closed its end", 25)) clients_closed++;
     pthread_mutex_unlock(&seen_lock);
 }
 int aa_marker(const char *path) { (void)path; return 0; }
@@ -43,6 +44,15 @@ static int lost(void)
     int n;
     pthread_mutex_lock(&seen_lock);
     n = clients_lost;
+    pthread_mutex_unlock(&seen_lock);
+    return n;
+}
+
+static int closed_end(void)
+{
+    int n;
+    pthread_mutex_lock(&seen_lock);
+    n = clients_closed;
     pthread_mutex_unlock(&seen_lock);
     return n;
 }
@@ -157,13 +167,31 @@ int main(void)
     memset(big, 0x5a, sizeof(big));
     memcpy(big, P1, sizeof(P1));
     for (i = 0; i < 40; i++) aa_tee_frame(big, sizeof(big));   /* 12 MB > budget */
+    (void)aa_tee_keyframe_wanted();
     c = client();
     assert(nothing_for(c, 400));        /* the keyframe was dropped: wait for the next one */
+    /* ... and the tee records that the client needs one (aa_focus.c may ask the phone). */
+    assert(aa_tee_keyframe_wanted() == 1);
     aa_tee_frame(IDR, sizeof(IDR));
     expect(c, SPS_PPS, sizeof(SPS_PPS), IDR, sizeof(IDR), "after overflow: next keyframe");
     aa_tee_frame(P3, sizeof(P3));
     expect(c, P3, sizeof(P3), NULL, 0, "after overflow: live");
+    (void)aa_tee_keyframe_wanted();
+    usleep(250000);
+    assert(aa_tee_keyframe_wanted() == 0);   /* a client that has a keyframe wants nothing */
+
+    /* Back-channel: one byte 'K' from the renderer (damaged picture) is recorded once. */
+    {
+        int kf = 0;
+        assert(write(c, "K", 1) == 1);
+        for (i = 0; i < 50 && !kf; i++) { usleep(20000); kf = aa_tee_keyframe_wanted(); }
+        assert(kf);
+        assert(aa_tee_keyframe_wanted() == 0);
+    }
+    /* A renderer that closes its end is dropped on the next read, not at the next send. */
     close(c);
+    for (i = 0; i < 50 && !closed_end(); i++) usleep(20000);
+    assert(closed_end() == 1);
 
     /* Issue #48. QNX io-pkt generates SIGPIPE for the writer thread on its first send after
      * the renderer closed its end (the 120 s reconnect), and gal keeps the default action, so
@@ -206,6 +234,6 @@ int main(void)
     assert(aa_nal_types(SPS_PPS, sizeof(SPS_PPS)) == ((1u << 7) | (1u << 8)));
 
     printf("aa_tee_test: keyframe gating, SPS/PPS prefix, live, mid-stream join, client replace, "
-           "reset, overflow, SIGPIPE at the writer, client reset PASS\n");
+           "reset, overflow, key frame wanted, back-channel, SIGPIPE at the writer, client reset PASS\n");
     return 0;
 }

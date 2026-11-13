@@ -60,6 +60,19 @@ trap 'rm -rf "$TEST_DIR"' EXIT
 "$TEST_JDK/bin/java" -cp "$TEST_DIR:$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR" \
     com.luka.carplay.core.DomainStartRescueTest
 
+# Cluster video liveness: the renderer's seq heartbeat, counted in Java's own polls.
+mkdir -p "$TEST_DIR/live"
+"$TEST_JDK/bin/javac" -encoding UTF-8 -cp "$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR" \
+    -d "$TEST_DIR" "$PROJECT_DIR/tests/AltScreenLivenessTest.java"
+"$TEST_JDK/bin/java" -cp "$TEST_DIR:$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR" \
+    com.luka.carplay.core.AltScreenLivenessTest "$TEST_DIR/live"
+
+# Long roller press: back to the phone map also while the pause option stopped its stream.
+"$TEST_JDK/bin/javac" -encoding UTF-8 -cp "$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR" \
+    -d "$TEST_DIR" "$PROJECT_DIR/tests/ScreenLongPressTest.java"
+"$TEST_JDK/bin/java" -cp "$TEST_DIR:$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR:$OSGI_LIBS" \
+    com.luka.carplay.core.ScreenLongPressTest
+
 # Siri on a short voice-key press is opt-in (marker); default = stock car voice control.
 "$TEST_JDK/bin/javac" -encoding UTF-8 -cp "$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR" \
     -d "$TEST_DIR" "$PROJECT_DIR/tests/SiriShortPressTest.java"

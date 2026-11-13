@@ -2,7 +2,8 @@
  * altscreen_render — GLES2 YUV420P -> RGB presenter.
  *
  * Uploads a decoded 4:2:0 frame as three luma/chroma textures and draws a
- * full-surface quad with a BT.601 (video-range) YUV->RGB fragment shader.
+ * full-surface quad with a YUV->RGB fragment shader: BT.601 video range, or BT.709 /
+ * full range when the stream signals it (altr_yuv_matrix).
  * The GL calls are guarded for PLATFORM_QNX; on the host this compiles to stubs
  * so the decode path stays testable.
  *

@@ -49,16 +49,20 @@ public final class CarPlaySettingsUi {
     private static final CarPlaySettings settings = CarPlaySettings.onUnit();
     private static final ChoiceModel[] models = new ChoiceModel[CarPlaySettings.COUNT];
     private static final String[] LABELS = {"map", "layout", "guidance", "cards", "preview",
-        "turn", "eta", "speed", "compass", "wide"};
-    /* text offsets: title=0, label/hint pairs=1..20, choice labels=21..31. */
+        "turn", "eta", "speed", "compass", "wide", "aa_map", "aa_daynight", "pause", "hwdec", "fps"};
+    /* text offsets: title=0, label/hint pairs=1..30, choice labels=31..43. */
     private static final String[] TEXT_KEYS = {
         "title", "map", "map.hint", "layout", "layout.hint", "guidance", "guidance.hint",
         "cards", "cards.hint", "preview", "preview.hint", "turn", "turn.hint", "eta", "eta.hint",
         "speed", "speed.hint", "compass", "compass.hint", "wide", "wide.hint",
-        "default", "left", "center", "right", "hidden", "shown", "next", "follow", "off", "on", "phone"
+        "aa_map", "aa_map.hint", "aa_daynight", "aa_daynight.hint", "pause", "pause.hint",
+        "hwdec", "hwdec.hint", "fps", "fps.hint",
+        "default", "left", "center", "right", "hidden", "shown", "next", "follow", "off", "on", "phone",
+        "fps30", "fps60"
     };
     private static final int[][] CHOICES = {
-        null, {21,22,23,24}, null, {25,26}, {27,28}, null, null, {29,30,31}, {29,30,31}, null
+        null, {31,32,33,34}, null, {35,36}, {37,38}, null, null, {39,40,41}, {39,40,41}, null,
+        null, null, null, null, {42,43}
     };
     private static final Object pendingLock = new Object();
     private static final int[] pending = new int[CarPlaySettings.COUNT];
@@ -102,7 +106,7 @@ public final class CarPlaySettingsUi {
                 Process mount = Runtime.getRuntime().exec(new String[]{"/bin/sh", "-c", "unset LD_PRELOAD; PATH=/proc/boot:/bin:/usr/bin:/usr/sbin:/sbin; mount -uw /mnt/app"});
                 mount.waitFor();
                 settings.set(key, value);
-                if (key != CarPlaySettings.MAP && key != CarPlaySettings.GUIDANCE && key != CarPlaySettings.PREVIEW)
+                if (CarPlaySettings.changesMapUrl(key))
                     settings.requestMapRefresh();
                 if (key == CarPlaySettings.GUIDANCE) CarPlayApp.onRouteGuidanceSettingsChanged();
                 if (key == CarPlaySettings.PREVIEW)

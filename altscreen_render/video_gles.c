@@ -26,7 +26,8 @@ struct altr_gles {
     int unpack_row;     /* GL_EXT_unpack_subimage */
     uint8_t *packY, *packU, *packV;
     size_t packYcap, packUcap, packVcap;
-    GLint aPos, aTex, uY, uU, uV;
+    GLint aPos, aTex, uY, uU, uV, uLuma, uChroma;
+    int matrix_cs, matrix_full;   /* matrix last loaded, -1 = none */
 };
 
 static const char *VS =
@@ -35,23 +36,24 @@ static const char *VS =
     "varying vec2 vTex;\n"
     "void main(){ vTex=aTex; gl_Position=vec4(aPos,0.0,1.0); }\n";
 
-/* BT.601 video-range (16-235 / 16-240) YUV -> RGB. CarPlay cluster video is
- * SD-range 4:2:0; if a build ever needs full-range or BT.709, this is the one
- * place to change. */
+/* YUV -> RGB with the picture's matrix (altr_yuv_matrix): BT.601 video range unless the
+ * stream signals BT.709 or full range. */
 static const char *FS =
     "precision mediump float;\n"
     "varying vec2 vTex;\n"
     "uniform sampler2D uY;\n"
     "uniform sampler2D uU;\n"
     "uniform sampler2D uV;\n"
+    "uniform vec2 uLuma;\n"     /* scale, offset */
+    "uniform vec4 uChroma;\n"   /* rv, gu, gv, bu */
     "void main(){\n"
     "  float y=texture2D(uY,vTex).r;\n"
     "  float u=texture2D(uU,vTex).r-0.5;\n"
     "  float v=texture2D(uV,vTex).r-0.5;\n"
-    "  y=1.1643*(y-0.0625);\n"
-    "  float r=y+1.5958*v;\n"
-    "  float g=y-0.39173*u-0.81290*v;\n"
-    "  float b=y+2.017*u;\n"
+    "  y=uLuma.x*(y-uLuma.y);\n"
+    "  float r=y+uChroma.x*v;\n"
+    "  float g=y-uChroma.y*u-uChroma.z*v;\n"
+    "  float b=y+uChroma.w*u;\n"
     "  gl_FragColor=vec4(r,g,b,1.0);\n"
     "}\n";
 
@@ -107,6 +109,9 @@ altr_gles_t *altr_gles_create(int surface_w, int surface_h)
     g->uY = glGetUniformLocation(g->prog, "uY");
     g->uU = glGetUniformLocation(g->prog, "uU");
     g->uV = glGetUniformLocation(g->prog, "uV");
+    g->uLuma = glGetUniformLocation(g->prog, "uLuma");
+    g->uChroma = glGetUniformLocation(g->prog, "uChroma");
+    g->matrix_cs = g->matrix_full = -1;
     g->texY = mktex(); g->texU = mktex(); g->texV = mktex();
     {
         const char *ext = (const char *)glGetString(GL_EXTENSIONS);
@@ -189,6 +194,14 @@ int altr_gles_draw(altr_gles_t *g, const altr_frame_t *f)
     glUniform1i(g->uY, 0);
     glUniform1i(g->uU, 1);
     glUniform1i(g->uV, 2);
+    if (f->colorspace != g->matrix_cs || f->full_range != g->matrix_full) {
+        altr_yuv_matrix_t m;
+        altr_yuv_matrix(f->colorspace, f->full_range, &m);
+        glUniform2f(g->uLuma, m.ys, m.yo);
+        glUniform4f(g->uChroma, m.rv, m.gu, m.gv, m.bu);
+        g->matrix_cs = f->colorspace;
+        g->matrix_full = f->full_range;
+    }
 
     /* Fill the whole cluster surface. Aspect handling (letterbox vs fill) is a
      * geometry decision the cluster integration owns; the default fills. */
@@ -202,42 +215,21 @@ int altr_gles_draw(altr_gles_t *g, const altr_frame_t *f)
     return 0;
 }
 
-/* Calibration ruler over the video, in surface pixels (origin top-left, as iOS
- * sees the advertised canvas). Horizontal lines every 60 px, each its own colour,
- * so one photo of the VC shows which canvas rows are actually visible. */
-static void fill_rect(const altr_gles_t *g, int x, int y, int w, int h,
-                      float r, float gr, float b)
-{
-    glScissor(x, g->sh - y - h, w, h);
-    glClearColor(r, gr, b, 1.f);
-    glClear(GL_COLOR_BUFFER_BIT);
-}
-
+/* Calibration ruler over the video (altr_grid_rects, also drawn by the hardware path).
+ * Rectangles are in window pixels with the origin top-left; GL's is bottom-left. */
 void altr_gles_draw_grid(altr_gles_t *g)
 {
-    static const float colors[8][3] = {
-        {1.f, 0.f, 0.f},   /*  60 red     */
-        {1.f, .5f, 0.f},   /* 120 orange  */
-        {1.f, 1.f, 0.f},   /* 180 yellow  */
-        {0.f, 1.f, 0.f},   /* 240 green   */
-        {0.f, 1.f, 1.f},   /* 300 cyan    */
-        {0.f, 0.f, 1.f},   /* 360 blue    */
-        {1.f, 0.f, 1.f},   /* 420 magenta */
-        {1.f, 1.f, 1.f},   /* 480 white   */
-    };
-    int i, x;
+    altr_rect_t r[ALTR_GRID_MAX_RECTS];
+    int i, n;
     if (!g) return;
+    n = altr_grid_rects(g->sw, g->sh, r, ALTR_GRID_MAX_RECTS);
     glEnable(GL_SCISSOR_TEST);
-    for (x = 180; x < g->sw; x += 180)
-        fill_rect(g, x - 1, 0, 2, g->sh, .5f, .5f, .5f);
-    for (i = 0; i < 8 && (i + 1) * 60 < g->sh; i++)
-        fill_rect(g, 0, (i + 1) * 60 - 3, g->sw, 6,
-                  colors[i][0], colors[i][1], colors[i][2]);
-    /* Canvas edges in grey: if the bottom one is missing, the VC crops below it. */
-    fill_rect(g, 0, 0, g->sw, 4, .6f, .6f, .6f);
-    fill_rect(g, 0, g->sh - 4, g->sw, 4, .6f, .6f, .6f);
-    fill_rect(g, 0, 0, 4, g->sh, .6f, .6f, .6f);
-    fill_rect(g, g->sw - 4, 0, 4, g->sh, .6f, .6f, .6f);
+    for (i = 0; i < n; i++) {
+        glScissor(r[i].x, g->sh - r[i].y - r[i].h, r[i].w, r[i].h);
+        glClearColor(((r[i].argb >> 16) & 255u) / 255.f, ((r[i].argb >> 8) & 255u) / 255.f,
+                     (r[i].argb & 255u) / 255.f, 1.f);
+        glClear(GL_COLOR_BUFFER_BIT);
+    }
     glDisable(GL_SCISSOR_TEST);
 }
 

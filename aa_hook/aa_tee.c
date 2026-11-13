@@ -18,6 +18,12 @@
  * The writer thread blocks SIGPIPE: the renderer closing its end must cost only the
  * client, never gal (issue #48, see writer()).
  *
+ * Back-channel: the renderer may send one byte 'K' when its decoder reports a damaged
+ * picture. The tee cannot make a key frame itself; it records the request, as it does
+ * when a client connects or falls behind after the cached key frame was dropped for the
+ * byte budget, and aa_focus.c may ask the phone for one (opt-in). A client that closes
+ * its end is noticed on the next read instead of the next failed send.
+ *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "aa_hook.h"
@@ -62,6 +68,23 @@ static size_t codec_size;
 static unsigned codec_types;
 static unsigned long drops, sent_aus;
 static int started;
+static int keyframe_wanted;          /* a client needs a key frame the cache no longer has */
+
+/* Timed waits on CLOCK_MONOTONIC where the condition variable takes it (QNX, Linux): a
+ * wall-clock step back would otherwise stall the writer until the next AU. Stays on
+ * CLOCK_REALTIME when pthread_condattr_setclock refuses (aa_tee_start): deadlines from one
+ * clock on a condition variable of the other would all be in the past (a busy loop in gal). */
+static clockid_t tee_clock = CLOCK_REALTIME;
+
+int aa_tee_keyframe_wanted(void)
+{
+    int w;
+    pthread_mutex_lock(&lock);
+    w = keyframe_wanted;
+    keyframe_wanted = 0;
+    pthread_mutex_unlock(&lock);
+    return w;
+}
 
 unsigned aa_nal_types(const void *data, size_t size)
 {
@@ -184,6 +207,7 @@ static size_t next_au_locked(uint64_t *cursor, unsigned char **buf, size_t *cap)
     if (*cursor == 0 || *cursor + 1 < a->seq) {
         /* New, or fell behind the retained list: resume on the first kept keyframe. */
         while (a && !a->key) a = a->next;
+        if (!a) keyframe_wanted = 1;  /* evicted for the byte budget: only a new one helps */
     } else {
         while (a && a->seq <= *cursor) a = a->next;
     }
@@ -252,6 +276,32 @@ static void *writer(void *arg)
         }
         if (cfd < 0) continue;
 
+        {
+            /* Back-channel: 'K' = key frame wanted; 0 bytes = client gone. Read only what
+             * select() reports: the socket is blocking and this thread sends every picture,
+             * so it must not depend on io-pkt honouring MSG_DONTWAIT (it has no MSG_NOSIGNAL). */
+            unsigned char in[16];
+            ssize_t r = -1;
+            fd_set crd;
+            struct timeval now0 = { 0, 0 };
+            FD_ZERO(&crd);
+            FD_SET(cfd, &crd);
+            if (select(cfd + 1, &crd, NULL, NULL, &now0) > 0 && FD_ISSET(cfd, &crd))
+                r = recv(cfd, in, sizeof(in), 0);
+            if (r == 0) {
+                close(cfd);
+                cfd = -1;
+                aa_log("tee.client closed its end sent=%lu drops=%lu", sent_aus, drops);
+                continue;
+            }
+            if (r > 0 && memchr(in, 'K', (size_t)r)) {
+                pthread_mutex_lock(&lock);
+                keyframe_wanted = 1;
+                pthread_mutex_unlock(&lock);
+                aa_log("tee.client keyframe_request (damaged picture)");
+            }
+        }
+
         pthread_mutex_lock(&lock);
         if (client_epoch != epoch) {
             pthread_mutex_unlock(&lock);
@@ -262,7 +312,7 @@ static void *writer(void *arg)
         }
         n = next_au_locked(&cursor, &buf, &cap);
         if (!n) {
-            clock_gettime(CLOCK_REALTIME, &until);
+            clock_gettime(tee_clock, &until);
             until.tv_nsec += 100000000L;
             if (until.tv_nsec >= 1000000000L) { until.tv_sec++; until.tv_nsec -= 1000000000L; }
             pthread_cond_timedwait(&more, &lock, &until);
@@ -299,6 +349,25 @@ int aa_tee_start(int port)
         return -1;
     }
     fcntl(fd, F_SETFD, FD_CLOEXEC);
+#if !defined(__APPLE__)
+    {
+        /* Before the writer exists and before any frame: nothing waits on or signals it yet. */
+        pthread_condattr_t ca;
+        pthread_condattr_init(&ca);
+        if (pthread_condattr_setclock(&ca, CLOCK_MONOTONIC) == 0) {
+            pthread_cond_destroy(&more);
+            if (pthread_cond_init(&more, &ca) == 0) {
+                tee_clock = CLOCK_MONOTONIC;
+            } else {
+                pthread_cond_init(&more, NULL);
+                aa_log("tee.clock monotonic condition variable refused; wall clock");
+            }
+        } else {
+            aa_log("tee.clock CLOCK_MONOTONIC refused; wall clock");
+        }
+        pthread_condattr_destroy(&ca);
+    }
+#endif
     if (pthread_create(&t, NULL, writer, (void *)(intptr_t)fd) != 0) {
         close(fd);
         return -1;

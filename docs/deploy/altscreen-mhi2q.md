@@ -112,7 +112,9 @@ The current view is also the `initialViewArea` of the next `/info`.
 
 Calibration from the GEM **CarPlay-RGI** page:
 
-1. *Calibration grid ON / OFF* — ruler over the video, lines every 60 px.
+1. *Calibration grid ON / OFF* — ruler over the video, lines every 60 px. From 1.5 it is drawn
+   on the hardware decoder's picture too (2D blitter fills before each post); until then it
+   showed only with software decode.
 2. Put `x=`/`y=`/`w=`/`h=` in `carplay_safearea.conf`, `carplay_safearea_small.conf` and/or
    `carplay_safearea_sport.conf` in the card root, press *Apply SafeArea from SD*, reconnect.
 3. *Reset SafeArea to built-in* returns to the table above. *Small-map SafeAreas ON / OFF*
@@ -157,7 +159,7 @@ Hook (`libaltscreen111_mhi2q.so`), env in the carplay child:
 | `ALTSCREEN111_ADVERTISE` | 1 | 0 = `/info` byte-for-byte stock (same as `/mnt/app/mibr-carplay111.noadvertise`, the GEM *Cluster video OFF*) |
 | `ALTSCREEN111_PORT` | 7100 | stream-111 port (§4); `/mnt/app/mibr-carplay111.port` wins |
 | `ALTSCREEN111_WIDTH` / `_HEIGHT` | 1440 / 540 | advertised secondary display |
-| `ALTSCREEN111_FPS` | 30 | advertised max frame rate (`/mnt/app/root/mibr-carplay111-fps` overrides, 5-60; above 30 at own risk, some MHI2Q builds crash at 60. The VC captures plane 99 on a fixed 33 ms timer in `videoencoderservice`, so more than 30 fps does not reach the cockpit; it only adds decode load) |
+| `ALTSCREEN111_FPS` | 30 | advertised max frame rate (`/mnt/app/root/mibr-carplay111-fps` overrides, 5-60; MMI *Cluster Map Frame Rate* writes 60 or removes the file, and the Android Auto hook reads the same file from 1.5; above 30 at own risk, some MHI2Q builds crash at 60. The VC captures plane 99 on a fixed 33 ms timer in `videoencoderservice`, so more than 30 fps does not reach the cockpit; it only adds decode load) |
 | `ALTSCREEN111_WIDTH_MM` / `_HEIGHT_MM` | 290 / 108 | advertised physical size; iOS scales the cluster UI from it (`/mnt/app/root/mibr-carplay111-physical` with `w h` in mm overrides, e.g. `echo 320 120 > …` for the larger MIBSI geometry) |
 | `ALTSCREEN111_TEE_PORT` | 19820 | loopback Annex-B tee |
 | `ALTSCREEN111_INLINE_HOOKS` | 0 | 1 = also install inline prologue hooks if PLT interposition is not on the call path |
@@ -186,7 +188,10 @@ features on wide view ON / OFF*). Each is a value file in `/mnt/app/root/`; abse
 | `wideAll` | `no` | `yes` = on the wide view (ViewArea 0) turn card, ETA, speed limit and compass are all ON, whatever the four files above say; the classic and Sport small maps keep using them. `no` = the four switches apply to every view |
 
 Defaults give `maps:/car/instrumentcluster?showETA=no&showSpeedLimit=no&showCompass=no`; turn card off gives
-`maps:/car/instrumentcluster/map?showETA=…&maneuverLayout=no&showSpeedLimit=…&showCompass=…`. With our BAP/KDK arrow
+`maps:/car/instrumentcluster/map?showETA=…&maneuverLayout=topAligned&showSpeedLimit=…&showCompass=…`. The hidden-card
+URL names `topAligned` on purpose: `no` or no layout selects automatic layout, and a side layout keeps reserving the
+card column as a SafeArea inset even with the cards hidden; top layout with cards and ETA off adds none
+(luka-dev `1299619`, from iOS 26.6/27.0 static analysis, car test pending). With our BAP/KDK arrow
 active the phone's turn card is therefore shown as well unless the turn-card switch is OFF. A GEM press
 with a session up (`command_ready=1` in `/tmp/mibr-alt111-gen2.status`) re-sends `showUI` through
 `/tmp/mibr-alt111-show-only`; otherwise it applies at the next connection. With `wideAll=yes` the URL
@@ -199,6 +204,36 @@ with one `showUI` carrying `showETA=no` and then sends the saved URL (issue #35:
 no ETA after a reconnect or after another app had guided, until the ETA switch went OFF and ON).
 Java still sends
 `CMD_ALT_RGI 0x0116` on route-guidance edges; `altscreen111_set_rgi` only logs it.
+
+**View change animation.** `updateViewArea` carries `animationDurationMillis` 0 (car-tested). An
+earlier trace found the animation inert, but that was before `adjacentViewAreas` made the switch
+work at all, so it is worth one retest: `echo 300 > /mnt/app/root/mibr-carplay111-view.animation`
+(0..1000 ms, read at each switch; logged as `GEN2 updateViewArea animationDurationMillis=…`).
+
+**Pause while hidden (opt-in, 1.5).** Java reports with `CMD_ALT_HIDDEN 0x0119` whether the cockpit
+shows the phone map (hidden = another VC tab, or the Audi map picked with a long roller press).
+With `/mnt/app/root/cluster_video.pause_hidden` (GEM *Pause cluster map while hidden*, MMI
+*Pause Hidden Cluster Map*) the hook sends `stopUI` while hidden and `showUI` (then
+`updateViewArea`, `forceKeyFrame`) when the map is back, so the phone does not draw and encode a
+map nobody sees; the cockpit keeps the last picture meanwhile. Without the marker a hidden map
+keeps streaming as before. Car test pending: whether iOS keeps stream 111 open across `stopUI`.
+
+**Slow renderer (1.5).** The hook queues up to 32 access units (about 1 s) for the renderer. When
+it is full, the unsent backlog is dropped, pictures are skipped until the next IDR on the same
+connection and the phone is asked for one (`forceKeyFrame`), logged as `gen2 video AU queue full
+… backlog dropped, key frame requested`. Until 1.4 a full 16-AU queue reset the renderer's
+connection (`gen2 video AU rc=2 -> consumer reset`), which cost a reconnect and, with hardware
+decode, a new decoder. A renderer still priming (its first IDR not yet sent) is reset as before,
+and so is one that delivered nothing between two overflows (it stopped reading). The status file
+counts the skips (`resyncs=`).
+
+**Key-frame back-channel (1.5).** `altscreen_render` writes one byte `K` on the tee socket when its
+decoder reports a damaged picture (at most every `ALTR_KEYFRAME_GAP_MS`, 2 s); the hook answers
+with `forceKeyFrame` through its serialized command queue (`gen2 renderer asked for a key frame`).
+A renderer that closes the tee is noticed on the next read (`gen2 renderer closed the tee`).
+The hook's output worker now sleeps on its condition variable while there is nothing to send,
+and the control worker reads its marker files at most every 250 ms (it read about nine every
+10 ms before).
 
 The turn-card URL carries no `maneuverLayout`: 1.2's `rightAligned` pinned the app's card to the SafeArea's
 right edge and the app moved the puck left of it (issue #20; on the Sport skin the card also sat
@@ -217,12 +252,37 @@ Renderer (`altscreen_render`):
 | `ALTR_DISPLAYABLE_ID` | 99 | cluster plane id (also in `DisplayManagerMIB2High.dc[81]/dc[82]`) |
 | `ALTR_LIVE_FILE` | `/tmp/altscreen_render.live` | heartbeat (`pid=`), refreshed while frames are presented |
 | `ALTR_LIVE_TIMEOUT_MS` | 0 | heartbeat removed if no frame within this; 0 = kept while the tee is connected (the hook closes it when stream 111 ends) |
-| `ALTR_STATUS_FILE` | `/tmp/altscreen_render.status` | `state=`, size, `frames=` |
-| `/mnt/app/root/altscreen_render.hwdecode.off` | absent | software decode (GEM *HW decoder ON / OFF*); `/tmp/…` for this boot only |
+| `ALTR_STATUS_FILE` | `/tmp/altscreen_render.status` | `state=`, size, `frames=`; from 1.5 also `decoder=` (hardware, software, suspended, frozen, none), `hw_off=` (the marker that keeps hardware off), `connections=`, `keyframe_requests=`, `damaged=`. GEM *Cluster video status* prints it |
+| `ALTR_AA_SW_FAST` | 0 | 1 = the Android Auto software fallback skips the deblocking filter (about a third less CPU). Off by default: the picture then drifts until the next key frame, a minute or two away |
+| `/mnt/app/root/altscreen_render.noasm` | absent | FFmpeg's plain C code instead of its ARM/NEON assembly (GEM *Software decoder plain C (no NEON)*; read at renderer start). After an illegal instruction the renderer creates `/tmp/altscreen_render.noasm` itself and restarts on C code |
+| `ALTR_KEYFRAME_GAP_MS` | 2000 | at most one key-frame request over the tee back-channel per this many ms |
+| `/mnt/app/root/altscreen_render.hwdecode.off` | absent | software decode (GEM *HW decoder ON / OFF*); `/tmp/…` for this boot only. From 1.5 the renderer writes the persistent one only after a hung video core; any other hardware failure writes the `/tmp` one (this boot only) |
 | `/mnt/app/root/altscreen_render.hwdecode.delayed` | absent | CarPlay and Android Auto wait `ALTR_HW_MIN_UPTIME_S` (120 s) after boot before hardware decode, software until then (GEM *HW decoder 2-min delayed start*); absent = hardware at once, kept apart from the main screen's decoder by the main-screen yield |
 
 The renderer runs at QNX priority 15 (like `maneuver_render`): at the default 10 the compositor's
 workers can stall every renderer thread for 300-650 ms at once (measured upstream, 2026-10-09).
+
+`.live` holds `pid=` and, from 1.5, `seq=` (a counter bumped on every rewrite). Java counts its own
+250 ms polls since `seq` last changed and treats more than four as stale, so a wall-clock step or
+a coarse mtime cannot drop a live picture; a file without `seq=` (older renderer) is still judged
+by its mtime.
+
+**End of a stream (1.5).** With hardware decode the last picture stays on window 99 for 1.5 s while
+the decoder is already closed (`ALTR_DISCONNECT_FREEZE_MS`). Both hooks keep their tee listening
+for as long as their process lives, so a new tee connection alone is not a new stream: the frozen
+picture stays until that source sends bytes, and then its decoder reopens on the same window
+(`new carplay stream; decoder resumes on the frozen window`), with no black frame and no new
+window. Another phone type, or 1.5 s without a new stream, releases the window. Before this, the
+renderer's immediate reconnect to the CarPlay hook ended the freeze at once, and closing the
+frozen decoder after its connection was gone dereferenced a cleared source pointer (renderer
+crash at a session end).
+
+The software fallback uses FFmpeg's ARM/NEON assembly from 1.5 (`FFMPEG_NEON=0
+scripts/build_altscreen_render.sh` builds the plain C decoder of 1.4). On QNX FFmpeg picks NEON from
+its build flags, not the CPU, so the renderer checks the syspage (`ARM_CPU_FLAG_NEON`) at start and
+turns NEON off when the CPU does not report it: `CPU NEON yes; software decoder uses NEON` in
+`altscreen_render.log`. The GL path's YUV->RGB matrix follows the stream's VUI colour description
+(BT.709, full range); unsignalled streams keep the BT.601 video-range matrix used so far.
 
 Stock NAVSD *INITIALIZING* ("Initialising navigation system", stock navigation still loading after a
 cold boot) also covers plane 99 until stock navigation reports ready. It is not deferred: upstream
@@ -253,6 +313,11 @@ start navigation, collect logs again. Walk the chain and stop at the first missi
 | 6 | `/tmp/altscreen_render.log` | `connected to tee`, `GL up on displayable 99` | displayable not bound: `dmdt gd` |
 | 7 | `/tmp/carplay_java.log` | `altScreen video live -> ctx 81/82`, `cluster -> ctx 81` (or 82) | heartbeat stale or `AltScreenModule` disabled |
 | 8 | same | `ClusterLayers apply … video=on videoDst=(x,y)` | plane 99 position/opacity |
+
+GEM *Cluster video status* shows steps 5-6 and the stream-111 counters without pulling logs:
+the renderer's `state=`, `decoder=`, `hw_off=` and counters, whether `.live` exists, the hook's
+`source_aus` / `delivered_aus` / `dropped_aus`, the last Android Auto hook events and which opt-in
+switches are set.
 
 `sloginfo` is a ~90 s ring dominated by normal cluster-video traffic (`devp-iso-mmx`,
 `videoCore`, `vpeCore`, `MMPM` lines are baseline noise); use the logs above for anything
