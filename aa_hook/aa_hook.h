@@ -32,6 +32,17 @@
 /* 1.4 UiConfig: content insets only, in full-frame coordinates (fallback, issue #53) */
 #define AA_MARKER_UICONFIG_LEGACY AA_MARKER_DIR "aa_cluster.uiconfig_legacy"
 #endif
+#ifndef AA_MARKER_TURNCARD
+/* opt-in: tell the phone the car draws the turn card, so the map app hides its own (issue #56) */
+#define AA_MARKER_TURNCARD     AA_MARKER_DIR "aa_cluster.turncard"
+#endif
+/* Route guidance off (GEM / MMI "Route guidance"): the car then draws no turn card. */
+#ifndef AA_MARKER_RGD_OFF
+#define AA_MARKER_RGD_OFF      "/mnt/app/carplay_rgd.disabled"
+#endif
+#ifndef AA_MARKER_RGD_OFF_TMP
+#define AA_MARKER_RGD_OFF_TMP  "/tmp/carplay_rgd.disabled"
+#endif
 /* Files; overridable for host tests. */
 #ifndef AA_FILE_DPI
 #define AA_FILE_DPI            AA_MARKER_DIR "aa_cluster.dpi"           /* one number, 80..400 */
@@ -125,5 +136,6 @@ void aa_relayout_tick(void *sink);
 unsigned aa_relayout_message(unsigned char *out, unsigned max, int view, unsigned theme);
 int aa_view_state(void);
 unsigned aa_theme_state(void);
+int aa_turncard_state(void);
 
 #endif

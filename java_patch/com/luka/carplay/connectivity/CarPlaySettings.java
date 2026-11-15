@@ -13,11 +13,12 @@ import java.io.IOException;
 public final class CarPlaySettings {
     public static final int MAP = 0, LAYOUT = 1, GUIDANCE = 2, CARDS = 3, PREVIEW = 4;
     public static final int TURN = 5, ETA = 6, SPEED = 7, COMPASS = 8, WIDE = 9;
-    /* 1.5: the Android Auto GEM switches, and the opt-in pause of a hidden cluster map. */
-    public static final int AA_MAP = 10, AA_DAYNIGHT = 11, PAUSE_HIDDEN = 12;
+    /* 1.5: the Android Auto GEM switches (AA_TURNCARD: the phone leaves its turn card off the
+     * cluster map, issue #56), and the opt-in pause of a hidden cluster map. */
+    public static final int AA_MAP = 10, AA_DAYNIGHT = 11, AA_TURNCARD = 12, PAUSE_HIDDEN = 13;
     /* Cluster video decoder and the cluster stream's frame rate, both phone types. */
-    public static final int HW_DECODER = 13, FPS = 14;
-    public static final int COUNT = 15;
+    public static final int HW_DECODER = 14, FPS = 15;
+    public static final int COUNT = 16;
     /* Frame rates offered: 30 (default, no file) or 60, the two Android Auto knows; the CarPlay
      * hook takes the same file. The cockpit itself captures the map at 30 fps. */
     private static final int[] FPS_VALUES = {30, 60};
@@ -30,10 +31,11 @@ public final class CarPlaySettings {
         "carplay_rgd.next_maneuver", "root/mibr-carplay111-nav.showManeuver",
         "root/mibr-carplay111-nav.showETA", "root/mibr-carplay111-nav.showSpeedLimit",
         "root/mibr-carplay111-nav.showCompass", "root/mibr-carplay111-nav.wideAll",
-        "root/aa_cluster.off", "root/aa_cluster.daynight", "root/cluster_video.pause_hidden",
+        "root/aa_cluster.off", "root/aa_cluster.daynight", "root/aa_cluster.turncard",
+        "root/cluster_video.pause_hidden",
         "root/altscreen_render.hwdecode.off", "root/mibr-carplay111-fps"
     };
-    private static final int[] DEFAULTS = {1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0};
+    private static final int[] DEFAULTS = {1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0};
     private static final String[] LAYOUTS = {"", "left", "top", "right"};
     private final File root, temporary;
 
@@ -49,7 +51,7 @@ public final class CarPlaySettings {
 
     /** Marker files: the file's presence alone is the setting. Off markers mean 0 when present. */
     private static boolean offMarker(int key) { return key == MAP || key == GUIDANCE || key == PREVIEW || key == AA_MAP; }
-    private static boolean onMarker(int key) { return key == AA_DAYNIGHT || key == PAUSE_HIDDEN; }
+    private static boolean onMarker(int key) { return key == AA_DAYNIGHT || key == AA_TURNCARD || key == PAUSE_HIDDEN; }
     /** Settings that change the CarPlay cluster URL (the hook re-sends showUI for them). */
     public static boolean changesMapUrl(int key) { return key >= LAYOUT && key <= WIDE && key != GUIDANCE && key != PREVIEW; }
 

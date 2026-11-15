@@ -43,6 +43,22 @@
  * session connected with and a day/night change applies from the next connect. Missing or
  * garbled record = dark.
  *
+ * Turn card (issue #56, opt-in marker aa_cluster.turncard, GEM "Android Auto hide phone turn
+ * card"): with route guidance on, the cockpit shows the car's own arrow tile next to the map,
+ * and the navigation app draws its turn card on the map as well. UiConfig field 5 is the list of
+ * UI elements the car shows itself; value 5 (NAVIGATION_TURN_DATA_AVAILABLE, the phone's
+ * hasClusterTurnCard) makes the app leave its card out. Field and value are from APK analysis
+ * (mrmees/open-android-auto, AdditionalVideoConfigData.proto), not from a Google specification:
+ * the 2016 receiver knows none of UiConfig. The phone honours the list only for a requested
+ * protocol of 4.3 or newer, which aa_hook.c asks for. NuiQuant's on-car test (A4 B9, Google
+ * Maps and Yandex, the 1.4 encoding): card gone with the flag, back without it. Sent only with
+ * the marker AND route guidance on (no carplay_rgd.disabled), because without route guidance
+ * the car has no card to show instead. Decided at phone connect and kept for the session, like
+ * the theme: every 0x8009 repeats the connect-time value, so a UiConfig field other than the
+ * insets never changes in a running session (issue #19). What this cannot follow: the cockpit
+ * hiding the arrow tile during a route, or an app that sends no turn events; the phone's card
+ * stays hidden then.
+ *
  * Optional file aa_cluster.insets: 12 numbers, "top bottom left right" in viewport pixels
  * (0..540 / 0..1440) for full, classic, sport, in that order. Read at phone connect and sent
  * as written (measured on the owner's car, so not moved with the layout).
@@ -62,6 +78,7 @@
 #define VIEW_SPORT   2
 #define UI_THEME_LIGHT 1u
 #define UI_THEME_DARK 2u
+#define UI_ELEMENT_TURN_CARD 5u   /* UI_ELEMENT_NAVIGATION_TURN_DATA_AVAILABLE */
 #define VP_OX ((uint32_t)AA_MARGIN_W / 2u)
 #define VP_OY ((uint32_t)AA_MARGIN_H / 2u)
 
@@ -81,6 +98,7 @@ static int geo_dx = REF_STAGE_DX, geo_y = REF_MAP_Y;   /* layout the next UiConf
 static int conn_view;        /* layout sent at connect */
 static unsigned conn_theme = UI_THEME_DARK;   /* theme sent at connect */
 static int conn_legacy;      /* 1.4 encoding for this session (aa_cluster.uiconfig_legacy) */
+static int conn_turncard;    /* this session tells the phone the car draws the turn card */
 
 static uint32_t rd(const void *p, unsigned off) { uint32_t v; memcpy(&v, (const char *)p + off, 4); return v; }
 static void wr(void *p, unsigned off, uint32_t v) { memcpy((char *)p + off, &v, 4); }
@@ -182,6 +200,14 @@ unsigned aa_theme_state(void)
 
 static const char *theme_name(unsigned theme) { return theme == UI_THEME_LIGHT ? "light" : "dark"; }
 
+/* 1 = tell the phone the car draws the turn card: the opt-in marker, and route guidance not
+ * switched off (either of the two files RgdModule reads). */
+int aa_turncard_state(void)
+{
+    return aa_marker(AA_MARKER_TURNCARD)
+        && !aa_marker(AA_MARKER_RGD_OFF) && !aa_marker(AA_MARKER_RGD_OFF_TMP);
+}
+
 /* One Insets field: tag, len, {0x08 top, 0x10 bottom, 0x18 left, 0x20 right}. Values stay
  * below 16384 (2-byte varints), so a field is at most 14 bytes. */
 static unsigned insets_field(unsigned char *out, unsigned char tag,
@@ -198,10 +224,11 @@ static unsigned insets_field(unsigned char *out, unsigned char tag,
     return n + ni;
 }
 
-#define UICONFIG_MAX (3u * 14u + 2u)
+#define UICONFIG_MAX (3u * 14u + 2u + 2u)
 
 /* UiConfig body: 0x0a margins, 0x12 content insets, 0x1a stable insets (viewport-relative),
- * then 0x20 theme. Legacy (1.4): only 0x12, in frame coordinates, and the theme. */
+ * then 0x20 theme. Legacy (1.4): only 0x12, in frame coordinates, and the theme. Either way
+ * 0x28 5 follows when the session hides the phone's turn card (field 5, one list element). */
 static unsigned uiconfig_body(unsigned char *ui, unsigned max, int view, unsigned theme)
 {
     unsigned nu = 0;
@@ -216,6 +243,7 @@ static unsigned uiconfig_body(unsigned char *ui, unsigned max, int view, unsigne
         nu += insets_field(ui + nu, 0x1a, vi[0], vi[1], vi[2], vi[3]);
     }
     ui[nu++] = 0x20; ui[nu++] = (unsigned char)theme;
+    if (conn_turncard) { ui[nu++] = 0x28; ui[nu++] = UI_ELEMENT_TURN_CARD; }
     return nu;
 }
 
@@ -245,9 +273,10 @@ int aa_fps(void)
     return f;
 }
 
-/* The payload (~45 bytes, ~20 legacy) is longer than the 15-byte SSO buffer, so it goes into a heap
- * string from the library's own operator new (heap mode when reserve >= 16, freed by the
- * receiver with operator delete) - confirmed on the car by the fork. */
+/* The payload (~45 bytes, ~20 legacy, 2 more with the turn-card flag) is longer than the
+ * 15-byte SSO buffer, so it goes into a heap string from the library's own operator new (heap
+ * mode when reserve >= 16, freed by the receiver with operator delete) - confirmed on the car
+ * by the fork. */
 typedef void *(*opnew_fn)(unsigned);
 static char *heap_copy(const unsigned char *p, unsigned n)
 {
@@ -283,6 +312,7 @@ static void apply(void *vconf, const char *where)
     conn_view = view;
     conn_theme = aa_theme_state();
     conn_legacy = aa_marker(AA_MARKER_UICONFIG_LEGACY);
+    conn_turncard = aa_turncard_state();
     nu = uiconfig_body(ui, sizeof(ui), view, conn_theme);
     if (!nu) return;
     p[n++] = 0x5a;                      /* VideoConfiguration field 11 = UiConfig */
@@ -296,9 +326,9 @@ static void apply(void *vconf, const char *where)
     wr(vconf, 0x1c, n);
     view_insets(view, geo_dx, geo_y, vi);
     aa_log("uiconfig.set where=%s view=%d top=%u bottom=%u left=%u right=%u %s stage_dx=%d map_y=%d"
-           " theme=%s encoding=%s bytes=%u", where, view, vi[0], vi[1], vi[2], vi[3],
+           " theme=%s encoding=%s turncard=%s bytes=%u", where, view, vi[0], vi[1], vi[2], vi[3],
            preset_file ? "file" : "preset", geo_dx, geo_y, theme_name(conn_theme),
-           conn_legacy ? "legacy" : "viewport", n);
+           conn_legacy ? "legacy" : "viewport", conn_turncard ? "car" : "phone", n);
 }
 
 void aa_uiconfig_sink(void *sink)
@@ -365,7 +395,7 @@ static uint64_t mono_ms(void)
  * up on one call is sent on the next one. A change is another view, or the same view with other
  * insets: the stock layout arriving after a connect that still had the fallback one. The theme
  * never changes mid-session (issue #19): every 0x8009 carries conn_theme, and a new day/night
- * state is only logged, once. */
+ * state is only logged, once. The same goes for the turn-card flag. */
 void aa_relayout_tick(void *sink)
 {
     static void *cur_sink;
@@ -373,9 +403,10 @@ void aa_relayout_tick(void *sink)
     static int sent_view, pending_view = -1, pending_dx, pending_y, off;
     static uint32_t sent_in[4];
     static unsigned deferred_theme;
+    static int deferred_turncard;
     uint64_t now;
     uint32_t in[4];
-    int view, dx, y;
+    int view, dx, y, turncard;
     unsigned theme;
     if (!sink) return;
     if (sink != cur_sink || !((const unsigned char *)sink)[4]) {   /* new session or channel closed */
@@ -384,6 +415,7 @@ void aa_relayout_tick(void *sink)
         sent_view = conn_view;
         view_insets(conn_view, geo_dx, geo_y, sent_in);
         deferred_theme = conn_theme;
+        deferred_turncard = conn_turncard;
         pending_view = -1;
         off = aa_marker(AA_MARKER_RELAYOUT_OFF);
         if (!cur_sink) return;
@@ -416,5 +448,11 @@ void aa_relayout_tick(void *sink)
         deferred_theme = theme;
         aa_log("theme.deferred theme=%s session=%s (applies at the next phone connect)",
                theme_name(theme), theme_name(conn_theme));
+    }
+    turncard = aa_turncard_state();
+    if (turncard != deferred_turncard) {
+        deferred_turncard = turncard;
+        aa_log("turncard.deferred turncard=%s session=%s (applies at the next phone connect)",
+               turncard ? "car" : "phone", conn_turncard ? "car" : "phone");
     }
 }

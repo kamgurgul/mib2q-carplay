@@ -1,4 +1,4 @@
-# mib2q-carplay 1.5 (in development) - changelog
+# mib2q-carplay 1.5 - changelog
 
 Changes since [1.4.1](CHANGELOG-1.4.1.md). Entries marked *car test pending* passed the bench
 tests but have not been driven yet.
@@ -175,6 +175,30 @@ under each section.
   the cluster display, hence opt-in (a mid-session theme change dropped the session, #19). A
   request inside the 10 s gap is served when the gap is over; nothing is sent before the sink's
   own setup.
+- **Android Auto: hide the phone's turn card on the cluster map** (opt-in, experimental; GEM
+  button *Android Auto hide phone turn card ON / OFF*, MMI *Hide Android Auto Turn Card*, marker
+  `/mnt/app/root/aa_cluster.turncard`;
+  issue [#56](https://github.com/kamgurgul/mib2q-carplay/issues/56)). *Car test pending* for
+  this implementation. With route guidance on, the cockpit showed two turn cards: the car's
+  arrow tile and the navigation app's own card on the map. With the marker, the cluster
+  display's UiConfig lists the turn card as drawn by the car (field 5 = `[5]`,
+  `UI_ELEMENT_NAVIGATION_TURN_DATA_AVAILABLE`, the phone's `hasClusterTurnCard`), and the app
+  leaves its own out. Field and value come from APK analysis
+  ([open-android-auto](https://github.com/mrmees/open-android-auto)), not from a Google
+  specification; the phone honours them only for a requested protocol of 4.3 or newer, which the
+  hook already asks for. NuiQuant's on-car test of PR #57 (A4 B9, Google Maps and Yandex, on
+  1.4.1) showed the card gone with the flag and present without it. Differences from that PR:
+  opt-in; the flag is sent only while *Route guidance* is ON (the two `carplay_rgd.disabled`
+  files), since otherwise the car has no card to show; and it is decided when the phone connects
+  and repeated unchanged by every layout update, because changing a UiConfig field other than
+  the insets in a running session is what dropped Android Auto in #19. `aa_cluster_hook.log`:
+  `uiconfig.set ... turncard=car|phone`, and `turncard.deferred` when the switch or route
+  guidance changes while connected. Limits: the flag does not follow the cockpit hiding the
+  arrow tile during a route, and an app that sends no turn events then shows no turn card at
+  all. In the photos of that test, with the card hidden, Google Maps' ETA line was not visible
+  in the large view and sat behind the street-name bar in Sport; those were the 1.4 insets, so
+  this needs a look with the 1.5 ones (the cockpit shows the arrival time itself). The jar
+  only carries the MMI switch; the flag itself needs the new `libaa_cluster_hook.so`.
 - **Pause the cluster map while the cockpit hides it** (opt-in, experimental, both phone
   types; GEM button, MMI *Pause Hidden Cluster Map*, marker
   `/mnt/app/root/cluster_video.pause_hidden`): while the VC shows another tab or the Audi map
@@ -184,9 +208,9 @@ under each section.
   `/tmp/aa_cluster_hidden`. The long roller press back to the phone map now also works while the
   phone video is not live (the paused stream is exactly that case); picking the Audi map still
   needs live video.
-- **Android Auto switches in the MMI:** *Android Auto Map on Cluster* and *Android Auto Day/Night
-  Map* join the CarPlay settings (*Connection manager → Options → CarPlay settings*), with the
-  pause switch above; 14 languages. They write the same marker files as the GEM buttons.
+- **Android Auto switches in the MMI:** *Android Auto Map on Cluster*, *Android Auto Day/Night
+  Map* and *Hide Android Auto Turn Card* join the CarPlay settings (*Connection manager → Options
+  → CarPlay settings*), with the pause switch above; 14 languages. They write the same marker files as the GEM buttons.
 - **Decoder and frame rate in the MMI:** *Hardware Video Decoder* (the GEM *HW decoder ON / OFF*
   files, both phone types; it also shows off when the renderer switched hardware off for this
   boot, and ticking it clears those markers for a fresh try) and *Cluster Map Frame Rate*, 30 or
@@ -219,9 +243,11 @@ under each section.
   it), `tests/aa_focus_test.c` (opt-in pause and refocus, nothing sent without the markers);
   `altscreen_view_test` covers the YUV matrices and the ruler, `aa_tee_test` the back-channel
   and the evicted-key-frame flag, a contract check that both hooks and Java agree on the pause
-  marker and the hidden record. Java: `AltScreenLivenessTest` (seq heartbeat, wall-clock
+  marker and the hidden record. `aa_uiconfig_test` pins the bytes with the turn-card flag in
+  both encodings, the route-guidance condition and that a switch change mid-session sends
+  nothing. Java: `AltScreenLivenessTest` (seq heartbeat, wall-clock
   independent), `ScreenLongPressTest` (back to the phone map while paused);
-  `CarPlaySettingsTest` / `SettingsModelTest` cover the three new settings.
+  `CarPlaySettingsTest` / `SettingsModelTest` cover the new settings.
 - Review fixes before the first car test: the Android Auto tee reads its back-channel only when
   `select()` reports data (its socket is blocking and that thread sends every picture; no
   reliance on `MSG_DONTWAIT`); the monotonic condition variables fall back to the wall clock,

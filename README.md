@@ -63,7 +63,7 @@ CarPlay or Android Auto automatically.
   card and ETA while the cockpit shows native guidance), Guidance Maneuver Preview (always the
   next maneuver, or follow road while it is far away), plus the GEM map switches (turn card,
   ETA, speed limit, compass, all features in wide view) and, from 1.5, the Android Auto cluster
-  map and day/night switches, *Pause Hidden Cluster Map*, *Hardware Video Decoder* (hardware or
+  map, day/night and *Hide Android Auto Turn Card* switches, *Pause Hidden Cluster Map*, *Hardware Video Decoder* (hardware or
   software decoding of the cluster map) and *Cluster Map Frame Rate* (30 or 60). They write the same files as the GEM
   buttons, so both menus always agree. Host-tested; car validation pending.
   Status and open issues are in
@@ -207,7 +207,7 @@ This runs every build below in order, then replaces
 To package a versioned release (the layout of the GitHub release zips) instead:
 
 ```sh
-./scripts/build_release.sh              # full build, then release/mib2q-carplay-1.4.1/ and .zip
+./scripts/build_release.sh              # full build, then release/mib2q-carplay-1.5/ and .zip
 NO_BUILD=1 ./scripts/build_release.sh   # package the build that is already staged
 ```
 
@@ -339,6 +339,7 @@ Its buttons run byte-identical copies of the M.I.B. mods, stored on the unit in
 | Software decoder plain C (no NEON) ON / OFF | the software fallback decoder uses FFmpeg's C code instead of its ARM/NEON assembly (default OFF = NEON; after the next reboot). For a unit where the 1.5 software decoder misbehaves | no |
 | Android Auto cluster map ON / OFF | Android Auto cluster map on/off (next phone connect) | no |
 | Android Auto cluster day/night ON / OFF | opt-in, experimental: the Android Auto cluster map follows the MMI day/night design instead of always dark (picked at each phone connect) | no |
+| Android Auto hide phone turn card ON / OFF | opt-in, experimental (1.5): while *Route guidance* is ON, the phone is told that the car draws the turn card, so Google Maps, Yandex and other apps leave their own card off the cluster map and only the car's arrow remains (picked at each phone connect; MMI *Hide Android Auto Turn Card*) | no |
 | Android Auto cluster key frame on demand ON / OFF | opt-in, experimental: when the cluster map needs a key frame, ask the phone for one (video focus bounce, at most every 10 s) instead of waiting up to a minute or two for its next one | no |
 | Siri on short voice-key press ON / OFF | opt-in: with CarPlay connected a short press of the wheel voice key opens Siri instead of the car's voice control (default OFF; applies at once) | no |
 | Touchpad as D-pad ON / OFF | MMI touchpad as CarPlay D-pad, or stock touchpad input (next CarPlay connect) | no |

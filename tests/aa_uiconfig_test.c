@@ -3,8 +3,8 @@
  * around the 1440x540 viewport, then the B9 viewport presets as content and stable insets,
  * issue #53; the 1.4 encoding behind aa_cluster.uiconfig_legacy), the connect-time UiConfig in
  * the VideoConfiguration, the view record Java writes with the stock layout's geometry and how
- * the presets follow it (Q7, issue #53), the density file, the insets override file and the
- * opt-in day/night theme.
+ * the presets follow it (Q7, issue #53), the density file, the insets override file, the
+ * opt-in day/night theme and the opt-in turn-card flag (issue #56).
  * Build with -DAA_VIEW_PATH / -DAA_FILE_INSETS / -DAA_FILE_DPI / -DAA_THEME_PATH pointing at a
  * temp dir.
  *
@@ -19,10 +19,15 @@
 void aa_log(const char *fmt, ...) { (void)fmt; }
 static int daynight;          /* aa_cluster.daynight present */
 static int legacy;            /* aa_cluster.uiconfig_legacy present */
+static int turncard;          /* aa_cluster.turncard present */
+static int rgd_off, rgd_off_tmp;   /* /mnt/app/carplay_rgd.disabled, /tmp/carplay_rgd.disabled */
 int aa_marker(const char *path)
 {
     return (daynight && !strcmp(path, AA_MARKER_DAYNIGHT))
-        || (legacy && !strcmp(path, AA_MARKER_UICONFIG_LEGACY));
+        || (legacy && !strcmp(path, AA_MARKER_UICONFIG_LEGACY))
+        || (turncard && !strcmp(path, AA_MARKER_TURNCARD))
+        || (rgd_off && !strcmp(path, AA_MARKER_RGD_OFF))
+        || (rgd_off_tmp && !strcmp(path, AA_MARKER_RGD_OFF_TMP));
 }
 
 #define V2(v) (unsigned char)(0x80 | ((v) & 0x7f)), (unsigned char)((v) >> 7)
@@ -64,6 +69,7 @@ static unsigned want_body(unsigned char *o, int old, unsigned t, unsigned b, uns
         n += enc_insets(o + n, 0x1a, t, b, l, r);
     }
     o[n++] = 0x20; o[n++] = (unsigned char)theme;
+    if (conn_turncard) { o[n++] = 0x28; o[n++] = 5; }   /* field 5: the car draws the turn card */
     return n;
 }
 
@@ -226,6 +232,67 @@ int main(void)
         unlink(AA_VIEW_PATH);
     }
 
+    /* Issue #56, opt-in aa_cluster.turncard: UiConfig field 5 = [5] tells the phone the car
+     * draws the turn card. Only with the marker and route guidance on; picked at connect, in
+     * both encodings, and repeated by the session's view changes. */
+    {
+        /* The B9 full view with the flag, pinned: the bytes above plus 0x28 5. */
+        static const unsigned char card_wire[] = {
+            0x80, 0x09, 0x0a, 44,
+            0x0a, 12, 0x08, V2(270), 0x10, V2(270), 0x18, V2(240), 0x20, V2(240),
+            0x12, 11, 0x08, 97, 0x10, V2(176), 0x18, V2(350), 0x20, V2(370),
+            0x1a, 11, 0x08, 97, 0x10, V2(176), 0x18, V2(350), 0x20, V2(370),
+            0x20, 2, 0x28, 5 };
+        static const unsigned char card_legacy[] = {
+            0x80, 0x09, 0x0a, 18,
+            0x12, 12, 0x08, V2(97 + 270), 0x10, V2(176 + 270), 0x18, V2(350 + 240), 0x20, V2(370 + 240),
+            0x20, 2, 0x28, 5 };
+        unsigned char vconf[0x40];
+        int i;
+        assert(!aa_turncard_state());                       /* default: the phone keeps its card */
+        rgd_off = 1;      assert(!aa_turncard_state());
+        rgd_off = 0;
+        turncard = 1;     assert(aa_turncard_state());
+        rgd_off = 1;      assert(!aa_turncard_state());     /* route guidance off: no card on the car */
+        rgd_off = 0; rgd_off_tmp = 1;
+        assert(!aa_turncard_state());                       /* off for this boot only */
+        rgd_off_tmp = 0;
+
+        for (i = 0; i < 2; i++) {                           /* viewport, then legacy encoding */
+            const unsigned char *want = i ? card_legacy : card_wire;
+            unsigned wn = i ? (unsigned)sizeof(card_legacy) : (unsigned)sizeof(card_wire);
+            legacy = i;
+            memset(vconf, 0, sizeof(vconf));
+            wr(vconf, 0x28, AA_CODEC_RES_1080P);
+            apply(vconf, "test");                           /* no view record: full */
+            assert(conn_turncard && conn_legacy == i);
+            assert(rd(vconf, 0x18) == wn - 2 && rd(vconf, 0x1c) == wn - 2 && new_len == wn - 1);
+            assert(new_buf[0] == 0x5a && new_buf[1] == wn - 4 && !memcmp(new_buf + 2, want + 4, wn - 4));
+            assert(aa_relayout_message(p, sizeof(p), 0, UI_THEME_DARK) == wn && !memcmp(p, want, wn));
+            assert(aa_relayout_message(p, wn - 1, 0, UI_THEME_DARK) == 0);   /* never truncated */
+            check_view(1, 97, 176, 510, 510);               /* a view change keeps the flag */
+        }
+        legacy = 0;
+
+        /* Turned off (or route guidance off) while connected: the session keeps its value; the
+         * next connect drops the field again. */
+        turncard = 0;
+        assert(aa_relayout_message(p, sizeof(p), 0, UI_THEME_DARK) == sizeof(card_legacy)
+            && !memcmp(p, card_legacy, sizeof(card_legacy)));
+        memset(vconf, 0, sizeof(vconf));
+        wr(vconf, 0x28, AA_CODEC_RES_1080P);
+        apply(vconf, "test");
+        assert(!conn_turncard && !conn_legacy);
+        assert(aa_relayout_message(p, sizeof(p), 0, UI_THEME_DARK) == sizeof(full_wire)
+            && !memcmp(p, full_wire, sizeof(full_wire)));
+        turncard = 1; rgd_off = 1;                          /* marker set, route guidance off */
+        memset(vconf, 0, sizeof(vconf));
+        wr(vconf, 0x28, AA_CODEC_RES_1080P);
+        apply(vconf, "test");
+        assert(!conn_turncard && rd(vconf, 0x18) == sizeof(full_wire) - 2);
+        turncard = 0; rgd_off = 0;
+    }
+
     /* Density: default 125 (1:1 physical size on the 125 PPI panel); file 80..400. */
     unlink(AA_FILE_DPI);
     assert(aa_dpi() == 125);
@@ -281,6 +348,22 @@ int main(void)
         daynight = 0;
         unlink(AA_THEME_PATH);
 
+        /* Issue #56: the turn-card switch changing mid-session sends nothing either, and the
+         * next view change still carries the connect-time value (here: no field 5). */
+        turncard = 1;
+        usleep(350000);
+        aa_relayout_tick(sink);
+        aa_relayout_tick(sink);
+        assert(queued == 1 && aa_turncard_state() && !conn_turncard);
+        usleep(350000);
+        put(AA_VIEW_PATH, "full   \n");
+        aa_relayout_tick(sink);
+        aa_relayout_tick(sink);
+        assert(queued == 2 && queued_is(97, 176, 350, 370));
+        assert(queued_msg[queued_len - 2] == 0x20 && queued_msg[queued_len - 1] == UI_THEME_DARK);
+        turncard = 0;
+        queued = 1;                           /* the cases below count from the first view change */
+
         /* Issue #53: the session connected on the fallback layout (B9Sport numbers) and the
          * stock Q7Sport layout arrives later. Same view, other insets: sent once. */
         usleep(350000);
@@ -316,6 +399,6 @@ int main(void)
     }
     unlink(AA_VIEW_PATH);
 
-    printf("aa_uiconfig_test: full/classic/sport 0x8009 bytes (margins + viewport insets, legacy encoding), connect UiConfig, view record with layout geometry (Q7, #53), density, frame rate, insets file, day/night theme, no mid-session theme change (#19) PASS\n");
+    printf("aa_uiconfig_test: full/classic/sport 0x8009 bytes (margins + viewport insets, legacy encoding), connect UiConfig, view record with layout geometry (Q7, #53), density, frame rate, insets file, day/night theme, no mid-session theme change (#19), opt-in turn-card flag at connect only (#56) PASS\n");
     return 0;
 }

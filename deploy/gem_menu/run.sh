@@ -124,7 +124,7 @@ status_page() {
         echo "no Android Auto session this boot"
     fi
     echo "== Options"
-    for m in cluster_video.pause_hidden aa_cluster.keyframe_refocus aa_cluster.daynight aa_cluster.off \
+    for m in cluster_video.pause_hidden aa_cluster.keyframe_refocus aa_cluster.daynight aa_cluster.turncard aa_cluster.off \
              aa_cluster.uiconfig_legacy aa_cluster.insets \
              mibr-carplay111-view.animation mibr-carplay111-viewareas.single; do
         [ -e "$RD/$m" ] && echo "set: $RD/$m"
@@ -287,6 +287,21 @@ case $ACT in
         fi
         echo "Applies at the next phone connection (a day/night change while connected waits for it too)."
         ;;
+    aa_turncard)
+        # Opt-in, Android Auto (issue #56): with route guidance on, the cockpit shows the car's
+        # own arrow tile and the navigation app draws its turn card on the map as well. With this
+        # marker the hook tells the phone that the car draws the turn card (UiConfig field 5) and
+        # the app leaves its own out. Picked when the phone connects and kept for the session;
+        # not sent while Route guidance is OFF, because the car then has no card to show.
+        marker_toggle /mnt/app/root/aa_cluster.turncard \
+            "Android Auto: the phone's turn card is hidden on the cluster map while Route guidance is ON (opt-in, test)." \
+            "Android Auto: the phone draws its turn card on the cluster map (default)."
+        if [ -e /mnt/app/root/aa_cluster.turncard ] \
+            && { [ -e /mnt/app/carplay_rgd.disabled ] || [ -e /tmp/carplay_rgd.disabled ]; }; then
+            echo "Route guidance is OFF now: the phone keeps its turn card until it is ON."
+        fi
+        echo "Applies at the next phone connection."
+        ;;
     status)
         status_page
         ;;
@@ -365,7 +380,7 @@ case $ACT in
         echo "DONE. CarPlay-RGI menu removed; it disappears after the next reboot."
         ;;
     *)
-        echo "usage: run.sh install|uninstall|logs|lsd|verbose|status|altscreen_on|altscreen_off|rgd_enable|rgd_disable|aa_cluster_on|aa_cluster_off|aa_daynight|aa_refocus|pause_hidden|touchpad_dpad_on|touchpad_dpad_off|grid|safearea|safearea_reset|singleview|cluster_maneuver|cluster_eta|cluster_speed|cluster_compass|cluster_wide_all|reacquire|hwdec|hwdelay|noasm|siri_short|omxprobe|remove_menu"
+        echo "usage: run.sh install|uninstall|logs|lsd|verbose|status|altscreen_on|altscreen_off|rgd_enable|rgd_disable|aa_cluster_on|aa_cluster_off|aa_daynight|aa_turncard|aa_refocus|pause_hidden|touchpad_dpad_on|touchpad_dpad_off|grid|safearea|safearea_reset|singleview|cluster_maneuver|cluster_eta|cluster_speed|cluster_compass|cluster_wide_all|reacquire|hwdec|hwdelay|noasm|siri_short|omxprobe|remove_menu"
         exit 2
         ;;
 esac
