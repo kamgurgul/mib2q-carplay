@@ -43,21 +43,23 @@
  * session connected with and a day/night change applies from the next connect. Missing or
  * garbled record = dark.
  *
- * Turn card (issue #56, opt-in marker aa_cluster.turncard, GEM "Android Auto hide phone turn
- * card"): with route guidance on, the cockpit shows the car's own arrow tile next to the map,
- * and the navigation app draws its turn card on the map as well. UiConfig field 5 is the list of
- * UI elements the car shows itself; value 5 (NAVIGATION_TURN_DATA_AVAILABLE, the phone's
- * hasClusterTurnCard) makes the app leave its card out. Field and value are from APK analysis
- * (mrmees/open-android-auto, AdditionalVideoConfigData.proto), not from a Google specification:
- * the 2016 receiver knows none of UiConfig. The phone honours the list only for a requested
- * protocol of 4.3 or newer, which aa_hook.c asks for. NuiQuant's on-car test (A4 B9, Google
- * Maps and Yandex, the 1.4 encoding): card gone with the flag, back without it. Sent only with
- * the marker AND route guidance on (no carplay_rgd.disabled), because without route guidance
- * the car has no card to show instead. Decided at phone connect and kept for the session, like
- * the theme: every 0x8009 repeats the connect-time value, so a UiConfig field other than the
- * insets never changes in a running session (issue #19). What this cannot follow: the cockpit
- * hiding the arrow tile during a route, or an app that sends no turn events; the phone's card
- * stays hidden then.
+ * Turn card (issue #56): with route guidance on, the cockpit shows the car's own arrow tile
+ * next to the map, and the navigation app would draw its turn card on the map as well. UiConfig
+ * field 5 is the list of UI elements the car shows itself; value 5
+ * (NAVIGATION_TURN_DATA_AVAILABLE, the phone's hasClusterTurnCard) makes the app leave its card
+ * out. Field and value are from APK analysis (mrmees/open-android-auto,
+ * AdditionalVideoConfigData.proto), not from a Google specification: the 2016 receiver knows
+ * none of UiConfig. The phone honours the list only for a requested protocol of 4.3 or newer,
+ * which aa_hook.c asks for. NuiQuant's on-car tests (A4 B9, Google Maps and Yandex, large,
+ * Classic and Sport): card gone with the flag, back without it, ETA line clear with the 1.5
+ * insets. Sent whenever route guidance is on (no carplay_rgd.disabled), because the car then
+ * shows its own card; without route guidance the phone keeps its card. 1.5 had this as an
+ * opt-in switch (aa_cluster.turncard, no longer read); from 1.6 it is always on, with the
+ * file-only aa_cluster.turncard_off as the way back. Decided at phone connect and kept for the
+ * session, like the theme: every 0x8009 repeats the connect-time value, so a UiConfig field
+ * other than the insets never changes in a running session (issue #19). What this cannot
+ * follow: the cockpit hiding the arrow tile during a route, or an app that sends no turn
+ * events; the phone's card stays hidden then.
  *
  * Optional file aa_cluster.insets: 12 numbers, "top bottom left right" in viewport pixels
  * (0..540 / 0..1440) for full, classic, sport, in that order. Read at phone connect and sent
@@ -200,11 +202,11 @@ unsigned aa_theme_state(void)
 
 static const char *theme_name(unsigned theme) { return theme == UI_THEME_LIGHT ? "light" : "dark"; }
 
-/* 1 = tell the phone the car draws the turn card: the opt-in marker, and route guidance not
- * switched off (either of the two files RgdModule reads). */
+/* 1 = tell the phone the car draws the turn card: route guidance not switched off (either of
+ * the two files RgdModule reads) and no opt-out marker. */
 int aa_turncard_state(void)
 {
-    return aa_marker(AA_MARKER_TURNCARD)
+    return !aa_marker(AA_MARKER_TURNCARD_OFF)
         && !aa_marker(AA_MARKER_RGD_OFF) && !aa_marker(AA_MARKER_RGD_OFF_TMP);
 }
 

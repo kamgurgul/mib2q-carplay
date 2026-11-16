@@ -49,22 +49,20 @@ public final class CarPlaySettingsUi {
     private static final CarPlaySettings settings = CarPlaySettings.onUnit();
     private static final ChoiceModel[] models = new ChoiceModel[CarPlaySettings.COUNT];
     private static final String[] LABELS = {"map", "layout", "guidance", "cards", "preview",
-        "turn", "eta", "speed", "compass", "wide", "aa_map", "aa_daynight", "aa_turncard", "pause",
-        "hwdec", "fps"};
-    /* text offsets: title=0, label/hint pairs=1..32, choice labels=33..45. */
+        "turn", "eta", "speed", "compass", "wide", "aa_map", "aa_daynight", "pause", "hwdec", "fps"};
+    /* text offsets: title=0, label/hint pairs=1..30, choice labels=31..43. */
     private static final String[] TEXT_KEYS = {
         "title", "map", "map.hint", "layout", "layout.hint", "guidance", "guidance.hint",
         "cards", "cards.hint", "preview", "preview.hint", "turn", "turn.hint", "eta", "eta.hint",
         "speed", "speed.hint", "compass", "compass.hint", "wide", "wide.hint",
-        "aa_map", "aa_map.hint", "aa_daynight", "aa_daynight.hint",
-        "aa_turncard", "aa_turncard.hint", "pause", "pause.hint",
+        "aa_map", "aa_map.hint", "aa_daynight", "aa_daynight.hint", "pause", "pause.hint",
         "hwdec", "hwdec.hint", "fps", "fps.hint",
         "default", "left", "center", "right", "hidden", "shown", "next", "follow", "off", "on", "phone",
         "fps30", "fps60"
     };
     private static final int[][] CHOICES = {
-        null, {33,34,35,36}, null, {37,38}, {39,40}, null, null, {41,42,43}, {41,42,43}, null,
-        null, null, null, null, null, {44,45}
+        null, {31,32,33,34}, null, {35,36}, {37,38}, null, null, {39,40,41}, {39,40,41}, null,
+        null, null, null, null, {42,43}
     };
     private static final Object pendingLock = new Object();
     private static final int[] pending = new int[CarPlaySettings.COUNT];

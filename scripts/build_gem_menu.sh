@@ -46,7 +46,6 @@ noasm|noasm|Software decoder plain C (no NEON) ON / OFF (toggle, default OFF, ne
 aa_cluster_on|aa_cluster_on|Android Auto cluster map ON
 aa_cluster_off|aa_cluster_off|Android Auto cluster map OFF
 aa_daynight|aa_daynight|Android Auto cluster day/night ON / OFF (toggle, opt-in, test)
-aa_turncard|aa_turncard|Android Auto hide phone turn card ON / OFF (toggle, opt-in, test)
 aa_refocus|aa_refocus|Android Auto cluster key frame on demand ON / OFF (toggle, opt-in, test)
 touchpad_dpad_on|touchpad_dpad_on|Touchpad as D-pad ON (CarPlay, default)
 touchpad_dpad_off|touchpad_dpad_off|Touchpad as D-pad OFF (stock touchpad)

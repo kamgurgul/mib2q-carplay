@@ -32,9 +32,9 @@
 /* 1.4 UiConfig: content insets only, in full-frame coordinates (fallback, issue #53) */
 #define AA_MARKER_UICONFIG_LEGACY AA_MARKER_DIR "aa_cluster.uiconfig_legacy"
 #endif
-#ifndef AA_MARKER_TURNCARD
-/* opt-in: tell the phone the car draws the turn card, so the map app hides its own (issue #56) */
-#define AA_MARKER_TURNCARD     AA_MARKER_DIR "aa_cluster.turncard"
+#ifndef AA_MARKER_TURNCARD_OFF
+/* no menu: the phone keeps its own turn card during route guidance too (issue #56) */
+#define AA_MARKER_TURNCARD_OFF AA_MARKER_DIR "aa_cluster.turncard_off"
 #endif
 /* Route guidance off (GEM / MMI "Route guidance"): the car then draws no turn card. */
 #ifndef AA_MARKER_RGD_OFF

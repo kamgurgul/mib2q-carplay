@@ -170,8 +170,8 @@ clock conversion, repeated samples, expiry and cancellation/reconnect. It runs f
 ### Marker files
 
 They apply on the next phone connection, except the first row, which needs a reboot, and the
-two opt-in focus switches, which are read live. *Android Auto cluster map*, *day/night* and
-*hide phone turn card* are also in the MMI (*Connection manager → Options → CarPlay settings*, from 1.5); both menus write
+two opt-in focus switches, which are read live. *Android Auto cluster map* and *day/night* are
+also in the MMI (*Connection manager → Options → CarPlay settings*, from 1.5); both menus write
 the same files.
 
 | File | Effect |
@@ -181,7 +181,7 @@ the same files.
 | `/mnt/app/root/aa_cluster.abi_trial` | run the hook on a receiver without a profile (testing only; `gal` may crash) |
 | `/mnt/app/root/aa_cluster.navxlate_off` / `.relayout_off` | leave new nav messages alone / no layout updates |
 | `/mnt/app/root/aa_cluster.daynight` | opt-in: cluster map Light by day, Dark by night from the MMI day/night design (GEM: *Android Auto cluster day/night*; picked at phone connect) |
-| `/mnt/app/root/aa_cluster.turncard` | opt-in, experimental (1.5, issue #56): the UiConfig lists the turn card as drawn by the car (field 5 = `[5]`, `UI_ELEMENT_NAVIGATION_TURN_DATA_AVAILABLE`), so the navigation app leaves its own card off the cluster map. Sent only while route guidance is on (no `carplay_rgd.disabled`). Read at phone connect and kept for the session; `uiconfig.set ... turncard=car|phone` in `aa_cluster_hook.log` (GEM *Android Auto hide phone turn card*, MMI *Hide Android Auto Turn Card*) |
+| `/mnt/app/root/aa_cluster.turncard_off` | no menu (1.6, issue #56): the navigation app keeps its own turn card on the cluster map during route guidance too, next to the car's arrow. Without it, while route guidance is on (no `carplay_rgd.disabled`), the UiConfig lists the turn card as drawn by the car (field 5 = `[5]`, `UI_ELEMENT_NAVIGATION_TURN_DATA_AVAILABLE`) and the app leaves its card out. Read at phone connect and kept for the session; `uiconfig.set ... turncard=car|phone` in `aa_cluster_hook.log`. The 1.5 opt-in marker `aa_cluster.turncard` is no longer read |
 | `/mnt/app/root/aa_cluster.keyframe_refocus` | opt-in, experimental (1.5): when the renderer needs a key frame the tee no longer holds, the cluster sink reports NATIVE and 200 ms later PROJECTED video focus, so the phone should restart the stream with a key frame; at most every 10 s (GEM *Android Auto cluster key frame on demand*) |
 | `/mnt/app/root/cluster_video.pause_hidden` | opt-in, experimental (1.5), shared with CarPlay: NATIVE video focus while the cockpit shows no phone map (Java writes `/tmp/aa_cluster_hidden`), PROJECTED when it is back (GEM *Pause cluster map while hidden*, MMI *Pause Hidden Cluster Map*) |
 | `/mnt/app/root/aa_cluster.dpi` | density, one number 80..400 (default 125 = 1:1 on the 125 PPI panel) |
@@ -211,18 +211,20 @@ the same files.
   session ~2 s later on the car (issue #19; a `0x8009` for a view change is fine), so every
   layout update keeps the session's connect-time theme and a day/night change applies from the
   next phone connect (`theme.deferred` in `aa_cluster_hook.log`).
-- Two turn cards during a route: the car's arrow tile (route guidance) and the navigation
-  app's own card on the map. `aa_cluster.turncard` hides the app's card by telling the phone
-  that the car draws it (UiConfig field 5, value 5; known from APK analysis in
+- One turn card during a route: with route guidance on, the hook tells the phone that the car
+  draws the turn card (UiConfig field 5, value 5; known from APK analysis in
   [open-android-auto](https://github.com/mrmees/open-android-auto), not from a Google
-  specification, and honoured only because the hook requests protocol 4.3). On the car
-  (issue #56, A4 B9, Google Maps and Yandex, 1.4 insets) the card went away with the flag and
-  stayed without it. The flag is decided **at connect only**, like the theme: it does not
-  follow the cockpit hiding the arrow tile during a route, and an app that sends no turn events
-  then shows no turn card at all. Following the tile live needs a `0x8009` that changes this
-  field in a running session, which is what dropped Android Auto for the theme (issue #19) and
-  has not been tried for this field (`turncard.deferred` in `aa_cluster_hook.log` when the
-  switch changes while connected).
+  specification, and honoured only because the hook requests protocol 4.3), so the navigation
+  app leaves its own card off the map and only the car's arrow tile remains. On the car
+  (issue #56, A4 B9, Google Maps and Yandex, large, Classic and Sport) the card went away with
+  the flag and came back without it, and the ETA line stayed clear with the 1.5 insets. 1.5 had
+  it as an opt-in switch; from 1.6 it is always on, and without route guidance the phone keeps
+  its card. The flag is decided **at connect only**, like the theme: it does not follow the
+  cockpit hiding the arrow tile during a route, and an app that sends no turn events then
+  shows no turn card at all. Following the tile live needs a `0x8009` that changes this field
+  in a running session, which is what dropped Android Auto for the theme (issue #19) and has
+  not been tried for this field (`turncard.deferred` in `aa_cluster_hook.log` when route
+  guidance or `aa_cluster.turncard_off` changes while connected).
 - Size and density apply on the next phone connection; layouts switch live.
 - A route started while parked shows Google's "depart" step at 0 m until the car moves; it
   is shown as soon as Android Auto reports navigation focus (car log 021).
@@ -232,5 +234,4 @@ the same files.
   request (`tee.client keyframe_request`); only with `aa_cluster.keyframe_refocus` is the phone
   asked for one (`focus.refocus`), since focus changes on the cluster display are untested.
 - Not ported from upstream: touchpad input on the cluster display, the turn card and the 720p
-  band mode. The cockpit options (cluster map, day/night, hide phone turn card) are in the MMI
-  CarPlay settings.
+  band mode. The cockpit options (cluster map, day/night) are in the MMI CarPlay settings.

@@ -66,14 +66,7 @@ public final class CarPlaySettingsTest {
         catch (java.io.IOException expected) { check(missing.get(CarPlaySettings.ETA) == 0, "failed write changed state"); }
 
         String[] langs = {"en","de","ru","uk","es","fr","it","nl","pl","pt","cs","tr","zh","zh_HK"};
-        /* Android Auto turn-card switch (issue #56): the marker the gal hook and the GEM button use. */
-        File turncard = new File(root, "root/aa_cluster.turncard");
-        check(s.get(CarPlaySettings.AA_TURNCARD) == 0, "phone turn card shown by default");
-        s.set(CarPlaySettings.AA_TURNCARD, 1); check(turncard.exists(), "opt-in marker for the hook");
-        s.set(CarPlaySettings.AA_TURNCARD, 0); check(!turncard.exists(), "off removes the marker");
-        write(turncard, ""); check(s.get(CarPlaySettings.AA_TURNCARD) == 1, "GEM toggle shows in the MMI");
-        check(turncard.delete(), "cleanup");
-        Properties english = load("en"); check(english.size() == 46, "all UI text keys present");
+        Properties english = load("en"); check(english.size() == 44, "all UI text keys present");
         for (int i = 0; i < langs.length; i++) {
             Properties p = load(langs[i]); check(p.keySet().equals(english.keySet()), "complete " + langs[i]);
             for (Iterator it = english.keySet().iterator(); it.hasNext();) {
