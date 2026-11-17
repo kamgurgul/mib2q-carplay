@@ -671,6 +671,37 @@ static bool rgd_lane_slot_has_data(int slot) {
            (RGD_LANE_GUIDANCE_INDEX | RGD_LANE_INFORMATIONS);
 }
 
+/*
+ * Route-start diagnostics at WARN, so the production log (WARN+ERROR) shows them
+ * without carplay_verbose.  Car log 2026-11-17 (Apple Maps through the HW301
+ * dongle): the cockpit stayed on follow road and lane events arrived without
+ * lanes, but the WARN-only log could not say whether the 0x5202/0x5204 burst
+ * was flushed by a later route_state=0 frame or never matched the list.  These
+ * lines are rare: a few per route start, one per unmatched list head.
+ */
+static void rgd_cached_counts(int* maneuvers, int* lanes) {
+    int m = 0, l = 0;
+    for (int s = 0; s < MANEUVER_CACHE_SIZE; s++) {
+        if (g_rgd.slot_to_iap_idx[s] != 0xFFFF && g_rgd.slot_cache[s].present != 0) m++;
+        if (rgd_lane_slot_has_data(s)) l++;
+    }
+    *maneuvers = m;
+    *lanes = l;
+}
+
+static void rgd_warn_unmatched_head(uint16_t iap_idx) {
+    static uint16_t warned_idx = 0xFFFF;
+    static uint64_t warned_generation = 0;
+    int m, l;
+    if (warned_idx == iap_idx && warned_generation == g_rgd.route_generation) return;
+    warned_idx = iap_idx;
+    warned_generation = g_rgd.route_generation;
+    rgd_cached_counts(&m, &l);
+    (void)m; (void)l;   /* LOG_WARN compiles to nothing in ENABLE_LOGGING=0 builds */
+    LOG_WARN(LOG_MODULE, "Current maneuver %u has no 0x5202 data yet (list=%u, cached maneuvers=%d lanes=%d)",
+             (unsigned)iap_idx, (unsigned)g_rgd.current_list_count, m, l);
+}
+
 static void write_bus_maneuver_partial(const rgd_maneuver_t* man) {
     if (!man) return;
     if (man->present == 0) return;
@@ -876,7 +907,10 @@ static void write_bus_snapshot_from_cache(int extra_slot, const rgd_maneuver_t* 
                  * Empty reserved slots retain their position and publish their
                  * version so Java clears any previous occupant's data. */
                 int slot = rgd_find_slot_for_iap_index_no_touch(g_rgd.current_list[i]);
-                if (slot < 0) continue;
+                if (slot < 0) {
+                    if (i == 0) rgd_warn_unmatched_head(g_rgd.current_list[0]);
+                    continue;
+                }
                 if (listed_count < MAX_MANEUVER_LIST)
                     listed_slots[listed_count++] = slot;
                 loff += snprintf(list_buf + loff, sizeof(list_buf) - (size_t)loff,
@@ -1165,6 +1199,13 @@ static bool rgd_message_handler(hook_context_t* ctx, const iap2_frame_t* frame) 
             pthread_mutex_lock(&g_rgd_debounce_lock);
             uint8_t prev_state = g_rgd.last_route_state;
             g_rgd.last_route_state = upd.route_state;
+            if (upd.route_state != prev_state) {
+                int cm, cl;
+                rgd_cached_counts(&cm, &cl);
+                (void)cm; (void)cl;
+                LOG_WARN(LOG_MODULE, "route_state %u->%u (cached maneuvers=%d lanes=%d)",
+                         (unsigned)prev_state, (unsigned)upd.route_state, cm, cl);
+            }
 
             if (upd.route_state == 0) {
                 if (hard_clear) {
@@ -1183,9 +1224,15 @@ static bool rgd_message_handler(hook_context_t* ctx, const iap2_frame_t* frame) 
 
                     rgd_route_cache_reset();
                     if (prev_state > 0) {
+                        int cm, cl;
+                        rgd_cached_counts(&cm, &cl);
+                        (void)cm; (void)cl;
                         LOG_INFO(LOG_MODULE,
                                  "Route reset frame (state %u->0): flushing slot cache, holding Java update",
                                  prev_state);
+                        if (cm || cl)
+                            LOG_WARN(LOG_MODULE, "Route reset frame (state %u->0) dropped %d cached maneuvers and %d lane events",
+                                     (unsigned)prev_state, cm, cl);
                         rgd_maneuver_map_reset();
                     }
                     if (g_rgd.state_zero_started_ms == 0) {

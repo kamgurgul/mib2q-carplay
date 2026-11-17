@@ -186,6 +186,31 @@ which the car stopped retrying. The cluster stream ran alongside (1,047 frames, 
 dropped=0 send_err=0`). Not yet covered: a long route, rerouting, phone Wi-Fi reconnect
 mid-route (replay path) and a head-unit log of the same session.
 
+### Main-screen SETUP window (stock, every image)
+
+Stock `CarPlayProxyApp::recvCarPlayVideoFrame` (v129 0x43970, `work/ghidra/relay_decomp.txt`):
+on the first frame of a new phone main-screen stream it posts event 0x4d1 (screen SETUP to the
+car) and polls `isProxyVideoStarted` 5 x 100 ms. If the car has not completed the SETUP by then
+it calls `sendMainScreenModes(1,500,500,500)`: the dongle takes the screen for the accessory, the
+phone answers `Modes changed: screen accessory`, and the car tears its fresh screen stream down.
+The MMI shows the Audi screen while audio keeps playing. Our image does not change this.
+
+Car logs 2026-11-17 (HU saves 003-005 on the SD card, dongle `applogs-2026-11-17_08-50-56`;
+HU uptime = dongle uptime + ~6 s):
+
+- dongle 4441.556 first frame, 4441.581 SETUP sent, 4442.058 `sendMainScreenModes
+  AirPlayTransferType:1`, 4442.234 the car's completion (650 ms). The retry at 4444.0 completed
+  in 400 ms and stuck.
+- After HU save 004 every attempt bounced (5 tries, 01:24:49-01:25:06): with `carplay_verbose`
+  set, the HU AltScreen hook logged ~25 FLIGHT lines per `modesChanged` inside the control call,
+  and the dongle's three `modesChanged` before the SETUP took 0.8-1.1 s on the car.
+- Without verbose the car answered in ~0.45 s, 100-170 ms of it the cluster decoder's yield.
+
+Fixed on the head unit, not here (1.6): the hook's log is written by its own thread, and the
+yield is stamped at the `modesChanged` that hands the screen over. A dongle-side fix would be a
+longer poll in `recvCarPlayVideoFrame`, which needs a byte patch of CPAAProxyEx (not done: the
+image is not byte-patched).
+
 ### Validation and build
 
 ```bash
@@ -467,6 +492,16 @@ of frames, `nal_ok=1 bad=0`):
 - **Route guidance bridge (v1176/v1177), remaining part.** The first pass worked. Still open:
   a long route with rerouting, phone Wi-Fi loss mid-route (the cached 0x5200 replay) and a
   head-unit log in the same session.
+  First long route 2026-11-17 (Apple Maps, ~70 min, HU saves 003/004): the cockpit arrow stayed
+  on *follow road* for most maneuvers and lane events reached the renderer without lanes
+  (`lanes: event=0 showing=1 count=0`). The dongle relayed every message in order (25 x 0x5202
+  in = 25 out, 870 x 0x5201, 4 x 0x5204), so the loss is on the head unit. At both route starts
+  Apple Maps sent its 0x5202/0x5204 burst between short 0x5201 frames (4257: 5202, 47, **17**,
+  79, 5202 x7, 5204 x2; 4471: 17, 37, 5202 x6, 5204 x2, **59**, 143). A `route_state=0` frame after the burst
+  would make the hook flush every cached maneuver and lane, which iOS never resends. Not
+  confirmed: the HU hook/Java logs were not verbose for that session. Needs a verbose HU log of an
+  Apple Maps route start; from 1.6 the WARN-level `route_state a->b`, `Route reset frame ...
+  dropped` and `Current maneuver N has no 0x5202 data yet` lines answer it without verbose.
 - **Main-screen validation, remaining part.** The 2026-10-27 test confirmed MMI
   CarPlay, Siri, calls and prompts with the candidate identity and the SETUP before
   `/info` order. Unplug/replug and phone Wi-Fi loss/reconnect are still open.

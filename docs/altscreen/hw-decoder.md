@@ -147,6 +147,13 @@ Hung video hardware (issue #14):
   yield waits the same way before its first decoder. Ordering: the renderer writes the active
   file before it reads the yield file, and the hook does the reverse, so a hardware start cannot
   slip past a yield.
+- **Early yield on the screen hand-over (1.6, car logs 2026-11-17).** The wait inside the 110 SETUP
+  took 100-170 ms. Through the HW301 dongle the car must answer that SETUP within about 0.5 s,
+  or the dongle hands the screen back to the car and the MMI cannot open CarPlay (see
+  `dongle/hw301/FINDINGS.md`, *Main-screen SETUP window*). The `modesChanged` that gives the main
+  screen to the phone (`screen=1`) now stamps the yield file without waiting (`hw yield
+  (screen-to-phone): stamped ahead of the main-screen SETUP`). The renderer has let go by the time
+  the SETUP arrives about 0.3 s later, and the SETUP's own yield then finds no decoder to wait for.
 - **Main-screen yield, Android Auto (issue #48).** The gal hook (`aa_hook/aa_yield.c`) uses the
   same two files for gal's own main-screen decoder, whose renderer jobs (init, config, shutdown)
   follow the stock `VideoSink` callbacks. It yields before the main sink's `handleSetup`,
