@@ -67,11 +67,13 @@ mkdir -p "$TEST_DIR/live"
 "$TEST_JDK/bin/java" -cp "$TEST_DIR:$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR" \
     com.luka.carplay.core.AltScreenLivenessTest "$TEST_DIR/live"
 
-# Long roller press: back to the phone map also while the pause option stopped its stream.
+# Map choice survives reboot/reconnect; long press also resumes a paused phone stream.
 "$TEST_JDK/bin/javac" -encoding UTF-8 -cp "$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR" \
-    -d "$TEST_DIR" "$PROJECT_DIR/tests/ScreenLongPressTest.java"
+    -d "$TEST_DIR" "$PROJECT_DIR/tests/ScreenLongPressTest.java" "$PROJECT_DIR/tests/ClusterMapPreferenceTest.java"
 "$TEST_JDK/bin/java" -cp "$TEST_DIR:$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR:$OSGI_LIBS" \
-    com.luka.carplay.core.ScreenLongPressTest
+    com.luka.carplay.core.ClusterMapPreferenceTest "$TEST_DIR/map-preference"
+"$TEST_JDK/bin/java" -cp "$TEST_DIR:$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR:$OSGI_LIBS" \
+    com.luka.carplay.core.ScreenLongPressTest "$TEST_DIR/map-screen"
 
 # Siri on a short voice-key press is opt-in (marker); default = stock car voice control.
 "$TEST_JDK/bin/javac" -encoding UTF-8 -cp "$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR" \

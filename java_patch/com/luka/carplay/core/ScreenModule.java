@@ -91,9 +91,9 @@ public final class ScreenModule implements Module {
     private static volatile boolean routeGuidanceActive = false;
     private static volatile boolean altScreenActive = false;   /* altscreen_render live video */
     private static boolean navHidePending;
-    /* Driver chose the stock map with a long roller press. Reset on each phone session.
-     * The video renderer keeps running, so the next press can show the phone map at once. */
-    private static volatile boolean userStockMap;
+    /* Driver's long-press choice survives phone sessions and car restarts. Loaded once so
+     * reconnecting while a save is pending cannot replace the latest choice with stale disk state. */
+    private static ClusterMapPreference mapPreference = ClusterMapPreference.onUnit();
     /* VC map tab (BAP MapViewAndOrientation lvdsMapIsVisible). -1 until the VC reports it.
      * Cockpit state, not session state: start()/stop() leave it alone. */
     private static volatile int vcMainMap = -1;
@@ -108,7 +108,7 @@ public final class ScreenModule implements Module {
     /** Recompute desiredCtx from connected/navActive and wake the worker. Caller must NOT hold LOCK. */
     private static void republish() {
         synchronized (LOCK) {
-            if (connected && altScreenActive && !userStockMap) {
+            if (connected && altScreenActive && !mapPreference.isStockMap()) {
                 /* CarPlay's own map video is live and the driver has not asked for
                  * the stock map: show it, with the maneuver overlay when guidance is active. */
                 desiredCtx = navActive ? CTX_CLUSTER_VIDEO_NAV : CTX_CLUSTER_VIDEO;
@@ -127,7 +127,7 @@ public final class ScreenModule implements Module {
      *  roller press. The hooks pause the cluster stream for it only with their opt-in marker
      *  (/mnt/app/root/cluster_video.pause_hidden); without it this is information only. */
     private static boolean phoneMapHiddenLocked() {
-        return connected && (userStockMap || vcMainMap == 0);
+        return connected && (mapPreference.isStockMap() || vcMainMap == 0);
     }
 
     /** CarPlay: CMD_ALT_HIDDEN to the AltScreen hook. Android Auto: /tmp/aa_cluster_hidden for
@@ -185,7 +185,7 @@ public final class ScreenModule implements Module {
     public static boolean isAltScreenActive() { return altScreenActive; }
 
     /** Phone video is live and the driver has not covered it with the stock map. */
-    public static boolean isAltScreenShown() { return altScreenActive && !userStockMap; }
+    public static boolean isAltScreenShown() { return altScreenActive && !mapPreference.isStockMap(); }
 
     /** Long press of the left steering-wheel roller. Toggles the cluster between the
      *  phone map and the stock Audi map. Picking the Audi map is ignored until the phone
@@ -196,13 +196,13 @@ public final class ScreenModule implements Module {
     public static void onSteeringWheelLongPress() {
         boolean stock;
         synchronized (LOCK) {
-            if (!platformSupported || !connected || (!altScreenActive && !userStockMap)) {
+            if (!platformSupported || !connected || (!altScreenActive && !mapPreference.isStockMap())) {
                 Log.i(TAG, "MFW long press ignored: connected=" + connected
-                    + " video=" + altScreenActive);
+                    + " video=" + altScreenActive + " stockMap=" + mapPreference.isStockMap());
                 return;
             }
-            userStockMap = !userStockMap;
-            stock = userStockMap;
+            stock = !mapPreference.isStockMap();
+            mapPreference.select(stock);
         }
         Log.i(TAG, "MFW long press: cluster -> " + (stock ? "stock map" : "phone map"));
         republish();
@@ -364,7 +364,6 @@ public final class ScreenModule implements Module {
             routeGuidanceActive = false;
             altScreenActive = false;
             navHidePending = false;
-            userStockMap = false;
             desiredCtx = CTX_STOCK_CLUSTER;
             sendRgiStateLocked();   /* navActive is false here: reset the hook's URL state */
             lastHiddenSent = -1;    /* a new session: publish the cockpit's state again */
@@ -382,7 +381,8 @@ public final class ScreenModule implements Module {
             }
             LOCK.notifyAll();
         }
-        Log.i(TAG, "ready (DisplayManager acquired, session reset -> ctx 74)");
+        Log.i(TAG, "ready (DisplayManager acquired, session reset -> ctx 74, saved map: "
+            + (mapPreference.isStockMap() ? "Audi" : "phone") + ")");
         return true;
     }
 
@@ -398,7 +398,6 @@ public final class ScreenModule implements Module {
             routeGuidanceActive = false;
             altScreenActive = false;
             navHidePending = false;
-            userStockMap = false;
         }
         CarplayBus.getInstance().off(CarplayBus.EVT_HELLO);
         republish();
@@ -514,7 +513,7 @@ public final class ScreenModule implements Module {
              * long press (car logs 2026-11-03, saves 001/002). */
             com.luka.carplay.aa.VcMapViewGate.onClusterVideoShown(
                 ctx == CTX_CLUSTER_VIDEO || ctx == CTX_CLUSTER_VIDEO_NAV
-                || (userStockMap && ctx != CTX_STOCK_CLUSTER));
+                || (mapPreference.isStockMap() && ctx != CTX_STOCK_CLUSTER));
             Log.i(TAG, "cluster -> ctx " + ctx + " (active=" + clusterActive + ")");
         } catch (Throwable t) {
             Log.w(TAG, "switch(" + ctx + ") failed: " + t);

@@ -57,6 +57,9 @@ CarPlay or Android Auto automatically.
   (defaults: turn card ON, ETA OFF, speed limit OFF, compass OFF). *All features on wide
   view* shows all four on the wide cockpit view only; it re-sends the cluster request on every
   wide ↔ small switch, which makes Yanosik restart (keep it OFF with Yanosik).
+- **Remembered cluster map.** Long-press the left steering-wheel roller to switch between
+  the phone map and the native Audi map. The choice survives phone reconnects and car
+  restarts, and is shared by CarPlay and Android Auto. Phone map is the default.
 - **CarPlay settings in the MMI** (*Connection manager → Options → CarPlay settings*, from
   luka-dev's 2026-10-29 release, 14 languages): Maps on Cluster, Maneuver Cards Position
   (left / center / right), Route Guidance, Map Cards during Guidance (hide the phone's turn

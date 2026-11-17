@@ -210,6 +210,15 @@ earlier trace found the animation inert, but that was before `adjacentViewAreas`
 work at all, so it is worth one retest: `echo 300 > /mnt/app/root/mibr-carplay111-view.animation`
 (0..1000 ms, read at each switch; logged as `GEN2 updateViewArea animationDurationMillis=…`).
 
+**Remembered map source.** Long-pressing the left steering-wheel roller selects the phone map
+or the native Audi map. Java saves `phone` or `audi` in `/mnt/app/root/cluster_map_source`
+using an atomic replacement and sync on a background worker. The choice is shared by CarPlay
+and Android Auto, survives reconnects and car restarts, and defaults to the phone when the file
+is missing or invalid. Disconnects, route changes and temporary video loss never overwrite it.
+The Audi map remains the fallback until phone video is live. With the Audi map saved and
+*Pause Hidden Cluster Map* enabled, another long press resumes the phone stream even before
+video is live. Host-tested; car restart validation pending.
+
 **Pause while hidden (opt-in, 1.5).** Java reports with `CMD_ALT_HIDDEN 0x0119` whether the cockpit
 shows the phone map (hidden = another VC tab, or the Audi map picked with a long roller press).
 With `/mnt/app/root/cluster_video.pause_hidden` (GEM *Pause cluster map while hidden*, MMI
