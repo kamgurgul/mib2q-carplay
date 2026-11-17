@@ -26,6 +26,8 @@ if [ ! -d /mnt/app/eso/hmi/lsd ] && [ -d /net/mmx/mnt/app/eso/hmi/lsd ]; then
 fi
 
 SRC=${CP_LOG_SRC:-/tmp}                  # override only for a host test
+CORE=${CP_CORE_DIR:-/mnt/ota/system/core}        # dumper's cores (persistent flash)
+ERRDUMP=${CP_ERRDUMP_DIR:-/mnt/ota/system/logs}  # the HMI's -DErrorDumpDir (persistent flash)
 CARD=${CP_CARD:-${D%/mod}}               # this script sits in <card>/mod/ (GEM menu: CP_CARD)
 
 # The card may be mounted read-only: remount the mount point that holds it.
@@ -98,7 +100,8 @@ run hooks_ls.txt ls -la /mnt/app/root/hooks /mnt/app/eso/hmi/lsd/jars /mnt/app/e
 run markers_ls.txt ls -la /mnt/app /mnt/app/root
 run carplay_stock_ls.txt find /mnt/app /mnt/system -name '*.carplay-stock'
 run tmp_ls.txt ls -la "$SRC/"     # /tmp is a symlink to /dev/shmem: list what it points at
-run cores_ls.txt ls -la /mnt/ota/system/core
+run cores_ls.txt ls -la "$CORE"
+run errdump_ls.txt ls -la "$ERRDUMP"
 
 # ---- hardware H.264 decoder discovery (AltScreen OMX feasibility) ----
 # Which Qualcomm OMX / video-decoder libraries the unit has, and the stock
@@ -148,19 +151,39 @@ done
 
 # ---- crash dumps of our processes (dumper writes them to /mnt/ota/system/core) ----
 mkdir "$OUT/core"
-for f in /mnt/ota/system/core/dio_manager* /mnt/ota/system/core/maneuver_render* \
-         /mnt/ota/system/core/smartphone_integrator* /mnt/ota/system/core/gal* \
-         /mnt/ota/system/core/altscreen_render*; do
+for f in "$CORE"/dio_manager* "$CORE"/maneuver_render* \
+         "$CORE"/smartphone_integrator* "$CORE"/gal* \
+         "$CORE"/altscreen_render*; do
     [ -f "$f" ] && cp "$f" "$OUT/core/" 2>/dev/null
 done
 # Native navigation that never comes up after power-on (dongle connected at start): the
 # navigation process dumps and Elektrobit's freeze logs (30 rotating files, most of them
 # empty), plus the display manager / video decoder dumps of the videoCore hangs (#10, #14).
-for f in /mnt/ota/system/core/AppStartATF* /mnt/ota/system/core/navStartup* \
-         /mnt/ota/system/core/PNavApp* /mnt/ota/system/core/DRController* \
-         /mnt/ota/system/core/IconProviderApp* /mnt/ota/system/core/EBNavFreezeLog.[0-9]* \
-         /mnt/ota/system/core/displaymanager* /mnt/ota/system/core/vidc*; do
+# j9 is the HMI (our jar runs inside it): "black screen, MMI restarts" (#62) leaves a j9 core.
+for f in "$CORE"/AppStartATF* "$CORE"/navStartup* \
+         "$CORE"/PNavApp* "$CORE"/DRController* \
+         "$CORE"/IconProviderApp* "$CORE"/EBNavFreezeLog.[0-9]* \
+         "$CORE"/displaymanager* "$CORE"/vidc* "$CORE"/j9*; do
     [ -f "$f" ] && [ -s "$f" ] && cp "$f" "$OUT/core/" 2>/dev/null
+done
+
+# ---- the HMI's own error dumps (j9 -DErrorDumpDir, persistent flash) ----
+# Written by the stock HMI when it fails, and they survive the restart and a reboot, unlike
+# /tmp.  Unknown size: at most 1 MB per file (the head) and 16 MB in all.
+mkdir "$OUT/errdump"
+total=0
+for f in "$ERRDUMP"/*; do
+    [ -f "$f" ] || continue
+    sz=$(wc -c < "$f" 2>/dev/null); sz=${sz##* }    # some wc pad with spaces
+    case $sz in ''|*[!0-9]*) continue ;; esac
+    [ "$sz" -gt 1048576 ] && sz=1048576
+    if [ $((total + sz)) -gt 16777216 ]; then
+        echo "errdump: 16 MB reached, not copied: ${f##*/} and later files" >> "$OUT/info.txt"
+        break
+    fi
+    dd if="$f" of="$OUT/errdump/${f##*/}" bs=4096 count=256 2>/dev/null ||
+        echo "dd failed: $f" >> "$OUT/info.txt"
+    total=$((total + sz))
 done
 
 # ---- video-core fatal dumps (read-only: the firmware owns these files) ----
@@ -170,7 +193,7 @@ done
 mkdir "$OUT/vidc"
 for f in /var/log/ana_dumps/ramdumps/vidc* /var/log/vidc*.dat; do
     [ -f "$f" ] || continue
-    sz=$(wc -c < "$f" 2>/dev/null)
+    sz=$(wc -c < "$f" 2>/dev/null); sz=${sz##* }    # some wc pad with spaces
     case $sz in ''|*[!0-9]*) continue ;; esac
     if [ "$sz" -gt 4194304 ]; then
         dd if="$f" of="$OUT/vidc/${f##*/}" bs=4096 count=1024 2>/dev/null ||
@@ -199,3 +222,5 @@ else
 fi
 echo "DONE: $OUT"
 echo "Reconnect the phone, use CarPlay, then run this again to save the verbose session."
+echo "A problem only at power-on with the phone connected: GEM CarPlay-RGI -> Verbose logging ON"
+echo "(survives a reboot), restart the car with the phone connected, then run this again."

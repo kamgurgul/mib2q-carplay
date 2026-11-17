@@ -58,6 +58,17 @@ tests but have not been driven yet.
   the cockpit arrow stayed on *follow road* and the lane events came without lanes, and the
   WARN-only log could not tell where the maneuvers were lost.
 
+- **Save logs collects the HMI's crash evidence** (issue
+  [#62](https://github.com/kamgurgul/mib2q-carplay/issues/62)). An MMI restart leaves a `j9`
+  core (the HMI, which our jar runs in) and the stock HMI's error dumps in
+  `/mnt/ota/system/logs/` (`-DErrorDumpDir`). Both are on persistent flash and survive the restart,
+  but the logging mod never copied them: #62's upload listed four `j9` cores, all at 5 min of
+  uptime, and contained none. They are now saved to `core/` and `errdump/` (`errdump_ls.txt` lists
+  the folder; at most 1 MB per file and 16 MB in all). The size check also handled a `wc` that
+  pads its output, so a vidc dump could be skipped. The bug report form and the mod now describe
+  how to catch a problem that only happens at power-on: persistent *Verbose logging ON*, start
+  with the phone connected, save after the problem and again after the restart.
+
 ## Tests
 
 - `tests/alt111_log_test.c` (in `run_tests.sh`): `altscreen111.log` is written in place before the

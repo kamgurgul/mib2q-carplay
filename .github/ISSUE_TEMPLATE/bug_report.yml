@@ -28,6 +28,18 @@ body:
         If the zip is larger than GitHub allows (25 MB), upload it somewhere else
         (Google Drive, Dropbox, ...) and paste the link below.
 
+        ## Problem only at power-on, or ending in an MMI restart
+
+        If it happens only when the phone is already connected while the car starts (connecting
+        later works), the steps above cannot catch it. Instead:
+
+        1. **Green Engineering Menu** -> **CarPlay-RGI** -> **Verbose logging ON** (it survives a reboot).
+        2. Switch the car off and on **with the phone connected**, and reproduce the issue.
+        3. **Save logs** as soon as the problem shows (e.g. audio gone), and again after the MMI has
+           restarted, if it does. An MMI restart keeps `/tmp`; the crash dumps that the restart leaves
+           are kept on the unit and saved too.
+        4. Switch **Verbose logging OFF** again when you are done, and zip `carplay_logs` as above.
+
   - type: textarea
     id: description
     attributes:
@@ -118,9 +130,9 @@ body:
     attributes:
       label: Checklist
       options:
-        - label: I started with the phone disconnected and saved logs once (verbose on).
+        - label: I started with the phone disconnected and saved logs once (verbose on), or, for a power-on problem, switched Verbose logging ON in the menu first.
           required: true
-        - label: I connected the phone, reproduced the issue and saved logs a second time, without rebooting in between.
+        - label: I reproduced the issue and saved logs again, without rebooting in between (a restart the issue itself causes is fine).
           required: true
         - label: I attached the whole `carplay_logs` folder as a zip (or a link to it).
           required: true

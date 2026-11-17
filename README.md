@@ -371,7 +371,10 @@ before restarting.
 By default only warnings and errors are logged. `touch /mnt/app/carplay_verbose`
 enables full logging from the next phone connect. Without a shell, run
 `mods/logging_MoreIncredibleBash/` twice instead: once to enable verbose logging, then
-again after a CarPlay drive to collect.
+again after a CarPlay drive to collect. For a problem that only happens at power-on with the
+phone connected, switch GEM *Verbose logging ON* (survives a reboot) before restarting the car.
+Saved logs also include the crash dumps kept on the unit (our processes, native navigation, and
+the HMI's `j9` cores and error dumps).
 
 ## Tests
 
