@@ -124,6 +124,10 @@ status_page() {
         echo "no Android Auto session this boot"
     fi
     echo "== Options"
+    # Java (ClusterMapPreference) reads this once at MMI start; anything but "audi" = phone.
+    map=phone
+    [ "$(cat "$RD/cluster_map_source" 2>/dev/null)" = audi ] && map=Audi
+    echo "cluster map choice (long roller press): $map"
     for m in cluster_video.pause_hidden aa_cluster.keyframe_refocus aa_cluster.daynight aa_cluster.turncard_off aa_cluster.off \
              aa_cluster.uiconfig_legacy aa_cluster.insets \
              mibr-carplay111-view.animation mibr-carplay111-viewareas.single; do

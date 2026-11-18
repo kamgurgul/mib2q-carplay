@@ -22,7 +22,12 @@ class ClusterMapPreference {
         this.file = file;
         committed = readCommitted();
         stockMap = committed == 1;
-        Log.i(TAG, "loaded " + (stockMap ? "Audi" : "phone") + " map");
+        if (stockMap) {
+            // WARN, so default-level logs explain a cluster that never shows the phone map.
+            Log.w(TAG, "loaded Audi map (saved long-press choice; long-press again for the phone map)");
+        } else {
+            Log.i(TAG, "loaded phone map");
+        }
     }
 
     static ClusterMapPreference onUnit() {

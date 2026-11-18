@@ -44,10 +44,17 @@ for sh in $shells; do
     printf 'state=decoding\nsource=carplay\ndecoder=hardware\nhw_off=none\nframes=42\n' > "$T/st/tmp/altscreen_render.status"
     : > "$T/st/root/cluster_video.pause_hidden"
     : > "$T/st/root/aa_cluster.turncard_off"
+    echo audi > "$T/st/root/cluster_map_source"
     CP_GEM_DIR=$G CP_TMP=$T/st/tmp CP_ROOT=$T/st/root "$sh" "$R" status > "$T/out" 2>&1; rc=$?
     [ $rc -eq 0 ] && grep -q '^decoder=hardware' "$T/out" && grep -q 'no CarPlay cluster session' "$T/out" \
         && grep -q 'set: .*cluster_video.pause_hidden' "$T/out" \
-        && grep -q 'set: .*aa_cluster.turncard_off' "$T/out" || { cat "$T/out"; fail "$sh" "status page rc=$rc"; }
+        && grep -q 'set: .*aa_cluster.turncard_off' "$T/out" \
+        && grep -q '^cluster map choice (long roller press): Audi$' "$T/out" || { cat "$T/out"; fail "$sh" "status page rc=$rc"; }
+    # No saved choice: the phone map, as the Java default.
+    rm -f "$T/st/root/cluster_map_source"
+    CP_GEM_DIR=$G CP_TMP=$T/st/tmp CP_ROOT=$T/st/root "$sh" "$R" status > "$T/out" 2>&1; rc=$?
+    [ $rc -eq 0 ] && grep -q '^cluster map choice (long roller press): phone$' "$T/out" \
+        || { cat "$T/out"; fail "$sh" "status page default map rc=$rc"; }
     # 1.6: the 1.5 turn-card switch is gone (always on with route guidance, issue #56)
     [ ! -e "$G/scripts/carplay/aa_turncard.sh" ] || fail "$sh" "aa_turncard button still in the menu"
     CP_GEM_DIR=$G "$sh" "$R" remove_menu > /dev/null 2>&1; rc=$?

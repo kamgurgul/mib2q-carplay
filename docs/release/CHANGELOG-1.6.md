@@ -23,6 +23,24 @@ tests but have not been driven yet.
   GEM menu removes the old button. `aa_cluster_hook.log`: `uiconfig.set ... turncard=car|phone`.
   The flag itself is in `libaa_cluster_hook.so`; the jar only loses the MMI switch. *Car test
   pending* for the always-on default.
+- **The cluster map picked with a long roller press is remembered.** *Car test pending* (bench
+  tests and a simulated HMI restart pass). Until 1.5, choosing the Audi map with a long press of
+  the left steering-wheel roller lasted only for that phone session: every reconnect or car
+  start brought back the phone map. The choice is now saved in `/mnt/app/root/cluster_map_source`
+  (`phone` or `audi`). It survives phone reconnects and car restarts and is shared by CarPlay and
+  Android Auto. A missing or invalid file means the phone map, so existing installs start as
+  before. Only a long press writes the file; disconnects, route changes and the phone video
+  dropping out do not. The press switches the map at once, and the file is written on a
+  background thread (temporary file, rename, `sync`), so a slow flash never delays the switch,
+  and a write that fails keeps the previous choice. As before, the Audi map is shown until phone
+  video is live. With the Audi map saved and *Pause Hidden Cluster Map* on, the phone stream is
+  paused from the start of the session, and a long press brings it back even before video is
+  live. The GEM status page shows the saved choice under *Options*. In `carplay_java.log`, a saved
+  Audi choice is a warning when the MMI starts (`ClusterMap: loaded Audi map ...`), so logs at the
+  default level show why the phone map stays off the cluster; a failed save is a warning too.
+  Verbose logging adds `saved phone map` / `saved Audi map` and `ready (... saved map: Audi)` at
+  session start. To go back to the phone map, long-press again. Deleting the file also works, but only from the next car
+  start, because the choice is read once when the MMI starts.
 
 ## Fixed
 
@@ -75,3 +93,14 @@ tests but have not been driven yet.
   writer thread starts; with the writer running, a log target whose `open()` blocks (a FIFO with no
   reader) does not block 300 callers, the overflow is counted and the survivors arrive in order;
   rotation works when `rename()` is refused, as on `/dev/shmem`.
+- `tests/ClusterMapPreferenceTest.java` (in `scripts/test_java_transports.sh`): both choices
+  survive a reload; a missing, invalid or unreadable file means the phone map and writes nothing;
+  an interrupted save leaves the previous choice; a failed save does not block the switch, and
+  the next differing choice retries; presses during a slow save are coalesced and the latest one
+  wins; an unchanged choice does not write flash.
+- `tests/ScreenLongPressTest.java` now runs the real `ScreenModule` start/stop: the Audi choice
+  stays through an immediate reconnect and a simulated HMI restart, hides the phone stream from
+  session start, and a long press brings back a paused stream; video fallback, an unsupported
+  cluster and presses without a session do not change the saved choice.
+- `scripts/test_gem_menu.sh`: the status page shows the saved cluster map (*Audi*, and *phone*
+  when there is no file).

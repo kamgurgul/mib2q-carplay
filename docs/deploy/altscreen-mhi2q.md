@@ -217,7 +217,10 @@ and Android Auto, survives reconnects and car restarts, and defaults to the phon
 is missing or invalid. Disconnects, route changes and temporary video loss never overwrite it.
 The Audi map remains the fallback until phone video is live. With the Audi map saved and
 *Pause Hidden Cluster Map* enabled, another long press resumes the phone stream even before
-video is live. Host-tested; car restart validation pending.
+video is live. The file is read once at MMI start; the GEM status page shows the saved
+choice, and a saved Audi choice is logged as a warning (`ClusterMap: loaded Audi map`) so
+default-level logs explain a cluster without the phone map. Host-tested; car restart
+validation pending.
 
 **Pause while hidden (opt-in, 1.5).** Java reports with `CMD_ALT_HIDDEN 0x0119` whether the cockpit
 shows the phone map (hidden = another VC tab, or the Audi map picked with a long roller press).
