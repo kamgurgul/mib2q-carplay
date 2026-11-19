@@ -101,7 +101,7 @@ but cluster geometry may need calibration.
 | --- | --- | --- | --- |
 | `MHI2Q_ER_AUG22_P5152` | MU1329 | Audi A5 (F5), the development unit | all features |
 | `MHI2Q_ER_AUG22_P5092` | MU1329 | Audi A4 (B9) 2017 [#35][#35-a4], 2018 [#44], 2019 [#26]; Audi A5 (F5/B9, 2017) [#35]; Audi Q5 (FY, 2018) [#54]; model not given [#5] | releases 1.1 to 1.4.1; CarPlay wired and wireless (Baseus, Carlinkit, AAWireless TWO+, Ottocast Mini), Android Auto wired and via AAWireless TWO+ or Ottocast Mini, both with the cluster map (Google Maps, Waze); wide and classic layouts, wheel map zoom, Waze ETA. On 1.3.1 the Android Auto cluster map freezes for about 90 s at a time ([#44]) and Waze ETA needs the switch toggled after a reconnect ([#35]); 1.4 fixes both |
-| `MHI2Q_US_AUG22_P5087` | MU1316 | Audi A5 Sportback (B9, US, 2018) [#21], [#39]; Audi Q7 (4M, US, 2018) [#27], [#43]; Audi S5 Sportback (B9, US, 2019) [#41]; Audi RS5 Sportback (B9, Canada, 2019) [#34], [#45] | releases 1.1 to 1.3.1; wired CarPlay and Android Auto, both with the cluster map (Apple Maps, Google Maps, Waze; the wide layout fits the cluster), turn card, VC, Sport layout and HUD arrows, Siri on short press, CarPlay-RGI menu. Waze map zoom does not resize the map. On 1.3.1 Apple Maps without a route keeps falling back to the Audi map ([#39]); 1.4 fixes it |
+| `MHI2Q_US_AUG22_P5087` | MU1316 | Audi A5 Sportback (B9, US, 2018) [#21], [#39]; Audi Q7 (4M, US) 2018 [#27], [#43], 2019 [#64]; Audi S5 Sportback (B9, US, 2019) [#41]; Audi RS5 Sportback (B9, Canada, 2019) [#34], [#45] | releases 1.1 to 1.3.1; wired CarPlay and Android Auto, both with the cluster map (Apple Maps, Google Maps, Waze; the wide and classic layouts fit the cluster), turn card, VC, Sport layout and HUD arrows, long-press switch to the Audi map, Siri on short press, CarPlay-RGI menu. Waze map zoom does not resize the map, and Waze shows no speed limit on the cluster map with the switch ON (Apple Maps does, [#64]). On 1.3.1 Apple Maps without a route keeps falling back to the Audi map ([#39]); 1.4 fixes it |
 
 [#5]: https://github.com/kamgurgul/mib2q-carplay/issues/5
 [#21]: https://github.com/kamgurgul/mib2q-carplay/issues/21
@@ -116,6 +116,7 @@ but cluster geometry may need calibration.
 [#44]: https://github.com/kamgurgul/mib2q-carplay/issues/44
 [#45]: https://github.com/kamgurgul/mib2q-carplay/issues/45
 [#54]: https://github.com/kamgurgul/mib2q-carplay/issues/54
+[#64]: https://github.com/kamgurgul/mib2q-carplay/issues/64
 
 ## Tested wireless adapters
 
