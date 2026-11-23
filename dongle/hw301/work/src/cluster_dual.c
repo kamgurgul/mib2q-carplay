@@ -694,10 +694,12 @@ static void log_info_dict(CFRef base) {
     }
 }
 
+static int apply_car_view_locked(CFRef alt);
+
 /* Return a new info dict, or 0 to keep base. Caller releases base on success. */
 static CFRef augment_info(CFRef base) {
     CFRef info, old, displays, alt;
-    int have_profile;
+    int have_profile, view = -1;
     if (!ADVERT_FEATURES && !ADVERT_DISPLAY) return 0;   /* stock /info (log only) */
     if (!is_type(base, cf_dict_type)) return 0;
     old = cf_dict_get(base, k_displays);
@@ -717,6 +719,7 @@ static CFRef augment_info(CFRef base) {
     displays = cf_array_copy(0, 0, old);
     pthread_mutex_lock(&g_lock);
     alt = g_car_display ? cf_dict_copy(0, 0, g_car_display) : 0;
+    if (alt) view = apply_car_view_locked(alt);
     pthread_mutex_unlock(&g_lock);
     if (!displays || !alt) {
         if (displays) cf_release(displays);
@@ -727,6 +730,7 @@ static CFRef augment_info(CFRef base) {
     cf_array_append(displays, alt);
     cf_dict_set(info, k_displays, displays);
     dlog("/info cluster display added displays=%ld", cf_array_count(displays));
+    if (view >= 0) dlog("/info initialViewArea=%d from the car's last updateViewArea", view);
     cf_release(alt);
     cf_release(displays);
     return info;
@@ -1197,6 +1201,40 @@ static struct car_control {
     unsigned version, delivered_gen, delivered_version, inflight;
     long next_try;
 } g_controls[3]; /* showUI/stopUI, updateViewArea, forceKeyFrame */
+/* Issue #68: the phone must start in the car's current view, the state its VIEW presses
+ * leave. The car display is captured once per car session, but a phone can reconnect
+ * within it; its /info then gets the car's latest updateViewArea (index and adjacency) as
+ * initialViewArea/adjacentViewAreas instead of the view the car started in. The head unit
+ * declares both in /info from 1.6. Edits alt (a copy) only; the car snapshot is untouched.
+ * An adjacency that is not a list of other views of this display is dropped, not sent.
+ * Returns the view applied, or -1 (no car view command yet, or one that does not fit this
+ * display). Caller holds g_lock. */
+static int apply_car_view_locked(CFRef alt) {
+    CFRef req = g_controls[1].request, params, areas, adj, k;
+    int64_t index;
+    long count, i;
+    if (!req) return -1;
+    areas = get_value(alt, "viewAreas");
+    if (!is_type(areas, cf_array_type) || (count = cf_array_count(areas)) < 1) return -1;
+    params = get_value(req, "params");
+    if (!get_int(params, "viewAreaIndex", 0, count - 1, &index)) return -1;
+    adj = get_value(params, "adjacentViewAreas");
+    if (!is_type(adj, cf_array_type)) adj = 0;
+    for (i = 0; adj && i < cf_array_count(adj); ++i) {
+        CFRef n = cf_array_get(adj, i);
+        OSStatus e = 0;
+        int64_t v;
+        if (!is_type(n, cf_number_type)) { adj = 0; break; }
+        if (!cf_get_i64) continue;          /* optional symbol: keep the car's list as sent */
+        v = cf_get_i64(n, &e);
+        if (e || v < 0 || v >= count || v == index) adj = 0;
+    }
+    set_i64(alt, "initialViewArea", index);
+    if (adj) set_value(alt, "adjacentViewAreas", adj);
+    else if ((k = s_cf("adjacentViewAreas")) != 0) { cf_dict_remove(alt, k); cf_release(k); }
+    return (int)index;
+}
+
 /* The completion owns its ticket. Do not free it on teardown: stock may still
  * call back, and command_done must safely reject the stale generation. If stock
  * discards the completion, this allocation remains (at most three per abandoned

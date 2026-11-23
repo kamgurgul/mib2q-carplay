@@ -387,15 +387,57 @@ public final class ClusterLayerController {
      *  re-sent for every new video session. */
     private static void sendAltViewArea(boolean videoActive, boolean popup, boolean shiftedSmallMap) {
         if (!videoActive) { lastZoneSent = -1; return; }
-        /* CMD_ALT_ZONE mode: 0=full, 1=sport, 2=classic */
-        int zone = popup ? 0 : (shiftedSmallMap ? 1 : 2);
+        int zone = altZone(popup, shiftedSmallMap);
         if (zone == lastZoneSent) return;
-        boolean sent = com.luka.carplay.bus.CarplayBus.getInstance().sendBinary(
-            com.luka.carplay.bus.CarplayBus.CMD_ALT_ZONE, new byte[]{(byte) zone, 0, 0});
+        boolean sent = sendAltZone(zone);
         if (sent) lastZoneSent = zone;
-        Log.i("ClusterLayers", "AltScreen view area -> "
-            + (zone == 0 ? "wide (0)" : zone == 1 ? "sport (2)" : "classic (1)")
+        Log.i("ClusterLayers", "AltScreen view area -> " + altZoneName(zone)
             + (sent ? "" : " (bus send dropped, retried on the next change)"));
+    }
+
+    /** CMD_ALT_ZONE mode: 0=full, 1=sport, 2=classic. */
+    private static int altZone(boolean popup, boolean shiftedSmallMap) {
+        return popup ? 0 : (shiftedSmallMap ? 1 : 2);
+    }
+
+    private static String altZoneName(int zone) {
+        return zone == 0 ? "wide (0)" : zone == 1 ? "sport (2)" : "classic (1)";
+    }
+
+    private static boolean sendAltZone(int zone) {
+        return com.luka.carplay.bus.CarplayBus.getInstance().sendBinary(
+            com.luka.carplay.bus.CarplayBus.CMD_ALT_ZONE, new byte[]{(byte) zone, 0, 0});
+    }
+
+    /** A new CarPlay hook (bus HELLO, once per phone session) starts at the wide view and
+     *  builds the phone's /info about 1.5 s later. Tell it the cockpit's layout now, so /info
+     *  declares that view as initialViewArea and the phone lays out its first cluster frame
+     *  for the visible map, as it does after a VIEW press (issue #68). Until 1.5 the layout
+     *  went out only once video was live, so a classic or Sport cockpit started on the wide
+     *  SafeArea. The hook keeps it for the session; the send at video start repeats it and
+     *  changes nothing. Same stage source as {@link #maneuverViewport()}: the VC's FctID 54,
+     *  which arrives with or without a CarPlay session. */
+    public static void sendAltViewAreaToNewHook() {
+        synchronized (APPLY_LOCK) {
+            boolean popup;
+            Geometry geometry;
+            boolean layoutKnown;
+            synchronized (LOCK) {
+                popup = haveVcStage ? vcPopup : lastStockPopup;
+                geometry = lastGeometry;
+                layoutKnown = haveLayout;
+            }
+            if (com.luka.carplay.core.CarPlayApp.isAndroidAutoActive()) return;
+            /* Without the stock layout the small map's skin is a guess: leave the hook's wide default. */
+            if (!popup && !layoutKnown) {
+                Log.i("ClusterLayers", "AltScreen view area for the new session: layout unknown, hook keeps wide (0)");
+                return;
+            }
+            int zone = altZone(popup, geometry.smallStageDX != 0);
+            boolean sent = sendAltZone(zone);
+            Log.i("ClusterLayers", "AltScreen view area for the new session (initialViewArea) -> "
+                + altZoneName(zone) + (sent ? "" : " (bus send dropped, sent again at video start)"));
+        }
     }
 
     /** One line per distinct geometry decision — the exact numbers written to the DM.

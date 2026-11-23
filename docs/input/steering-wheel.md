@@ -40,6 +40,10 @@ which stock applies as an increment of the kombi map's scale context).
 > vehicle-proven yet. `/tmp/carplay_java.log` logs every roller event (`[AltZoom] roller steps=...`;
 > none at all means the roller never reaches `setMapScale`), `/tmp/altscreen111.log` logs every step (`gen2 changeMapZoomLevel ...`) and the
 > phone's answer (`gen2 DIAG completion command=changeMapZoomLevel status=...`; 0 = accepted).
+> iOS hands the command to the app drawing the cluster map, and the app decides. Apple Maps and
+> Google Maps zoom; Waze and Yandex Maps (issue #68) acknowledge (`status=0`) but keep their
+> scale. There is no other zoom channel to the cluster map, so for those apps only the app can
+> change this.
 > Default mapping: a positive MapScale step zooms **out**. If the roller zooms the wrong way,
 > `touch /mnt/app/root/mibr-carplay111-zoom.inverted`. To test without the roller:
 > `touch /tmp/mibr-alt111-zoom-in` or `/tmp/mibr-alt111-zoom-out`.

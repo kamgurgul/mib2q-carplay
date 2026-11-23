@@ -78,7 +78,12 @@ preserved.
 The phone receives the car's dimensions, physical size, UUID, FPS, view areas,
 safe areas, initial URL, suggested URLs and unknown descriptor fields intact.
 An absent or invalid second display disables its advertisement; there is no
-local geometry fallback. View areas are optional. `viewareas.single` supplies
+local geometry fallback. One exception to "intact" (issue #68, source after v1177, no
+image yet): the descriptor is kept for the whole car session, so for a phone that
+(re)connects within it `initialViewArea` and `adjacentViewAreas` come from the car's
+latest retained `updateViewArea`, the view the cockpit shows now. The car snapshot
+itself is not edited; an index outside its `viewAreas` keeps the car's value, and an
+adjacency that is not a list of other views is dropped. View areas are optional. `viewareas.single` supplies
 one view and continues to work; disabling view areas also leaves the normal
 second display available. Geometry changes take effect after a fresh /info and
 phone session.

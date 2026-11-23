@@ -44,6 +44,39 @@ tests but have not been driven yet.
 
 ## Fixed
 
+- **Cluster map off-centre at connect until VIEW was pressed twice** (issue
+  [#68](https://github.com/kamgurgul/mib2q-carplay/issues/68), Yandex Maps, wired CarPlay, Q7
+  2017). *Car test pending.* After a connect the puck sat low and left, under the scale bar;
+  switching the cockpit to the small map and back put it in place. The phone now gets the
+  same view data at connect that a VIEW press gives it:
+  - `/info` declares `adjacentViewAreas` next to `initialViewArea` on the cluster display, the
+    same list (every other view) `updateViewArea` carries. Until 1.5 `/info` had only
+    `initialViewArea`, and the `updateViewArea` after the first `showUI` repeats that view, so
+    nothing completed the starting view state until a real switch. The MHI3 native helper
+    declares both as well.
+  - Java sends the cockpit layout when a new session's hook connects to the bus, about 1.5 s
+    before `/info`, so `initialViewArea` is the visible map's view. Until 1.5 it went out only
+    once video was live, so `/info` always said wide and a classic or Sport cockpit started on
+    the wide SafeArea until then. With a small map and no stock layout yet the skin is unknown
+    and the hook keeps wide.
+
+  One ViewArea (`mibr-carplay111-viewareas.single`) keeps the old `/info`. Logs:
+  `GEN2 ViewAreas=3 initialViewArea=0 (wide) adjacentViewAreas=2` in `altscreen111.log`,
+  `AltScreen view area for the new session (initialViewArea) -> ...` in `carplay_java.log`.
+  The HW301 dongle (v1176 and later) passes the car's display and its `updateViewArea` to the
+  phone field for field, so both changes reach the phone through it with the head unit alone.
+  The dongle source adds the dongle's own case. It keeps the car's display for the whole car
+  session, so a phone that reconnected while the dongle stayed connected to the car started
+  in the view from the start of that car session. The phone's `/info` now takes
+  `initialViewArea` and `adjacentViewAreas` from the car's latest `updateViewArea`, which the
+  dongle already keeps for replay. An index outside the display keeps the car's own view, and
+  an adjacency that is not a list of other views is dropped. Dongle log: `/info
+  initialViewArea=N from the car's last updateViewArea`. This part needs a new dongle image;
+  none is built yet. The archived v1167 image builds its own `/info` and is unchanged. The
+  other half of #68,
+  the roller not zooming Yandex, is the app: iOS accepts our `changeMapZoomLevel`
+  (`status=0`) and hands it to the app, which ignores it, as Waze does.
+
 - **HW301 dongle: CarPlay would not open on the MMI after verbose logging was switched on**
   (car logs 2026-11-17, saves 004/005; audio kept playing). *Car test pending.* The dongle's
   stock proxy gives the car about 0.5 s to answer its main-screen SETUP after the phone's first
@@ -89,6 +122,19 @@ tests but have not been driven yet.
 
 ## Tests
 
+- `tests/alt111_info_viewarea_test.c` (in `run_tests.sh`): the shipping `/info` builder on a stub
+  CF graph declares `adjacentViewAreas` with `initialViewArea`, the same list `updateViewArea`
+  sends for every view; a layout received before the session becomes the next
+  `initialViewArea`; one ViewArea, or no `CFNumberCreate`, keeps the old `/info`.
+- `tests/hw301_dongle_test.c` (in `scripts/test_hw301.sh`): the first phone of a car session
+  gets the car's own view; after a car `updateViewArea` a reconnecting phone gets its index and
+  adjacency while the car snapshot stays untouched; an adjacency listing the view itself or a
+  view the display lacks is dropped; an index the display lacks keeps the car's view; a command
+  without adjacency removes the car's; a car reset brings back the car's view.
+- `tests/AltZoneHelloTest.java` (in `scripts/test_java_transports.sh`): at bus HELLO the real
+  `ClusterLayerController` sends wide, classic or Sport over the real `CarplayBus` (the stock
+  stage without a FctID 54), nothing for a small map with no stock layout, and leaves the
+  per-video-session resend in place.
 - `tests/alt111_log_test.c` (in `run_tests.sh`): `altscreen111.log` is written in place before the
   writer thread starts; with the writer running, a log target whose `open()` blocks (a FIFO with no
   reader) does not block 300 callers, the overflow is counted and the survivors arrive in order;

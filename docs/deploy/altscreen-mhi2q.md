@@ -110,6 +110,24 @@ Java sends `CMD_ALT_ZONE` (0=full, 1=sport, 2=classic), `hook/altzoom` calls
 `adjacentViewAreas`, or iOS acknowledges but keeps the old layout) until the phone acknowledges.
 The current view is also the `initialViewArea` of the next `/info`.
 
+**Starting view (issue [#68](https://github.com/kamgurgul/mib2q-carplay/issues/68), 1.6).**
+*Car test pending.* `/info` states the starting view the way a VIEW press does: the display
+entry carries `adjacentViewAreas` next to `initialViewArea`, the same list (every other view)
+that `updateViewArea` sends, built by one helper. Until 1.5 `/info` gave only `initialViewArea`,
+and the `updateViewArea` after the first `showUI` names that same view, so nothing completed the
+phone's starting view state until the first real switch. Yandex Maps drew its first frame
+off-centre (puck low and left, under the scale bar) until VIEW was pressed twice. The MHI3 native
+helper (`AirPlayScreenDictSetViewAreas`) also declares both in `/info`; it uses `[]` for the wide
+view and `[0]` for a small one, where we keep the list our `updateViewArea` was car-tested with.
+Java now also sends `CMD_ALT_ZONE` as soon as a new session's hook says HELLO on the bus (about
+1.5 s before `/info`; `dio_manager` is a new process for every connect), from the VC's FctID 54
+stage and the stock layout's small-stage offset. Until 1.5 the zone went out only once video
+was live, so `/info` always said wide and a classic or Sport cockpit started on the wide
+SafeArea until then. Without the stock layout a small map's skin is unknown and the hook keeps
+wide. With one ViewArea `/info` has no `adjacentViewAreas`, as before. Logged as
+`GEN2 ViewAreas=3 initialViewArea=0 (wide) adjacentViewAreas=2` (`altscreen111.log`) and
+`AltScreen view area for the new session (initialViewArea) -> ...` (`carplay_java.log`).
+
 Calibration from the GEM **CarPlay-RGI** page:
 
 1. *Calibration grid ON / OFF* — ruler over the video, lines every 60 px. From 1.5 it is drawn

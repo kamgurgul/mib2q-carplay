@@ -158,6 +158,15 @@ cc -std=gnu99 -O1 -Wall -Wextra -Werror -Wno-unused-function \
     altscreen_hook/src/alt111_resync.c -lpthread -ldl -o "$OUT/alt111_settings"
 "$OUT/alt111_settings" "$OUT/alt111_settings.d"
 
+printf '%-32s ' alt111_info_viewarea_test
+# Issue #68: /info states the starting view like a VIEW press (initialViewArea + adjacentViewAreas).
+mkdir -p "$OUT/alt111_info_viewarea.d"
+cc -std=gnu99 -O1 -Wall -Wextra -Werror -Wno-unused-function \
+    -Ialtscreen_hook/include tests/alt111_info_viewarea_test.c altscreen_hook/src/alt111_profile.c \
+    altscreen_hook/src/alt111_control.c altscreen_hook/src/alt111_video.c \
+    altscreen_hook/src/alt111_resync.c -lpthread -ldl -o "$OUT/alt111_info_viewarea"
+"$OUT/alt111_info_viewarea" "$OUT/alt111_info_viewarea.d"
+
 printf '%-32s ' alt111_log_test
 # altscreen111.log off the AirPlay control path (HW301 screen SETUP window), rotation on /dev/shmem.
 mkdir -p "$OUT/alt111_log.d"

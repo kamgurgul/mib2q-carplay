@@ -168,6 +168,9 @@ public final class ScreenModule implements Module {
                 lastHiddenSent = -1;          /* a respawned hook starts at "shown" */
                 publishHiddenLocked();
             }
+            /* ...and at the wide view: the cockpit's layout before /info (issue #68). Outside
+             * LOCK: the layer controller's APPLY_LOCK path calls back into this class. */
+            com.luka.carplay.cluster.ClusterLayerController.sendAltViewAreaToNewHook();
         }
     };
 

@@ -338,6 +338,9 @@ static fn_cfarr_new_t p_CFArrayCreateMutable;
 static fn_cfarr_copy_t p_CFArrayCreateMutableCopy;
 static fn_cfretain_t p_CFRetain;
 static fn_cfrelease_t p_CFRelease;
+/* CFNumberCreate(alloc, type, valuePtr): resolved on first use by adjacent_view_areas. */
+typedef CFTypeRef (*fn_cfnum_create_t)(void *, int, const void *);
+static fn_cfnum_create_t p_CFNumberCreate;
 static const void *p_dict_key_callbacks;
 static const void *p_dict_val_callbacks;
 static const void *p_array_callbacks;
@@ -2896,11 +2899,40 @@ static int configured_view_count(void)
 #endif
 }
 
+/*
+ * adjacentViewAreas for the current view: every other advertised view, as CFNumbers.
+ * Without it in updateViewArea iOS acknowledges (status 0) but keeps the first layout (our
+ * log sets 013/015; joeyQuery/MHI2-altScreen TRACE-013 on a B9 VC: animation, transition
+ * control and a different view rect were all inert, only this worked). iOS keeps it per
+ * screen beside the current view, and the MHI3 native helper declares both in /info
+ * (AirPlayScreenDictSetViewAreas). Built here for both places, so the session starts in the
+ * exact state a VIEW press leaves (issue #68). NULL without CFNumberCreate.
+ */
+static CFMutableArrayRef adjacent_view_areas(unsigned view, int *count)
+{
+    CFMutableArrayRef adj;
+    unsigned v;
+    int n = 0;
+    if(count) *count = 0;
+    if(!p_CFNumberCreate) p_CFNumberCreate=(fn_cfnum_create_t)dlsym(RTLD_DEFAULT,"CFNumberCreate");
+    adj = p_CFNumberCreate ? p_CFArrayCreateMutable(NULL,0,p_array_callbacks) : NULL;
+    if(!adj) return NULL;
+    for(v=0; v<(unsigned)g_view_count; ++v){
+        int64_t idx=(int64_t)v;
+        CFTypeRef num;
+        if(v==view) continue;
+        num=p_CFNumberCreate(NULL,4 /* kCFNumberSInt64Type */,&idx);
+        if(num){ p_CFArrayAppendValue(adj,num); p_CFRelease(num); ++n; }
+    }
+    if(count) *count = n;
+    return adj;
+}
+
 static void add_reference_viewarea(CFMutableDictionaryRef alt)
 {
-    CFMutableArrayRef areas=NULL;
+    CFMutableArrayRef areas=NULL, adj=NULL;
     CFStringRef k=NULL;
-    int v, initial;
+    int v, initial, adjacent=0;
 
     if(!alt || g_width<=0 || g_height<=0) return;
     areas=p_CFArrayCreateMutable(NULL,0,p_array_callbacks);
@@ -2939,7 +2971,21 @@ static void add_reference_viewarea(CFMutableDictionaryRef alt)
     p_CFRelease(areas);
     initial = (g_desired_view>=0 && g_desired_view<g_view_count) ? g_desired_view : 0;
     set_i64(alt,"initialViewArea",initial);
-    logf_u2("GEN2 ViewAreas=%d initialViewArea=%d",g_view_count,initial);
+    /*
+     * Issue #68: without adjacentViewAreas here the phone's starting view state was
+     * incomplete. Yandex Maps laid out its first frame off-centre (puck low and left, under
+     * the scale bar) until two VIEW presses sent updateViewArea, which carries it. The
+     * updateViewArea after the first showUI names the same view and changes nothing. Now
+     * /info states the current view and its adjacent views together, like a VIEW press.
+     */
+    if(g_view_count>1 && (adj=adjacent_view_areas((unsigned)initial,&adjacent))!=NULL){
+        k=s_cf("adjacentViewAreas");
+        p_CFDictionarySetValue(alt,k,adj);
+        p_CFRelease(k);
+        p_CFRelease(adj);
+    }
+    logf_u2("GEN2 ViewAreas=%d initialViewArea=%d (%s) adjacentViewAreas=%d",g_view_count,initial,
+            view_area_name(initial),adjacent);
 }
 
 static void log_stream_types(const char *tag, CFDictionaryRef request)
@@ -3436,33 +3482,20 @@ static CFMutableDictionaryRef command_update_view(unsigned view)
         set_i64(params,"animationDurationMillis",(int64_t)ms);
         if (ms) logf_u2("GEN2 updateViewArea animationDurationMillis=%d", ms);
     }
-    /*
-     * adjacentViewAreas = every other advertised view. Without it iOS acknowledges
-     * updateViewArea (status 0) but keeps the first layout (our log sets 013/015;
-     * joeyQuery/MHI2-altScreen TRACE-013 on a B9 VC: animation, transition
-     * control and a different view rect were all inert, only this worked).
-     */
+    /* adjacentViewAreas = every other advertised view, the same list /info declares
+     * (adjacent_view_areas: without it iOS keeps the first layout). */
     {
-        typedef CFTypeRef (*cfnum_create_t)(CFTypeRef, int, const void *);
-        static cfnum_create_t num_create;
-        CFMutableArrayRef adj;
-        unsigned v;
         int n = 0;
-        if(!num_create) num_create=(cfnum_create_t)dlsym(RTLD_DEFAULT,"CFNumberCreate");
-        adj = num_create ? p_CFArrayCreateMutable(NULL,0,p_array_callbacks) : NULL;
+        CFMutableArrayRef adj = adjacent_view_areas(view, &n);
+        int have = adj != NULL;
         if(adj){
-            for(v=0; v<(unsigned)g_view_count; ++v){
-                int64_t idx=(int64_t)v;
-                CFTypeRef num;
-                if(v==view) continue;
-                num=num_create(NULL,4 /* kCFNumberSInt64Type */,&idx);
-                if(num){ p_CFArrayAppendValue(adj,num); p_CFRelease(num); ++n; }
-            }
-            { CFStringRef k=s_cf("adjacentViewAreas"); p_CFDictionarySetValue(params,k,adj); p_CFRelease(k); }
+            CFStringRef k=s_cf("adjacentViewAreas");
+            p_CFDictionarySetValue(params,k,adj);
+            p_CFRelease(k);
             p_CFRelease(adj);
         }
         logf_u2("GEN2 updateViewArea index=%u adjacentViewAreas=%d%s",view,n,
-                num_create?"":" (CFNumberCreate missing)");
+                have?"":" (CFNumberCreate missing)");
     }
     { CFStringRef k=s_cf("params"); p_CFDictionarySetValue(req,k,params); p_CFRelease(k); }
     p_CFRelease(params); return req;

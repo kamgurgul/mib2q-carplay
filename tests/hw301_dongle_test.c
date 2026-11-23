@@ -333,6 +333,64 @@ static void test_controls(void){
     car_reset(0);finish_command(0);assert(!g_controls[0].request); /* late completion after car reset */
     t_release(root);t_release(ui);t_release(view);
 }
+/* Issue #68: a phone (re)connecting through the dongle starts in the car's current view. */
+static int64_t num_value(CFRef v,OSStatus *e){const test_cf *n=v;if(e)*e=n->type!=4;return n->number;}
+static CFRef num_list(const int *v,int count){
+    CFRef a=array();int i;
+    for(i=0;i<count;++i){test_cf *n=t_new(4);n->number=v[i];t_append(a,n);t_release(n);}
+    return a;
+}
+static CFRef view_command(int index,CFRef adjacent){
+    CFRef req=command("updateViewArea");
+    set_i64(get_value(req,"params"),"viewAreaIndex",index);
+    if(adjacent)set_value(get_value(req,"params"),"adjacentViewAreas",adjacent);
+    return req;
+}
+/* The phone-facing cluster display for the current car state: initialViewArea and the
+ * adjacentViewAreas count (-1 = absent). */
+static void phone_view(CFRef base,int64_t *initial,long *adjacent){
+    CFRef phone=augment_info(base),alt,adj;
+    assert(phone);alt=t_at(get_value(phone,"displays"),1);
+    assert(get_int(alt,"initialViewArea",0,9,initial));
+    adj=get_value(alt,"adjacentViewAreas");*adjacent=adj?t_count(adj):-1;
+    t_release(phone);
+}
+static void test_view_replay(void){
+    static const int others1[]={0,2,3,4},own[]={0,1,2,3},bad[]={0,1},range[]={0,7};
+    CFRef root=profile(),base,d=t_at(get_value(root,"displays"),1),req,list;
+    int64_t initial;long adjacent;
+    cf_get_i64=num_value;
+    base=decode(root);assert(car_available());
+    phone_view(base,&initial,&adjacent);
+    assert(initial==4 && adjacent==-1); /* first phone: the car's own /info view */
+    list=num_list(others1,4);req=view_command(1,list);capture_car_command(req);
+    phone_view(base,&initial,&adjacent);
+    assert(initial==1 && adjacent==4); /* reconnect after a VIEW press: index and adjacency */
+    assert(get_int(g_car_display,"initialViewArea",0,9,&initial) && initial==4 &&
+           !get_value(g_car_display,"adjacentViewAreas")); /* the car snapshot is untouched */
+    t_release(req);t_release(list);
+    list=num_list(bad,2);req=view_command(1,list);capture_car_command(req); /* lists itself */
+    phone_view(base,&initial,&adjacent);assert(initial==1 && adjacent==-1);
+    t_release(req);t_release(list);
+    list=num_list(range,2);req=view_command(2,list);capture_car_command(req); /* view 7 */
+    phone_view(base,&initial,&adjacent);assert(initial==2 && adjacent==-1);
+    t_release(req);t_release(list);
+    req=view_command(5,NULL);capture_car_command(req); /* no such view: the car's /info view */
+    phone_view(base,&initial,&adjacent);assert(initial==4 && adjacent==-1);
+    t_release(req);
+    car_reset(0); /* new car session: the retained command is gone */
+    list=num_list(own,4);set_value(d,"adjacentViewAreas",list);t_release(list);
+    t_release(base);base=decode(root);
+    phone_view(base,&initial,&adjacent);assert(initial==4 && adjacent==4); /* car's own, kept */
+    req=view_command(0,NULL);capture_car_command(req); /* command without adjacency */
+    phone_view(base,&initial,&adjacent);assert(initial==0 && adjacent==-1);
+    t_release(req);
+    cf_get_i64=NULL; /* optional symbol absent: numbers are passed through as sent */
+    list=num_list(others1,4);req=view_command(1,list);capture_car_command(req);
+    phone_view(base,&initial,&adjacent);assert(initial==1 && adjacent==4);
+    t_release(req);t_release(list);
+    car_reset(1);t_release(root);t_release(base);
+}
 static int final_calls,update_calls;
 static void ctr_final(void *c){(void)c;++final_calls;}
 static int ctr_fail(void *c,const void *s,size_t n,void *d){(void)c;(void)s;(void)n;(void)d;++update_calls;return -1;}
@@ -444,7 +502,7 @@ int main(void){
     r_setup=stock_setup;r_teardown=stock_teardown;r_pair_derive=pair_derive;
     r_cc_init=cc_init;r_cc_aad=cc_aad;r_cc_dec=cc_dec;r_cc_verify=cc_verify;r_send_cmd=send_command;
     test_profile();test_native_setup();test_car_setup_recovery();test_phone_lifecycle();test_phone_setup_failures();
-    test_controls();test_crypto_failure();test_phone_crypto();test_rgd_identify();test_rgd_bridge();
+    test_controls();test_view_replay();test_crypto_failure();test_phone_crypto();test_rgd_identify();test_rgd_bridge();
     car_reset(1);t_release(k_type);t_release(k_conn);t_release(k_streams);t_release(k_displays);t_release(k_features);
     puts("OK: native proxy isolation, car metadata/SETUP/keys, controls, reconnect, fail-closed crypto and route guidance bridge");return 0;
 }
