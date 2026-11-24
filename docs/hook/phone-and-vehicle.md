@@ -27,6 +27,10 @@ While CarPlay owns the iPhone the VC telephone tab works as with a Bluetooth pho
 call state and timer, accept / hang up / hold / swap / mute (tab and steering wheel), dialling,
 recents, favorites, missed calls, signal and carrier. The HU phone app skips the "Your iPhone
 is in Apple CarPlay mode" popup and goes straight to CarPlay. No caller photo (iAP2 has none).
+The skip fires when the popup's phone state (`telCarPlayDisclaimer_compound`) is entered by any
+route, including the phone app's deep history bringing it back on MENU -> Telephone or TEL
+(issue #69). The entry guards that pick it are hooked as well, and a one-second dedupe keeps one
+entry to one press.
 
 | Piece | Role |
 |---|---|

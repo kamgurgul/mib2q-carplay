@@ -1,6 +1,7 @@
 /*
  * Patched de.audi.tghu.phone.sm.Activator: identical to stock except that it builds
- * CarPlayPhoneSMM, which skips the HU "Your iPhone is in Apple CarPlay mode" popup.
+ * CarPlayPhoneSMM, which skips the HU "Your iPhone is in Apple CarPlay mode" popup
+ * whenever its state is entered.
  *
  * Copyright (c) 2026 LuKa (@LuKa_dev)
  */

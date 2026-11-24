@@ -54,6 +54,13 @@ trap 'rm -rf "$TEST_DIR"' EXIT
 "$TEST_JDK/bin/java" -cp "$TEST_DIR:$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR" \
     com.luka.carplay.telephony.GatedPhoneCallsTest
 
+# HU phone app: the CarPlay popup is skipped on every entry of its state, also when the phone
+# app's deep history brings it back with no guard (issue #69). Real stock PhoneSMM tables.
+"$TEST_JDK/bin/javac" -encoding UTF-8 -cp "$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR:$OSGI_LIBS" \
+    -d "$TEST_DIR" "$PROJECT_DIR/tests/CarPlayDisclaimerSkipTest.java"
+"$TEST_JDK/bin/java" -cp "$TEST_DIR:$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR:$OSGI_LIBS" \
+    com.luka.carplay.telephony.CarPlayDisclaimerSkipTest
+
 # Power-on: a startDomain the target app dropped is re-sent, against the real stock DomainHandler.
 "$TEST_JDK/bin/javac" -encoding UTF-8 -cp "$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR" \
     -d "$TEST_DIR" "$PROJECT_DIR/tests/DomainStartRescueTest.java"

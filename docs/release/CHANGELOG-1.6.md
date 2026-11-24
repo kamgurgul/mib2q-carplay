@@ -99,6 +99,20 @@ tests but have not been driven yet.
   gives the main screen to the phone now stamps the yield file at once (`hw yield (screen-to-phone):
   stamped ahead of the main-screen SETUP`), so the decoder is free about 0.3 s later when the
   SETUP comes; the SETUP still checks and waits if it is not.
+- **"Your iPhone is in Apple CarPlay mode" still came up on some phone entries** (issue
+  [#69](https://github.com/kamgurgul/mib2q-carplay/issues/69), P5092, wired iPhone). *Car test
+  pending.* After a skip the phone app was left on the popup while the screen went to CarPlay.
+  The phone app keeps deep history, so the next MENU -> Telephone, or TEL while the popup
+  showed, brought the popup back straight from history without checking anything. The skip
+  only hooked those checks: five phone transitions and system 833. That is why the popup
+  showed with no `Telephony` log line, and why the result depended on which phone screen was
+  last open. The skip now also fires whenever the popup's phone state is entered by any route
+  (`CarPlay popup skipped (phone state 300553 entered)`). It is found by its stock label, not
+  a firmware-specific number, and it fires only while the stock choice says CarPlay holds the
+  phone. The old hooks stay. A second press from the same entry within a second is dropped
+  (it would flip the toggle back), and verbose logging now shows that drop. System transition
+  833 is not the TEL key, as the code comment said: TEL reaches the phone app through its slot
+  and history.
 
 ## Improved
 
@@ -122,6 +136,11 @@ tests but have not been driven yet.
 
 ## Tests
 
+- `tests/CarPlayDisclaimerSkipTest.java` (in `scripts/test_java_transports.sh`): the real stock
+  PhoneSMM tables under `CarPlayPhoneSMM`. The popup state is found by label (300553 on P5152)
+  and keeps its enter action. Entering it from history presses *Switch to Apple CarPlay* once,
+  and the stock drawers still run. A repeat within a second, choice 301049 = 0, or any other
+  state presses nothing. Guard 300002 followed by the state entry is one flip.
 - `tests/alt111_info_viewarea_test.c` (in `run_tests.sh`): the shipping `/info` builder on a stub
   CF graph declares `adjacentViewAreas` with `initialViewArea`, the same list `updateViewArea`
   sends for every view; a layout received before the session becomes the next

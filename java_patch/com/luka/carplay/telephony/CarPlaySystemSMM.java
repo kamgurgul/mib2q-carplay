@@ -1,12 +1,16 @@
 /*
- * CarPlaySystemSMM - the stock system state machine, minus the CarPlay popup on TEL.
+ * CarPlaySystemSMM - the stock system state machine, minus its own CarPlay popup entry.
  *
- * The TEL key enters the phone app through system transition 833 (state 484), whose
- * branch 0 (SHOW_CAR_PLAY_DISCLAIMER_CHOICE 301049 == 1) targets the phone's
- * telCarPlayDisclaimer_compound directly, without passing any PhoneSMM guard.  When it
- * is taken we press "Switch to Apple CarPlay" for the user (CarPlayDisclaimerSkip).
- * Same transition and guard on MU1316 US, MU1329 EU and MU1003 CN; this only subclasses,
- * so each firmware keeps its own SystemSMM.
+ * System transition 833 (ENTER of system state 484) is the system SM's only direct route
+ * to the phone's telCarPlayDisclaimer_compound.  Its branch 0 (SHOW_CAR_PLAY_DISCLAIMER_CHOICE
+ * 301049 == 1) targets the popup without passing any PhoneSMM guard.  When it is taken we
+ * press "Switch to Apple CarPlay" for the user (CarPlayDisclaimerSkip).  In the P5152 tables
+ * state 484 is reached on REMOTE_HMI_SWITCHTOSERVICE, not on the TEL key.  TEL goes system
+ * 295 -> 36 -> phone slot 13 -> phoneDesktop, and the phone SM's history or guards pick the
+ * popup from there (CarPlayPhoneSMM).  Issue #69's TEL log never showed 833.  The popup
+ * state's enter hook in CarPlayPhoneSMM also sees this route, and the press dedupe keeps it
+ * to one flip.  Same transition and guard on MU1316 US, MU1329 EU and MU1003 CN; this only
+ * subclasses, so each firmware keeps its own SystemSMM.
  *
  * Copyright (c) 2026 LuKa (@LuKa_dev)
  */

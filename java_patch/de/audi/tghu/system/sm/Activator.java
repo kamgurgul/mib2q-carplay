@@ -1,7 +1,8 @@
 /*
  * Patched de.audi.tghu.system.sm.Activator: identical to stock except that the front
  * system SMs are CarPlaySystemSMM, which skips the HU "Your iPhone is in Apple CarPlay
- * mode" popup on the TEL key.  Byte-identical stock on MU1316, MU1329 and MU1003.
+ * mode" popup on the system SM's own entry to it (transition 833).  Byte-identical stock
+ * on MU1316, MU1329 and MU1003.
  *
  * Copyright (c) 2026 LuKa (@LuKa_dev)
  */
