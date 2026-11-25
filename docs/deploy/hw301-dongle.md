@@ -19,7 +19,7 @@ shows CarPlay on the MMI only, and the Virtual Cockpit keeps the Audi map. This 
 because the dongle presents itself to the car as an iPhone 7 (`iPhone9,1` / `18D70`) and
 never opens the cluster stream.
 
-The newest custom app image is **v1176**, made for the head unit on **1.4**. It keeps the stock
+The newest custom app image is **v1178**, made for the head unit on **1.4** or newer. It keeps the stock
 main-screen behaviour and adds the phone's cluster map on the Virtual Cockpit:
 
 - the iPhone draws a dedicated cluster view, not a copy of the MMI screen;
@@ -32,9 +32,14 @@ main-screen behaviour and adds the phone's cluster map on the Virtual Cockpit:
   - the wide / classic / Sport layout switch, which resizes the map;
   - SafeArea, size and frame-rate changes, applied at the next connection;
 - route guidance reaches the car: the HUD maneuvers and the cluster maneuver arrow work through
-  the dongle as with a cable-connected iPhone (new in v1176).
+  the dongle as with a cable-connected iPhone (new in v1176);
+- a phone that reconnects while the dongle stays in the car starts in the cockpit's current
+  view, not the view from the start of the drive (new in v1178, issue #68).
 
-v1176 uses the same head-unit path as an iPhone, so a head unit on 1.3 or 1.3.1 should work
+v1178 is not car-tested yet. If it misbehaves, flash **v1176**, the last car-tested image
+(everything above except the last point).
+
+v1176 and v1178 use the same head-unit path as an iPhone, so a head unit on 1.3 or 1.3.1 should work
 as well (not tested; it has no *all features on wide view* switch). The previous image
 **v1167** stays available: the same cluster map, but with its URLs and SafeAreas built into
 the image (wide layout with ETA, speed limit and compass; classic and Sport small maps with
@@ -63,8 +68,10 @@ cluster map kept running.
 
 | File | What it is |
 | --- | --- |
-| `dongle/hw301/fw/hw301_v1176.tar` | **the custom image you flash** (marker `v1176-20261104084344`) |
-| `dongle/hw301/fw/hw301_v1177.tar` | the same version as v1176, but it also contains enabled logging. Flash it only to collect logs for a bug report (`--version 1177`, marker `v1177-20261104084350`) |
+| `dongle/hw301/fw/hw301_v1178.tar` | **the custom image you flash** (marker `v1178-20261124092549`) |
+| `dongle/hw301/fw/hw301_v1179.tar` | the same version as v1178, but it also contains enabled logging. Flash it only to collect logs for a bug report (`--version 1179`, marker `v1179-20261124092559`) |
+| `dongle/hw301/fw/hw301_v1176.tar` | the last car-tested image (marker `v1176-20261104084344`) |
+| `dongle/hw301/fw/hw301_v1177.tar` | the same version as v1176 with enabled logging (`--version 1177`, marker `v1177-20261104084350`) |
 | `dongle/hw301/fw/hw301_v1172.tar` | the previous custom image (marker `v1172-20261027093548`), no route guidance |
 | `dongle/hw301/fw/hw301_v1167.tar` | the previous custom image (marker `v1167-20261025192423`), URLs and SafeAreas built in |
 | `dongle/hw301/fw/hw301_v1162.tar` | an older custom image (marker `v1162-20261020152434`), no Sport-skin layout |
@@ -80,7 +87,7 @@ cluster map kept running.
 > unplug the dongle while the flash percent is moving. Other `smartBox-xxxx` boards are not
 > HW301; do not flash this image onto them.
 
-## Flash v1176
+## Flash v1178
 
 1. Install or update the head unit to 1.4 first ([install](install.md)). Leave **Cluster video ON**.
 2. Power the HW301 from a USB charger. Do not connect it to the car.
@@ -89,26 +96,27 @@ cluster map kept running.
 4. Check the image without writing anything:
 
    ```bash
-   python3 dongle/hw301/work/tools/flash_local.py dongle/hw301/fw/hw301_v1176.tar --version 1176 --dry-run
+   python3 dongle/hw301/work/tools/flash_local.py dongle/hw301/fw/hw301_v1178.tar --version 1178 --dry-run
    ```
 
    The dry run prints the tar size and `127` chunks, and says it is not sending.
 5. Flash it:
 
    ```bash
-   python3 dongle/hw301/work/tools/flash_local.py dongle/hw301/fw/hw301_v1176.tar --version 1176
+   python3 dongle/hw301/work/tools/flash_local.py dongle/hw301/fw/hw301_v1178.tar --version 1178
    ```
 
    Wait until both the upload bar and the flash percent finish.
-6. Optional check: `curl http://192.168.5.1/clbuild.txt` prints `v1176-20261104084344`.
+6. Optional check: `curl http://192.168.5.1/clbuild.txt` prints `v1178-20261124092549`.
 7. Unplug the dongle and plug it back into the charger once. Then install it in the car.
 8. Connect the phone through the dongle. The Virtual Cockpit shows the phone's map. A long
    press of the left steering-wheel roller switches between that map and the Audi map. A short
    press still toggles the route-info line.
 
-To go back to v1172 or v1167 use the same steps with `hw301_v1172.tar` / `--version 1172` or
-`hw301_v1167.tar` / `--version 1167`; `clbuild.txt` then prints `v1172-20261027093548` or
-`v1167-20261025192423`. Design and protocol details of v1172 and v1176:
+To go back to v1176, v1172 or v1167 use the same steps with `hw301_v1176.tar` / `--version 1176`,
+`hw301_v1172.tar` / `--version 1172` or `hw301_v1167.tar` / `--version 1167`; `clbuild.txt` then
+prints `v1176-20261104084344`, `v1172-20261027093548` or `v1167-20261025192423`. Design and
+protocol details of v1172, v1176 and v1178:
 [HW301 findings](../../dongle/hw301/FINDINGS.md#current-source-v1172-native-proxy-candidate).
 
 ## Back to stock

@@ -71,10 +71,12 @@ tests but have not been driven yet.
   `initialViewArea` and `adjacentViewAreas` from the car's latest `updateViewArea`, which the
   dongle already keeps for replay. An index outside the display keeps the car's own view, and
   an adjacency that is not a list of other views is dropped. Dongle log: `/info
-  initialViewArea=N from the car's last updateViewArea`. This part needs a new dongle image;
-  none is built yet. The archived v1167 image builds its own `/info` and is unchanged. The
-  other half of #68,
-  the roller not zooming Yandex, is the app: iOS accepts our `changeMapZoomLevel`
+  initialViewArea=N from the car's last updateViewArea`. This part is in the new dongle image
+  `dongle/hw301/fw/hw301_v1178.tar` (marker `v1178-20261124092549`), now the newest HW301
+  image; `dongle/hw301/fw/hw301_v1179.tar` (marker `v1179-20261124092559`) is the same version
+  with logging. Otherwise identical to v1176, which stays available as the last car-tested
+  image. *Car test pending.* The archived v1167 image builds its own `/info` and is unchanged.
+  The other half of #68, the roller not zooming Yandex, is the app: iOS accepts our `changeMapZoomLevel`
   (`status=0`) and hands it to the app, which ignores it, as Waze does.
 
 - **HW301 dongle: CarPlay would not open on the MMI after verbose logging was switched on**

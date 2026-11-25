@@ -50,9 +50,9 @@ hw301/work/exp/
 
 # …but DO keep the firmware (these override the rules above):
 #   official stock OTA tars (Wi-Fi rollback) + v129 app.img (the build input)
-#   newest custom image v1172 plus the same image with logging enabled (file/OTA code 1173),
-#   the previous releases v1167, v1166, v1164 and v1162, plus that v1162 with logging
-#   enabled (file/OTA code 1160)
+#   newest custom image v1178 plus the same image with logging enabled (file/OTA code 1179),
+#   the previous releases v1176 (+ logging 1177), v1172 (+ logging 1173), v1167, v1166,
+#   v1164 and v1162, plus that v1162 with logging enabled (file/OTA code 1160)
 #   FEL restore image of the app partition (stock v129, see README "Rollback")
 !hw301/fw/hw301_v126.tar
 !hw301/fw/hw301_v129.tar
@@ -63,6 +63,10 @@ hw301/work/exp/
 !hw301/fw/hw301_v1167.tar
 !hw301/fw/hw301_v1172.tar
 !hw301/fw/hw301_v1173.tar
+!hw301/fw/hw301_v1176.tar
+!hw301/fw/hw301_v1177.tar
+!hw301/fw/hw301_v1178.tar
+!hw301/fw/hw301_v1179.tar
 !hw301/fw/v129/app.img
 !hw301/fw/rollback/
 !hw301/fw/rollback/restore-app-v129-at-0x7e0000.bin

@@ -10,13 +10,22 @@ dongle only from that release). User guide: [docs/deploy/hw301-dongle.md](../../
 How it works, what was learned, and what failed: **[FINDINGS.md](FINDINGS.md)**.
 The head-unit side lives in the repo root (`altscreen_hook/`, `scripts/`, `mods/`).
 
-## Newest image: v1176
+## Newest image: v1178
 
-`fw/hw301_v1176.tar` (marker `v1176-20261104084344`, `build_dual.sh release`) is the
-newest custom image: v1172 plus the route guidance bridge, which relays iAP2 route
+`fw/hw301_v1178.tar` (marker `v1178-20261124092549`, `build_dual.sh release`) is the
+newest custom image: v1176 plus the car's current view for a phone that reconnects
+within a car session (issue #68). The dongle keeps the car's cluster display for the
+whole car session, so until v1176 such a phone started in the view from the start of
+that session. Now its `/info` takes `initialViewArea` and `adjacentViewAreas` from the
+car's latest `updateViewArea` (dongle log: `/info initialViewArea=N from the car's last
+updateViewArea`). Everything else is v1176. *Car test pending*: if it misbehaves, flash
+v1176 back. `fw/hw301_v1179.tar` is the same version with logging (`build_dual.sh optA`).
+
+v1176 (`fw/hw301_v1176.tar`, marker `v1176-20261104084344`) is the last car-tested image:
+v1172 plus the route guidance bridge, which relays iAP2 route
 guidance (0x5200-0x5204) between the car and the iPhone, so the HUD and the cluster
 maneuver arrow work through the dongle. Route guidance passed a first car test on
-2026-10-28. `fw/hw301_v1177.tar` is the same version with logging (`build_dual.sh optA`).
+2026-10-28. `fw/hw301_v1177.tar` is the same version with logging.
 
 v1172 (`fw/hw301_v1172.tar`, marker `v1172-20261027093548`) is made for mib2q-carplay 1.4. It replaces the dongle's single-screen
 proxy boundary and uses the car's normal second-display advertisement, SETUP and
@@ -37,8 +46,10 @@ evidence, test coverage and the car result are in
 |---|---|
 | `fw/hw301_v129.tar`, `fw/v129/` | **official** stock v1.29: OTA tar + `app.img` + md5 (the build input and the rollback image) |
 | `fw/hw301_v126.tar` | official stock v1.26 |
-| `fw/hw301_v1176.tar` | **newest custom image** (marker `v1176-20261104084344`, `build_dual.sh release`): v1172 plus the route guidance bridge (iAP2 0x5200-0x5204 between car and phone, so the HUD and cluster maneuvers work). First car pass 2026-10-28. See FINDINGS "Route guidance bridge" |
-| `fw/hw301_v1177.tar` | **same version as v1176**, but it also contains enabled logging. OTA code 1177, marker `v1177-20261104084350`. `build_dual.sh optA` |
+| `fw/hw301_v1178.tar` | **newest custom image** (marker `v1178-20261124092549`, `build_dual.sh release`): v1176 plus the car's current view (`initialViewArea`, `adjacentViewAreas`) in `/info` for a phone that reconnects within a car session (issue #68). *Car test pending* |
+| `fw/hw301_v1179.tar` | **same version as v1178**, but it also contains enabled logging. OTA code 1179, marker `v1179-20261124092559`. `build_dual.sh optA` |
+| `fw/hw301_v1176.tar` | last car-tested image (marker `v1176-20261104084344`): v1172 plus the route guidance bridge (iAP2 0x5200-0x5204 between car and phone, so the HUD and cluster maneuvers work). First car pass 2026-10-28. See FINDINGS "Route guidance bridge" |
+| `fw/hw301_v1177.tar` | **same version as v1176**, but it also contains enabled logging. OTA code 1177, marker `v1177-20261104084350` |
 | `fw/hw301_v1172.tar` | previous custom image (marker `v1172-20261027093548`, `build_dual.sh release`): native two-screen proxy; the car's cluster display, menu switches and layouts reach the phone. Made for mib2q-carplay 1.4 |
 | `fw/hw301_v1173.tar` | **same version as v1172**, but it also contains enabled logging (diagnostic kmsg lines). Separate file and OTA code (1173, marker `v1173-20261027093537`). `build_dual.sh optA` |
 | `fw/hw301_v1167.tar` | previous custom release (marker `v1167-20261025192423`): v1166 plus ETA, speed limit and compass on the wide cockpit layout; the classic and Sport small maps keep only the turn card |
@@ -64,8 +75,8 @@ Needs Docker (muslcc toolchain, alpine) and squashfs-tools (`brew install squash
 
 ```bash
 cd dongle/hw301
-./work/tools/build_dual.sh release      # -> work/out/hw301_v1176.tar
-./work/tools/build_dual.sh optA         # -> work/out/hw301_v1177.tar (v1176 + logging)
+./work/tools/build_dual.sh release      # -> work/out/hw301_v1178.tar
+./work/tools/build_dual.sh optA         # -> work/out/hw301_v1179.tar (v1178 + logging)
 ```
 
 The build refuses an image whose shim imports a symbol the dongle cannot resolve.
@@ -73,10 +84,13 @@ It also checks the SHA-256 hashes of stock `CPAAProxyEx`, `libAirPlay.so`,
 `libCoreUtils.so` and `libiAP2Link.so` with [check_native_abi.py](work/tools/check_native_abi.py).
 The native proxy uses inspected v129 offsets (`+0x3ec`, `0x190`, `0x2b8`), so a
 `Native proxy ABI mismatch` means the input binaries need to be checked before
-building against them. Use the tracked stock v129 image. A rebuild gets a new build marker; the tracked
-`fw/hw301_v1176.tar` is the release build of the car-tested source (the 2026-10-28 car test
-ran build `v1176-20261028100645` of the same code, which was never committed).
-Images are ignored by `dongle/.gitignore` (`*.tar`); add a new one with `git add -f`.
+building against them. Use the tracked stock v129 image. A rebuild gets a new build marker, so
+commit the image that goes to the car: the tracked `fw/hw301_v1178.tar` and `fw/hw301_v1179.tar`
+are the builds handed out for the car test. The tracked `fw/hw301_v1176.tar` is the release
+build of the car-tested source (the 2026-10-28 car test ran build `v1176-20261028100645` of the
+same code, which was never committed).
+Images are ignored by `dongle/.gitignore` (`*.tar`); list a new one there (`!hw301/fw/...`)
+or add it with `git add -f`.
 
 ## Flash
 
@@ -84,10 +98,13 @@ Images are ignored by `dongle/.gitignore` (`*.tar`); add a new one with `git add
 Do not unplug while the percent is moving.
 
 ```bash
-python3 work/tools/flash_local.py fw/hw301_v1176.tar --version 1176 --dry-run   # 127 chunks, sends nothing
-python3 work/tools/flash_local.py fw/hw301_v1176.tar --version 1176
-curl http://192.168.5.1/clbuild.txt                                             # v1176-20261104084344
+python3 work/tools/flash_local.py fw/hw301_v1178.tar --version 1178 --dry-run   # 127 chunks, sends nothing
+python3 work/tools/flash_local.py fw/hw301_v1178.tar --version 1178
+curl http://192.168.5.1/clbuild.txt                                             # v1178-20261124092549
 ```
+
+Back to the last car-tested image: `fw/hw301_v1176.tar --version 1176` (marker
+`v1176-20261104084344`).
 
 The head unit needs this repo's 1.4 install (1.3 or newer also works, without the wide-view
 switch; v1172 and newer on 1.3.x are not tested) with Cluster video ON.
