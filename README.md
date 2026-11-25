@@ -127,7 +127,7 @@ without any of these.
 | --- | --- | --- | --- |
 | Baseus Safe Journey Series Wireless CarPlay Adapter | build `26031311.2705.1` | fast | yes, no custom firmware, [report](https://github.com/kamgurgul/mib2q-carplay/issues/5) |
 | Carlinkit 5.0 / 2Air | software `2025.12.29.1746`, hardware `U2AC822C0` | slow, then stable | yes, no custom firmware, [report](https://github.com/kamgurgul/mib2q-carplay/issues/5) |
-| HW301 (Allwinner, setup Wi-Fi `smartBox`, web UI `192.168.5.1`) | custom app image **v1178** (`v1178-20261124092549`, car test pending); last car-tested v1176 (`v1176-20261104084344`); previous v1172, v1167 | same as stock HW301 | yes, **from release 1.3**, only with a custom image plus the head-unit install (1.4 for v1172 and newer). The menu's cluster map switches reach it from v1172; route guidance (HUD and cluster maneuvers) works from v1176; a phone that reconnects during a drive starts in the cockpit's current view from v1178. Stock v1.26 / v1.29 stay on the main screen. [How to flash](docs/deploy/hw301-dongle.md) |
+| HW301 (Allwinner, setup Wi-Fi `smartBox`, web UI `192.168.5.1`) | custom app image **v1178** (`v1178-20261124092549`); previous v1176, v1172, v1167 | same as stock HW301 | yes, **from release 1.3**, only with a custom image plus the head-unit install (1.4 for v1172 and newer). The menu's cluster map switches reach it from v1172; route guidance (HUD and cluster maneuvers) works from v1176; a phone that reconnects during a drive starts in the cockpit's current view from v1178. Stock v1.26 / v1.29 stay on the main screen. [How to flash](docs/deploy/hw301-dongle.md) |
 | AAWireless TWO+ | manufacturer custom test build; public firmware pending | fast | yes, CarPlay AltScreen and Android Auto, tested on P5092 / MU1329; current public firmware has no cluster map until the fix ships, [report](https://github.com/kamgurgul/mib2q-carplay/issues/26) |
 | Ottocast Mini (manufacturer's own shop, not a clone) | build `26043009.3072.2` | not reported | yes, no custom firmware: CarPlay and Android Auto cluster map, Android Auto maneuver arrows on VC and HUD (Waze), tested with 1.4.1 on P5092 / MU1329, [report](https://github.com/kamgurgul/mib2q-carplay/issues/54) |
 
@@ -136,9 +136,9 @@ and never opens the cluster stream, so the cockpit keeps the Audi map. The custo
 **v1178** keeps that main screen and adds the cluster stream like an iPhone with two screens;
 it is made for mib2q-carplay **1.4** or newer on the head unit (the previous image v1167 needs
 1.3 or newer). Since v1176 it also relays CarPlay route guidance between the car and the iPhone,
-so the HUD and the cluster maneuver arrow work through the dongle. v1178 is not car-tested yet;
-v1176 is the last car-tested image. Other `smartBox-xxxx` boards are not this image; do not
-flash `hw301_v1178.tar` onto them.
+so the HUD and the cluster maneuver arrow work through the dongle, and since v1178 a phone that
+reconnects during a drive starts in the cockpit's current view. Other `smartBox-xxxx` boards are
+not this image; do not flash `hw301_v1178.tar` onto them.
 
 ## Requirements
 

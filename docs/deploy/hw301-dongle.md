@@ -36,8 +36,8 @@ main-screen behaviour and adds the phone's cluster map on the Virtual Cockpit:
 - a phone that reconnects while the dongle stays in the car starts in the cockpit's current
   view, not the view from the start of the drive (new in v1178, issue #68).
 
-v1178 is not car-tested yet. If it misbehaves, flash **v1176**, the last car-tested image
-(everything above except the last point).
+v1178 passed its car test (reported 2026-11-25). The previous image **v1176** stays
+available: everything above except the last point.
 
 v1176 and v1178 use the same head-unit path as an iPhone, so a head unit on 1.3 or 1.3.1 should work
 as well (not tested; it has no *all features on wide view* switch). The previous image
@@ -70,7 +70,7 @@ cluster map kept running.
 | --- | --- |
 | `dongle/hw301/fw/hw301_v1178.tar` | **the custom image you flash** (marker `v1178-20261124092549`) |
 | `dongle/hw301/fw/hw301_v1179.tar` | the same version as v1178, but it also contains enabled logging. Flash it only to collect logs for a bug report (`--version 1179`, marker `v1179-20261124092559`) |
-| `dongle/hw301/fw/hw301_v1176.tar` | the last car-tested image (marker `v1176-20261104084344`) |
+| `dongle/hw301/fw/hw301_v1176.tar` | the previous custom image (marker `v1176-20261104084344`), without the view fix for a reconnecting phone |
 | `dongle/hw301/fw/hw301_v1177.tar` | the same version as v1176 with enabled logging (`--version 1177`, marker `v1177-20261104084350`) |
 | `dongle/hw301/fw/hw301_v1172.tar` | the previous custom image (marker `v1172-20261027093548`), no route guidance |
 | `dongle/hw301/fw/hw301_v1167.tar` | the previous custom image (marker `v1167-20261025192423`), URLs and SafeAreas built in |

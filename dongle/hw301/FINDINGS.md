@@ -78,8 +78,7 @@ preserved.
 The phone receives the car's dimensions, physical size, UUID, FPS, view areas,
 safe areas, initial URL, suggested URLs and unknown descriptor fields intact.
 An absent or invalid second display disables its advertisement; there is no
-local geometry fallback. One exception to "intact" (issue #68, from v1178, *car test
-pending*): the descriptor is kept for the whole car session, so for a phone that
+local geometry fallback. One exception to "intact" (issue #68, from v1178): the descriptor is kept for the whole car session, so for a phone that
 (re)connects within it `initialViewArea` and `adjacentViewAreas` come from the car's
 latest retained `updateViewArea`, the view the cockpit shows now. The car snapshot
 itself is not edited; an index outside its `viewAreas` keeps the car's value, and an
@@ -489,20 +488,13 @@ of frames, `nal_ok=1 bad=0`):
 | 1168-1171 | private `hw301Cluster` `/info` extension, HELLO/KEY1 rekey and URL1 back-channel (release, optA and Input-key variants) | superseded by 1172, not shipped |
 | **1172** | native proxy: car display and commands passed through, own 111 ID/port/AES, `model=HW301` with stock `18D70` (`build_dual.sh release`, `v1172-20261027093548`). First car pass 2026-10-27 (as 1173) | `fw/hw301_v1172.tar` |
 | 1173 | **same version as v1172**, also contains enabled logging (`build_dual.sh optA`, `v1173-20261027093537`). First car pass 2026-10-27 | `fw/hw301_v1173.tar` |
-| **1176** | v1172 + route guidance bridge (`build_dual.sh release`, `v1176-20261104084344`). First car pass 2026-10-28 with build `v1176-20261028100645` of the same source (not committed; release image rebuilt 2026-11-04) | last car-tested image, `fw/hw301_v1176.tar` |
+| **1176** | v1172 + route guidance bridge (`build_dual.sh release`, `v1176-20261104084344`). First car pass 2026-10-28 with build `v1176-20261028100645` of the same source (not committed; release image rebuilt 2026-11-04) | `fw/hw301_v1176.tar` |
 | 1177 | **same version as v1176**, also contains enabled logging (`build_dual.sh optA`, `v1177-20261104084350`) | `fw/hw301_v1177.tar` |
-| **1178** | v1176 + the car's latest `updateViewArea` as `initialViewArea`/`adjacentViewAreas` in a reconnecting phone's `/info` (issue #68; source `9f9983d`, `build_dual.sh release`, `v1178-20261124092549`, SHA-256 `79e3c36d45a47cfbc105a3e52aaff260047e89e3aad89549846a8e7fc0c1b8f0`). `test_hw301.sh` passed; 41 non-weak imports resolve, v129 ABI hashes match; OTA dry run 4,147,712 bytes, 127 chunks. *Car test pending* | **newest image**, `fw/hw301_v1178.tar` |
+| **1178** | v1176 + the car's latest `updateViewArea` as `initialViewArea`/`adjacentViewAreas` in a reconnecting phone's `/info` (issue #68; source `9f9983d`, `build_dual.sh release`, `v1178-20261124092549`, SHA-256 `79e3c36d45a47cfbc105a3e52aaff260047e89e3aad89549846a8e7fc0c1b8f0`). `test_hw301.sh` passed; 41 non-weak imports resolve, v129 ABI hashes match; OTA dry run 4,147,712 bytes, 127 chunks. Car test passed (reported 2026-11-25, no logs saved) | **newest image**, `fw/hw301_v1178.tar` |
 | 1179 | **same version as v1178**, also contains enabled logging (`build_dual.sh optA`, `v1179-20261124092559`, SHA-256 `28ee00a657172716526d7ac6cd102be0c44c54f2bdedda3f7555adc7aa752885`; 42 imports resolve) | `fw/hw301_v1179.tar` |
 
 ## Open items
 
-- **Car view at phone reconnect (v1178/v1179, issue #68).** Bench tests only. To test: with
-  the phone connected through the dongle, change the cockpit view (VIEW), then turn the
-  iPhone's Wi-Fi off and on while the dongle stays in the car. The cluster map should come
-  back centred in the current view without pressing VIEW twice, and `dmesg.log` should show
-  `/info initialViewArea=N from the car's last updateViewArea` with N the current view. The
-  first phone of a car session has no car `updateViewArea` yet and keeps the car's own view;
-  from head unit 1.6 that view is the visible one at connect.
 - **Route guidance bridge (v1176/v1177), remaining part.** The first pass worked. Still open:
   a long route with rerouting, phone Wi-Fi loss mid-route (the cached 0x5200 replay) and a
   head-unit log in the same session.
