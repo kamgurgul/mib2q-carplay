@@ -43,6 +43,12 @@ trap 'rm -rf "$TEST_DIR"' EXIT
 "$TEST_JDK/bin/java" -cp "$TEST_DIR:$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR" \
     com.luka.carplay.telephony.GatedPhoneDialTest
 
+# Cluster phone tab: an iPhone registration status not reported since a reconnect is no "!".
+"$TEST_JDK/bin/javac" -encoding UTF-8 -cp "$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR" \
+    -d "$TEST_DIR" "$PROJECT_DIR/tests/GatedPhoneCommTest.java"
+"$TEST_JDK/bin/java" -cp "$TEST_DIR:$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR" \
+    com.luka.carplay.telephony.GatedPhoneCommTest
+
 # Android Auto: the wheel roller press toggles the route-info line, never Select on the phone.
 "$TEST_JDK/bin/javac" -encoding UTF-8 -cp "$PROJECT_DIR/build/carplay_hook.jar:$STOCK_JAR" \
     -d "$TEST_DIR" "$PROJECT_DIR/tests/AndroidAutoRollerTest.java"

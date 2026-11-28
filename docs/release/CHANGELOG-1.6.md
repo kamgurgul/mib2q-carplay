@@ -115,6 +115,14 @@ tests but have not been driven yet.
   (it would flip the toggle back), and verbose logging now shows that drop. System transition
   833 is not the TEL key, as the code comment said: TEL reaches the phone app through its slot
   and history.
+- **"!" stuck next to the phone signal bars on the cockpit** (CarPlay through the HW301 dongle,
+  2026-11-25). *Car test pending.* The cockpit's register state comes from the iPhone's
+  CommunicationsUpdate. `hook/telephony` clears its copy on every new Identify and disconnect,
+  and iOS re-sends only the params that change, so after a reconnect the RegistrationStatus can
+  stay unreported for the rest of the drive while the signal keeps updating. Java sent that
+  as 0 (not registered), which the cockpit shows as "!". An unreported status is now sent as
+  registered home. Every status the iPhone does report, and airplane mode, reaches the
+  cockpit as before.
 
 ## Improved
 
@@ -138,6 +146,10 @@ tests but have not been driven yet.
 
 ## Tests
 
+- `tests/GatedPhoneCommTest.java` (in `scripts/test_java_transports.sh`): EVT_TEL_COMM frames
+  through the real `GatedPhoneService` with CarPlay holding the phone tab. Each iAP2
+  RegistrationStatus reaches the cockpit as stock maps DSI, airplane mode is not registered, and
+  a status not reported (registration -1, with or without a signal) is registered home.
 - `tests/CarPlayDisclaimerSkipTest.java` (in `scripts/test_java_transports.sh`): the real stock
   PhoneSMM tables under `CarPlayPhoneSMM`. The popup state is found by label (300553 on P5152)
   and keeps its enter action. Entering it from history presses *Switch to Apple CarPlay* once,

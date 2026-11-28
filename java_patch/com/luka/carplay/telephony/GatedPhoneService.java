@@ -125,7 +125,7 @@ public class GatedPhoneService implements CombiBAPServicePhone {
     private String stockProvName, stockProvId;
 
     /* CarPlay signal/carrier from the stock CommunicationsUpdate (hook EVT_TEL_COMM). */
-    private int signalPct, regState;
+    private int signalPct, regState = bapRegisterState(-1, false);
     private String carrier = "";
     /* iPhone battery 0..100 from PowerUpdate, -1 = not reported. */
     private int batteryPct = -1, loggedBatteryPct = -2;
@@ -635,10 +635,15 @@ public class GatedPhoneService implements CombiBAPServicePhone {
     }
 
     /* iAP2 RegistrationStatus (0 unknown, 1 not registered, 2 searching, 3 denied,
-     * 4 home, 5 roaming, 6 emergency only) -> BAP RegisterState. */
-    private static int bapRegisterState(int iap2, boolean airplane) {
+     * 4 home, 5 roaming, 6 emergency only) -> BAP RegisterState (stock
+     * BAPPropertyRegisterStateUtil: 0 not registered, 1 home, 2 searching, 3 denied, 4 roaming).
+     * -1 = not reported since hook/telephony's last reset (new Identify, disconnect).  iOS
+     * re-sends only the params that change, so after a reconnect the status can stay unreported
+     * for the rest of the drive: shown as home, not as "not registered" (the VC's "!"). */
+    static int bapRegisterState(int iap2, boolean airplane) {
         if (airplane) return 0;
         switch (iap2) {
+            case -1: return 1;
             case 2: return 2;
             case 3: return 3;
             case 4: return 1;
